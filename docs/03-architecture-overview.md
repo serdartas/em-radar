@@ -1083,6 +1083,7 @@ em-radar/
     funcional-flows.md
     er-diagram.md
     project-idea.md
+    data-model.md
 
   examples/
     fake-company/
