@@ -32,7 +32,9 @@ Example signals EM Radar may help surface:
 
 > Not yet functional — tracked in M0 — Foundations.
 
-bash docker compose -f deploy/docker/docker-compose.yml up --build 
+```bash
+docker compose -f deploy/docker/docker-compose.yml up --build
+```
 
 Then open http://localhost:8080.
 
@@ -44,15 +46,41 @@ Prerequisites: uv with Python 3.12+, Node.js, and Docker.
 
 Backend (apps/api):
 
-bash cd apps/api uv sync uv run uvicorn em_radar_api.main:app --port 8080 uv run pytest        # tests uv run ruff check .  # lint 
+```bash
+cd apps/api
+uv sync
+uv run uvicorn em_radar_api.main:app --port 8080
+uv run pytest
+uv run ruff check .
+```
 
 Frontend (apps/web):
 
-bash cd apps/web npm install npm run dev          # local dev server npm run test         # tests npm run build        # production build → dist/ 
+```bash
+cd apps/web
+npm install
+npm run dev
+npm run test
+npm run build
+```
 
 ## Repository layout
 
-text apps/   api/   src/em_radar_api/        # FastAPI app: routers, schemas, db session   web/   src/                     # React + Vite + TypeScript + Tailwind + shadcn/ui   cli/   src/em_radar_cli/        # Typer CLI scaffold; deferred post-MVP packages/   core/        src/em_radar_core/{models,signals,evaluation,scoring}   connectors/  jira/  gitlab/  demo/   normalizer/  src/em_radar_normalizer/   reports/     src/em_radar_reports/   config/      src/em_radar_config/  defaults/  schemas/ deploy/docker/   Dockerfile  docker-compose.yml examples/fake-company/ docs/            # specs, architecture, requirements, roadmap, and backlog 
+```text
+apps/
+  api/   src/em_radar_api/        # FastAPI app: routers, schemas, db session
+  web/   src/                     # React + Vite + TypeScript + Tailwind + shadcn/ui
+  cli/   src/em_radar_cli/        # Typer CLI scaffold; deferred post-MVP
+packages/
+  core/        src/em_radar_core/{models,signals,evaluation,scoring}
+  connectors/  jira/  gitlab/  demo/
+  normalizer/  src/em_radar_normalizer/
+  reports/     src/em_radar_reports/
+  config/      src/em_radar_config/  defaults/  schemas/
+deploy/docker/   Dockerfile  docker-compose.yml
+examples/fake-company/
+docs/
+```
 
 ## Tech stack
 
