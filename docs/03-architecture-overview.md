@@ -1075,10 +1075,14 @@ em-radar/
     vision-and-scope.md
     requirements.md
     architecture-overview.md
+    tech-stack.md
     data-model.md
-    connectors.md
-    signal-packs.md
-    privacy.md
+    signal-yaml-spec.md
+    connector-interface.md
+    mvp-roadmap.md
+    funcional-flows.md
+    er-diagram.md
+    project-idea.md
 
   examples/
     fake-company/
