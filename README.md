@@ -1,5 +1,7 @@
 # EM Radar
 
+[![CI](https://github.com/serdartas/em-radar/actions/workflows/ci.yml/badge.svg)](https://github.com/serdartas/em-radar/actions/workflows/ci.yml)
+
 > Status: pre-alpha. Foundations are being built; EM Radar is not yet usable.
 > APIs, schema, signals, and repository structure will change without notice.
 
@@ -30,10 +32,8 @@ Example signals EM Radar may help surface:
 
 ## Quick start
 
-> Not yet functional — tracked in M0 — Foundations.
-
 ```bash
-docker compose -f deploy/docker/docker-compose.yml up --build
+docker compose -f deploy/docker/docker-compose.yml up
 ```
 
 Then open http://localhost:8080.
