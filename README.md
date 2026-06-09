@@ -88,23 +88,24 @@ Python 3.12 + FastAPI, SQLModel/SQLAlchemy/Alembic, Pydantic v2, httpx, Typer, R
 React + Vite + TypeScript, Tailwind + shadcn/ui, TanStack Query, Vitest + Testing Library ·
 uv for Python and npm for web · Docker + Docker Compose · SQLite by default.
 
-See docs/04-tech-stack.md for the rationale and per-decision ADRs.
+See [the tech stack decision record](docs/04-tech-stack.md) for the rationale and per-decision
+ADRs.
 
 ## Documentation
 
-Specs live in docs/:
+Specs live in [`docs/`](docs/):
 
-- vision & scope
-- requirements
-- architecture
-- tech stack
-- data model
-- signal YAML spec
-- connector interface
-- MVP roadmap
-- functional flows
+- [vision & scope](docs/01-vision-and-scope.md)
+- [requirements](docs/02-requirements.md)
+- [architecture](docs/03-architecture-overview.md)
+- [tech stack](docs/04-tech-stack.md)
+- [data model](docs/05-data-model.md)
+- [signal YAML spec](docs/06-signal-yaml-spec.md)
+- [connector interface](docs/07-connector-interface.md)
+- [MVP roadmap](docs/08-mvp-roadmap.md)
+- [functional flows](docs/09-functional-flows.md)
 
-The implementation backlog slices the work into issues.
+The [`docs/backlog/`](docs/backlog/) implementation backlog slices the work into issues.
 
 ## License
 
