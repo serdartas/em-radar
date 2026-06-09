@@ -1,0 +1,12 @@
+services:
+  emradar:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    ports:
+      - "8080:8080"
+    volumes:
+      - emradar-data:/data
+
+volumes:
+  emradar-data:
