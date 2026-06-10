@@ -15,12 +15,17 @@ build-backend = "setuptools.build_meta"
 
 [dependency-groups]
 dev = [
+    "fastapi",
+    "httpx",
     "pytest",
     "ruff",
 ]
 
 [tool.setuptools.packages.find]
 where = ["packages/core/src", "packages/connectors/demo/src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["apps/api/src"]
 
 [tool.ruff]
 line-length = 100
