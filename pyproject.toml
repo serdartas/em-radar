@@ -6,6 +6,9 @@ dependencies = [
     "sqlmodel",
 ]
 
+[project.entry-points."em_radar.connectors"]
+demo = "em_radar_connector_demo:DemoConnector"
+
 [build-system]
 requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
@@ -16,11 +19,8 @@ dev = [
     "ruff",
 ]
 
-[tool.setuptools]
-package-dir = {"" = "packages/core/src"}
-
 [tool.setuptools.packages.find]
-where = ["packages/core/src"]
+where = ["packages/core/src", "packages/connectors/demo/src"]
 
 [tool.ruff]
 line-length = 100
