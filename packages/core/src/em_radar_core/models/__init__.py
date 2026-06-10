@@ -1,4 +1,5 @@
 from em_radar_core.models.common import CommonFields
+from em_radar_core.models.code import Comment, MergeRequest, Repository, Review, Transition
 from em_radar_core.models.enums import (
     BoardType,
     Confidence,
@@ -19,19 +20,24 @@ from em_radar_core.models.planning import Board, Project, Sprint, User, WorkItem
 __all__ = [
     "Board",
     "BoardType",
+    "Comment",
     "CommonFields",
     "Confidence",
     "EntityType",
     "LinkType",
     "MergeRequestState",
+    "MergeRequest",
     "PipelineStatus",
     "Project",
+    "Repository",
+    "Review",
     "ReviewDecision",
     "Severity",
     "Source",
     "Sprint",
     "SprintState",
     "StatusCategory",
+    "Transition",
     "User",
     "WorkingMode",
     "WorkItem",
