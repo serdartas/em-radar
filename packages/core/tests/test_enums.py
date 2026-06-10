@@ -8,11 +8,13 @@ from em_radar_core.models import (
     LinkType,
     MergeRequestState,
     PipelineStatus,
+    ReportStatus,
     ReviewDecision,
     Severity,
     Source,
     SprintState,
     StatusCategory,
+    WindowType,
     WorkingMode,
     WorkItemType,
 )
@@ -48,6 +50,8 @@ def test_enum_member_sets_match_the_canonical_data_model() -> None:
         "is_duplicated_by",
     }
     assert values(EntityType) == {"workitem", "mergerequest", "sprint", "repository"}
+    assert values(WindowType) == {"sprint", "date_range"}
+    assert values(ReportStatus) == {"pending", "running", "succeeded", "failed"}
 
 
 def test_common_fields_defaults() -> None:

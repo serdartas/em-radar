@@ -92,3 +92,15 @@ class EntityType(StrEnum):
     MERGEREQUEST = "mergerequest"
     SPRINT = "sprint"
     REPOSITORY = "repository"
+
+
+class WindowType(StrEnum):
+    SPRINT = "sprint"
+    DATE_RANGE = "date_range"
+
+
+class ReportStatus(StrEnum):
+    PENDING = "pending"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
