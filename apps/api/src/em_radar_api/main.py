@@ -7,6 +7,7 @@ from starlette.staticfiles import StaticFiles
 from starlette.types import Scope
 
 from em_radar_api.routers.health import router as health_router
+from em_radar_api.routers.reports import router as reports_router
 
 
 class SPAStaticFiles(StaticFiles):
@@ -30,6 +31,7 @@ def _is_api_path(path: str) -> bool:
 def create_app(static_dir: Path | None = None) -> FastAPI:
     app = FastAPI(title="EM Radar")
     app.include_router(health_router, prefix="/api")
+    app.include_router(reports_router, prefix="/api")
 
     static_dir = static_dir or Path(__file__).parent / "static"
     if static_dir.is_dir():
