@@ -1,12 +1,7 @@
-import { Button } from "@/components/ui/button"
+import FindingsPage from "./FindingsPage"
 
 function App() {
-  return (
-    <main className="flex min-h-screen flex-col items-center justify-center gap-4">
-      <h1 className="text-3xl font-semibold">EM Radar</h1>
-      <Button>Button</Button>
-    </main>
-  )
+  return <FindingsPage />
 }
 
 export default App
