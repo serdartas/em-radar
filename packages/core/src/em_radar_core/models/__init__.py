@@ -14,8 +14,10 @@ from em_radar_core.models.enums import (
     WorkingMode,
     WorkItemType,
 )
+from em_radar_core.models.planning import Board, Project, Sprint, User, WorkItem, WorkItemLink
 
 __all__ = [
+    "Board",
     "BoardType",
     "CommonFields",
     "Confidence",
@@ -23,11 +25,16 @@ __all__ = [
     "LinkType",
     "MergeRequestState",
     "PipelineStatus",
+    "Project",
     "ReviewDecision",
     "Severity",
     "Source",
+    "Sprint",
     "SprintState",
     "StatusCategory",
+    "User",
     "WorkingMode",
+    "WorkItem",
+    "WorkItemLink",
     "WorkItemType",
 ]
