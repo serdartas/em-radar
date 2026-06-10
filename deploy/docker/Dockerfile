@@ -11,13 +11,18 @@ RUN npm run build
 
 FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 
-WORKDIR /app
-
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy
 
-COPY apps/api/pyproject.toml apps/api/uv.lock ./
-COPY apps/api/src ./src
+WORKDIR /app
+
+COPY pyproject.toml ./
+COPY packages/core/src ./packages/core/src
+COPY packages/connectors/demo/src ./packages/connectors/demo/src
+COPY apps/api/pyproject.toml apps/api/uv.lock ./apps/api/
+COPY apps/api/src ./apps/api/src
+
+WORKDIR /app/apps/api
 RUN uv sync --frozen --no-dev
 
 COPY --from=web-builder /build/apps/web/dist ./src/em_radar_api/static
