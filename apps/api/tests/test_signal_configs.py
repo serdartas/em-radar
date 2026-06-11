@@ -1,4 +1,5 @@
 import pytest
+from pydantic import ValidationError
 from sqlmodel import SQLModel, Session
 
 from em_radar_api.db import create_db_engine
@@ -37,6 +38,7 @@ def test_signal_config_upsert_and_reset_to_catalog_defaults() -> None:
             SignalConfigUpsert(signal_id=SIGNAL_ID, params={"days_threshold": 3}),
         )
         assert updated.id == created.id
+        assert updated.params == {"days_threshold": 3, "exclude_labels": []}
         assert list_signal_configs(session) == [updated]
 
         reset = reset_signal_config(session, SIGNAL_ID)
@@ -73,3 +75,23 @@ def test_unknown_signal_id_is_rejected() -> None:
             upsert_signal_config(session, SignalConfigUpsert(signal_id="unknown-signal"))
         with pytest.raises(ValueError, match="unknown signal id: unknown-signal"):
             reset_signal_config(session, "unknown-signal")
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"days_threshold": -1},
+        {"unknown": True},
+    ],
+)
+def test_invalid_signal_params_are_rejected_before_persisting(
+    params: dict[str, object],
+) -> None:
+    engine = create_db_engine(":memory:")
+    SQLModel.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        with pytest.raises(ValidationError):
+            upsert_signal_config(session, SignalConfigUpsert(signal_id=SIGNAL_ID, params=params))
+
+        assert list_signal_configs(session) == []

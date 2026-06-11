@@ -9,12 +9,19 @@ def upsert_signal_config(
     config: SignalConfigUpsert,
     registry: SignalRegistry = default_registry,
 ) -> SignalConfigRead:
-    _get_signal_type(config.signal_id, registry)
+    signal_type = _get_signal_type(config.signal_id, registry)
+    normalized_config = config.model_copy(
+        update={
+            "params": signal_type.params_schema.model_validate(config.params).model_dump(
+                mode="json"
+            )
+        }
+    )
     row = _get_row(session, config.signal_id)
     if row is None:
-        row = SignalConfigTable.model_validate(config)
+        row = SignalConfigTable.model_validate(normalized_config)
     else:
-        row.sqlmodel_update(config.model_dump())
+        row.sqlmodel_update(normalized_config.model_dump())
     _write(session, row)
     return SignalConfigRead.model_validate(row)
 
