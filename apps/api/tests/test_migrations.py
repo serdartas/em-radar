@@ -18,6 +18,7 @@ EXPECTED_TABLES = {
     "repository",
     "review",
     "signal_finding",
+    "source_connection",
     "sprint",
     "team_profile",
     "transition",
