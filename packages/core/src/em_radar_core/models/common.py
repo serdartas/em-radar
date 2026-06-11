@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
+from sqlalchemy import JSON
 from sqlmodel import Field, SQLModel
 
 from em_radar_core.models.enums import Source
@@ -15,7 +16,7 @@ class CommonFields(SQLModel):
     source: Source
     external_id: str
     source_url: str | None = None
-    source_metadata: dict[str, object] | None = Field(default_factory=dict)
+    source_metadata: dict[str, object] | None = Field(default_factory=dict, sa_type=JSON)
     fetched_at: datetime = Field(default_factory=utc_now)
     created_at: datetime | None = None
     updated_at: datetime | None = None

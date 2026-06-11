@@ -1,9 +1,7 @@
 from pathlib import Path
-from uuid import UUID, uuid4
-
 import pytest
-from sqlalchemy import JSON, text
-from sqlmodel import Field, SQLModel, select
+from sqlalchemy import text
+from sqlmodel import SQLModel, select
 
 from em_radar_api.db import (
     DATABASE_PATH_ENV,
@@ -11,14 +9,8 @@ from em_radar_api.db import (
     create_session_factory,
     schema_version,
 )
-from em_radar_core.models import Project, Source
-
-
-class PersistedProject(Project, table=True):
-    __tablename__ = "project"
-
-    id: UUID = Field(default_factory=uuid4, primary_key=True)
-    source_metadata: dict[str, object] | None = Field(default_factory=dict, sa_type=JSON)
+from em_radar_api.tables import ProjectTable
+from em_radar_core.models import Source
 
 
 def test_file_backed_sqlite_session_round_trips_canonical_row(tmp_path: Path) -> None:
@@ -27,7 +19,7 @@ def test_file_backed_sqlite_session_round_trips_canonical_row(tmp_path: Path) ->
     session_factory = create_session_factory(engine)
     SQLModel.metadata.create_all(engine)
 
-    project = PersistedProject(
+    project = ProjectTable(
         source=Source.DEMO,
         external_id="demo-project",
         key="DEMO",
@@ -38,7 +30,7 @@ def test_file_backed_sqlite_session_round_trips_canonical_row(tmp_path: Path) ->
         session.commit()
 
     with session_factory() as session:
-        stored_project = session.exec(select(PersistedProject)).one()
+        stored_project = session.exec(select(ProjectTable)).one()
         journal_mode = session.exec(text("PRAGMA journal_mode")).one()[0]
         foreign_keys = session.exec(text("PRAGMA foreign_keys")).one()[0]
 
