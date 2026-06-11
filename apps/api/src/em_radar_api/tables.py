@@ -3,6 +3,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import UniqueConstraint
 from sqlmodel import Field
 
+from em_radar_api.signal_configs import SignalConfigTable  # noqa: F401
 from em_radar_api.source_connections import SourceConnectionTable  # noqa: F401
 
 from em_radar_core.models import (
