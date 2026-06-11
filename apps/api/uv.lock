@@ -70,6 +70,7 @@ source = { editable = "." }
 dependencies = [
     { name = "em-radar-core" },
     { name = "fastapi" },
+    { name = "sqlmodel" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -84,6 +85,7 @@ dev = [
 requires-dist = [
     { name = "em-radar-core", editable = "../../" },
     { name = "fastapi" },
+    { name = "sqlmodel" },
     { name = "uvicorn", extras = ["standard"] },
 ]
 
@@ -107,6 +109,8 @@ requires-dist = [{ name = "sqlmodel" }]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "fastapi" },
+    { name = "httpx" },
     { name = "pytest" },
     { name = "ruff" },
 ]
