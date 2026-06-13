@@ -1,0 +1,2 @@
+[em_radar.connectors]
+demo = em_radar_connector_demo:DemoConnector
