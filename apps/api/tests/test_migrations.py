@@ -19,6 +19,7 @@ EXPECTED_TABLES = {
     "review",
     "signal_config",
     "signal_finding",
+    "signal_pack_history",
     "source_connection",
     "sprint",
     "team_profile",
