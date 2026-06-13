@@ -1,0 +1,5 @@
+alembic>=1.18.4
+em-radar-core
+fastapi
+sqlmodel
+uvicorn[standard]

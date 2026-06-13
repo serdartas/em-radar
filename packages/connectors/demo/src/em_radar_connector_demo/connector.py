@@ -19,6 +19,7 @@ from em_radar_core.models import (
     Review,
     Sprint,
     Transition,
+    User,
     WindowType,
     WorkItem,
 )
@@ -66,6 +67,9 @@ class DemoConnector:
 
     async def close(self) -> None:
         pass
+
+    async def list_users(self) -> list[User]:
+        return _copies(self._fixtures.users)
 
     async def list_projects(self) -> list[Project]:
         return _copies(self._fixtures.projects)
