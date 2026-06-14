@@ -15,6 +15,7 @@ build-backend = "setuptools.build_meta"
 
 [dependency-groups]
 dev = [
+    "alembic>=1.18.4",
     "fastapi",
     "httpx",
     "pytest",
@@ -22,7 +23,11 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-where = ["packages/core/src", "packages/connectors/demo/src"]
+where = [
+    "packages/core/src",
+    "packages/connectors/demo/src",
+    "packages/normalizer/src",
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["apps/api/src"]

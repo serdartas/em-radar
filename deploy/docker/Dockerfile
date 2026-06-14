@@ -21,6 +21,9 @@ COPY packages/core/src ./packages/core/src
 COPY packages/connectors/demo/src ./packages/connectors/demo/src
 COPY apps/api/pyproject.toml apps/api/uv.lock ./apps/api/
 COPY apps/api/src ./apps/api/src
+COPY alembic.ini ./
+COPY migrations ./migrations
+COPY deploy/docker/entrypoint.sh ./deploy/docker/entrypoint.sh
 
 WORKDIR /app/apps/api
 RUN uv sync --frozen --no-dev
@@ -29,4 +32,4 @@ COPY --from=web-builder /build/apps/web/dist ./src/em_radar_api/static
 
 EXPOSE 8080
 
-CMD ["uv", "run", "--no-sync", "uvicorn", "em_radar_api.main:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["/app/deploy/docker/entrypoint.sh"]
