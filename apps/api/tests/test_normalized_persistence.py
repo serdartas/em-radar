@@ -3,9 +3,12 @@ from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
+from uuid import uuid4
 
 from em_radar_connector_demo import (
     DEMO_MERGEREQUEST_COUNT,
+    DEMO_REVIEW_COUNT,
+    DEMO_TRANSITION_COUNT,
     DEMO_USER_COUNT,
     DEMO_WORKITEM_COUNT,
     FIXTURE_NOW,
@@ -18,7 +21,13 @@ from sqlmodel import SQLModel, Session, select
 
 from em_radar_api.db import create_db_engine, create_session_factory
 from em_radar_api.repositories.canonical import PersistResult, persist_fetch
-from em_radar_api.tables import MergeRequestTable, UserTable, WorkItemTable
+from em_radar_api.tables import (
+    MergeRequestTable,
+    ReviewTable,
+    TransitionTable,
+    UserTable,
+    WorkItemTable,
+)
 from em_radar_core.connectors import MergeRequestScope, WorkItemScope
 from em_radar_core.models import (
     Board,
@@ -233,3 +242,26 @@ def test_updated_fields_are_reflected_without_changing_identity(tmp_path: Path) 
     assert refreshed.id == original_id
     assert refreshed.title == "Re-titled demo item"
     assert count == DEMO_WORKITEM_COUNT
+
+
+def test_history_rows_are_idempotent_without_stable_connector_ids(tmp_path: Path) -> None:
+    fetched = asyncio.run(_fetch_all())
+    session_factory = _cache(tmp_path)
+
+    with session_factory() as session:
+        _persist(session, fetched)
+        first_reviews = _count(session, ReviewTable)
+        first_transitions = _count(session, TransitionTable)
+
+    assert first_reviews == DEMO_REVIEW_COUNT
+    assert first_transitions == DEMO_TRANSITION_COUNT
+
+    fetched.reviews = [review.model_copy(update={"id": uuid4()}) for review in fetched.reviews]
+    fetched.transitions = [
+        transition.model_copy(update={"id": uuid4()}) for transition in fetched.transitions
+    ]
+
+    with session_factory() as session:
+        _persist(session, fetched)
+        assert _count(session, ReviewTable) == DEMO_REVIEW_COUNT
+        assert _count(session, TransitionTable) == DEMO_TRANSITION_COUNT
