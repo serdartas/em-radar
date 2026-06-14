@@ -6,7 +6,7 @@ from pydantic import model_validator
 from sqlalchemy import JSON
 from sqlmodel import Field, SQLModel
 
-from em_radar_core.models.common import CommonFields
+from em_radar_core.models.common import CommonFields, UUIDListJSON
 from em_radar_core.models.enums import (
     EntityType,
     MergeRequestState,
@@ -46,7 +46,7 @@ class MergeRequest(CommonFields):
     approval_count: int = 0
     comment_count: int = 0
     linked_workitem_keys: list[str] = Field(default_factory=list, sa_type=JSON)
-    linked_workitem_ids: list[UUID] = Field(default_factory=list, sa_type=JSON)
+    linked_workitem_ids: list[UUID] = Field(default_factory=list, sa_type=UUIDListJSON)
 
     @model_validator(mode="after")
     def validate_invariants(self) -> Self:
