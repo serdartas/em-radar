@@ -8,6 +8,9 @@ em_radar_core.egg-info/dependency_links.txt
 em_radar_core.egg-info/entry_points.txt
 em_radar_core.egg-info/requires.txt
 em_radar_core.egg-info/top_level.txt
+packages/config/src/em_radar_config/__init__.py
+packages/config/src/em_radar_config/catalog.py
+packages/config/src/em_radar_config/models.py
 packages/connectors/demo/src/em_radar_connector_demo/__init__.py
 packages/connectors/demo/src/em_radar_connector_demo/connector.py
 packages/connectors/demo/src/em_radar_connector_demo/fixtures.py

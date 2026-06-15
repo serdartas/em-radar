@@ -80,11 +80,7 @@ class DemoConnector:
             for project in self._fixtures.projects
             if project.external_id == project_id or str(project.id) == project_id
         }
-        return _copies(
-            board
-            for board in self._fixtures.boards
-            if board.project_id in project_ids
-        )
+        return _copies(board for board in self._fixtures.boards if board.project_id in project_ids)
 
     async def list_sprints(self, board_id: str) -> list[Sprint]:
         board_ids = {
@@ -92,11 +88,7 @@ class DemoConnector:
             for board in self._fixtures.boards
             if board.external_id == board_id or str(board.id) == board_id
         }
-        return _copies(
-            sprint
-            for sprint in self._fixtures.sprints
-            if sprint.board_id in board_ids
-        )
+        return _copies(sprint for sprint in self._fixtures.sprints if sprint.board_id in board_ids)
 
     async def list_repositories(self) -> list[Repository]:
         return _copies(self._fixtures.repositories)

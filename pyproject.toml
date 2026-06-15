@@ -18,6 +18,7 @@ dev = [
     "alembic>=1.18.4",
     "fastapi",
     "httpx",
+    "pyyaml",
     "pytest",
     "ruff",
 ]
@@ -26,6 +27,7 @@ dev = [
 where = [
     "packages/core/src",
     "packages/connectors/demo/src",
+    "packages/config/src",
     "packages/normalizer/src",
 ]
 

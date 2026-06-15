@@ -1,3 +1,4 @@
+em_radar_config
 em_radar_connector_demo
 em_radar_core
 em_radar_normalizer
