@@ -42,6 +42,18 @@ function editValues(schema: JsonSchema, config: Record<string, unknown>): Record
   return values
 }
 
+function writableValues(schema: JsonSchema, values: Record<string, unknown>): Record<string, unknown> {
+  const next: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(values)) {
+    const property = schema.properties?.[key]
+    if (property && isSecret(property) && value === "") {
+      continue
+    }
+    next[key] = value
+  }
+  return next
+}
+
 function errorMessage(error: unknown): string {
   return apiErrorMessage(error, "The connection could not be reached. Check the URL and try again.")
 }
@@ -121,7 +133,10 @@ export function SourceConnectionsPage() {
     if (!selectedConnector) {
       return
     }
-    saveMutation.mutate({ connector_name: connectorName, config: values })
+    saveMutation.mutate({
+      connector_name: connectorName,
+      config: editingId ? writableValues(selectedConnector.config_schema, values) : values,
+    })
   }
 
   return (

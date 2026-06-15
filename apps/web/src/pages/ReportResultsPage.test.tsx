@@ -63,4 +63,36 @@ describe("ReportResultsPage", () => {
     expect(counts).toHaveTextContent("1 critical")
     expect(counts).toHaveTextContent("2 warning")
   })
+
+  it("shows failed report errors before empty findings", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ...report,
+          status: "failed",
+          error: "Connector timed out.",
+          findings_count_by_severity: { info: 0, warning: 0, critical: 0 },
+          findings: [],
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    )
+
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={["/reports/results/report-1"]}>
+          <Routes>
+            <Route element={<ReportResultsPage />} path="/reports/results/:reportId" />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Connector timed out.")
+    expect(screen.queryByText("No findings were detected.")).not.toBeInTheDocument()
+  })
 })

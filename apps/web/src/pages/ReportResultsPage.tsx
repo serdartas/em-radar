@@ -46,7 +46,11 @@ export function ReportResultsPage() {
         <SeverityCounts counts={report.findings_count_by_severity} />
       </header>
 
-      {report.findings.length === 0 ? (
+      {report.status === "failed" ? (
+        <p className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700" role="alert">
+          {report.error ?? "The report run failed."}
+        </p>
+      ) : report.findings.length === 0 ? (
         <p className="rounded-lg border border-dashed p-8 text-center text-sm text-slate-500">
           No findings were detected.
         </p>

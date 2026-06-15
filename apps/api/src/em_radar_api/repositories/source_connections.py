@@ -54,7 +54,11 @@ def update_source_connection(
 
     values = update.model_dump(exclude_unset=True)
     if "config" in values:
-        values["config"] = _stored_config(cast(Mapping[str, object], values["config"]))
+        stored_config = _stored_config(cast(Mapping[str, object], values["config"]))
+        if values.get("connector_name", row.connector_name) == row.connector_name:
+            values["config"] = {**row.config, **stored_config}
+        else:
+            values["config"] = stored_config
     candidate = SourceConnectionTable.model_validate(row, update=values)
     _validate_team_scopes(session, connection_id, candidate)
     row.sqlmodel_update(values)

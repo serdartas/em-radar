@@ -55,6 +55,9 @@ function mockApi(testHandler: () => Response = () => jsonResponse(testResult)) {
     if (url.endsWith("/api/connections/test")) {
       return Promise.resolve(testHandler())
     }
+    if (url.endsWith("/api/connections/connection-1") && init?.method === "PATCH") {
+      return Promise.resolve(jsonResponse({}))
+    }
     throw new Error(`unexpected fetch: ${init?.method ?? "GET"} ${url}`)
   })
 }
@@ -117,6 +120,51 @@ describe("SourceConnectionsPage", () => {
 
     await waitFor(() => {
       expect(screen.getByText("Credentials were rejected.")).toBeInTheDocument()
+    })
+  })
+
+  it("omits unchanged write-only fields when editing a connection", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = typeof input === "string" ? input : input.toString()
+      if (url.endsWith("/api/connectors")) {
+        return Promise.resolve(jsonResponse([demoConnector]))
+      }
+      if (url.endsWith("/api/connections") && (init?.method ?? "GET") === "GET") {
+        return Promise.resolve(
+          jsonResponse([
+            {
+              id: "connection-1",
+              connector_name: "demo",
+              config: { base_url: "https://demo.invalid", token: "****5678" },
+              selected_project_ids: [],
+              selected_board_ids: [],
+              selected_repository_ids: [],
+              created_at: "2026-06-01T10:00:00Z",
+            },
+          ]),
+        )
+      }
+      if (url.endsWith("/api/connections/connection-1") && init?.method === "PATCH") {
+        return Promise.resolve(jsonResponse({}))
+      }
+      throw new Error(`unexpected fetch: ${init?.method ?? "GET"} ${url}`)
+    })
+    renderPage()
+
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }))
+    fireEvent.change(screen.getByLabelText(/Base URL/), {
+      target: { value: "https://updated.invalid" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "Save connection" }))
+
+    await waitFor(() => {
+      const patch = fetchMock.mock.calls.find(
+        ([url, init]) => String(url).endsWith("/api/connections/connection-1") && init?.method === "PATCH",
+      )
+      expect(patch).toBeTruthy()
+      expect(JSON.parse(String(patch?.[1]?.body)).config).toEqual({
+        base_url: "https://updated.invalid",
+      })
     })
   })
 })
