@@ -1,0 +1,282 @@
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
+from fnmatch import fnmatch
+import re
+
+from pydantic import ValidationError
+import yaml
+from yaml.events import AliasEvent, CollectionStartEvent, ScalarEvent
+
+from em_radar_config.catalog import SIGNAL_CATALOG
+from em_radar_config.models import FieldMappings, SignalPack, SignalScope
+from em_radar_core.models import Severity
+
+API_VERSION = "emradar.dev/v1"
+PACK_KIND = "SignalPack"
+EM_RADAR_VERSION = "0.0.0"
+
+_CREDENTIAL_FIELDS = {"token", "password", "api_key", "secret", "authorization"}
+_EXECUTABLE_FIELDS = {"code", "command", "expression", "script", "template"}
+_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9-]{1,62}[a-z0-9]$")
+_SEMVER_PATTERN = re.compile(
+    r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
+    r"(?:-((?:0|[1-9]\d*|[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|[A-Za-z-][0-9A-Za-z-]*))*))?"
+    r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
+)
+_TEMPLATE_PATTERN = re.compile(r"\$\{[^}]+\}|\{\{.*?\}\}|<%.*?%>")
+_EXECUTABLE_PATTERN = re.compile(r"^(?:#!|javascript:)|\b(?:eval|exec)\s*\(", re.IGNORECASE)
+_REMOTE_URL_PATTERN = re.compile(r"^(?:https?|ftp)://", re.IGNORECASE)
+_MAX_ALIASES = 20
+
+
+class PackValidationError(ValueError):
+    """Raised when a signal pack violates a hard validation rule."""
+
+
+@dataclass(frozen=True)
+class PackValidationWarning:
+    code: str
+    message: str
+    path: str
+
+
+@dataclass(frozen=True)
+class PackValidationContext:
+    em_radar_version: str = EM_RADAR_VERSION
+    project_keys: frozenset[str] | None = None
+    repository_paths: frozenset[str] | None = None
+    field_mappings: FieldMappings | None = None
+
+
+@dataclass(frozen=True)
+class PackLoadResult:
+    pack: SignalPack
+    warnings: tuple[PackValidationWarning, ...] = field(default_factory=tuple)
+
+
+def load_signal_pack(
+    yaml_text: str, context: PackValidationContext | None = None
+) -> PackLoadResult:
+    """Safely parse and validate a signal pack."""
+    validation_context = context or PackValidationContext()
+    raw_pack = _safe_load(yaml_text)
+    _check_forbidden_content(raw_pack)
+
+    try:
+        pack = SignalPack.model_validate(raw_pack)
+    except ValidationError as exc:
+        raise PackValidationError(f"Invalid signal pack structure: {exc}") from exc
+
+    _validate_pack(pack, validation_context.em_radar_version)
+    return PackLoadResult(pack=pack, warnings=tuple(_collect_warnings(pack, validation_context)))
+
+
+def _safe_load(yaml_text: str) -> object:
+    aliases = 0
+    anchors = 0
+    try:
+        for event in yaml.parse(yaml_text, Loader=yaml.SafeLoader):
+            if isinstance(event, AliasEvent):
+                aliases += 1
+                if aliases > _MAX_ALIASES:
+                    raise PackValidationError("YAML contains too many aliases")
+            if isinstance(event, (CollectionStartEvent, ScalarEvent)):
+                if event.anchor is not None:
+                    anchors += 1
+                    if anchors > _MAX_ALIASES:
+                        raise PackValidationError("YAML contains too many anchors")
+                if event.tag is not None and not event.tag.startswith("tag:yaml.org,2002:"):
+                    raise PackValidationError("YAML tagged constructors are forbidden")
+        value = yaml.safe_load(yaml_text)
+    except PackValidationError:
+        raise
+    except yaml.YAMLError as exc:
+        raise PackValidationError(f"Invalid or unsafe YAML: {exc}") from exc
+
+    if not isinstance(value, Mapping):
+        raise PackValidationError("Signal pack YAML must contain a top-level mapping")
+    _reject_recursive_aliases(value, set(), set())
+    return value
+
+
+def _reject_recursive_aliases(value: object, active: set[int], visited: set[int]) -> None:
+    if not isinstance(value, (Mapping, list)):
+        return
+    identity = id(value)
+    if identity in active:
+        raise PackValidationError("Recursive YAML aliases are forbidden")
+    if identity in visited:
+        return
+    active.add(identity)
+    children = value.values() if isinstance(value, Mapping) else value
+    for child in children:
+        _reject_recursive_aliases(child, active, visited)
+    active.remove(identity)
+    visited.add(identity)
+
+
+def _check_forbidden_content(value: object, path: tuple[str, ...] = ()) -> None:
+    if isinstance(value, Mapping):
+        for key, child in value.items():
+            if not isinstance(key, str):
+                raise PackValidationError(f"{_format_path(path)} contains a non-string field name")
+            normalized_key = key.casefold()
+            child_path = (*path, key)
+            if normalized_key in _CREDENTIAL_FIELDS:
+                raise PackValidationError(f"{_format_path(child_path)} is a credential field")
+            if normalized_key in _EXECUTABLE_FIELDS:
+                raise PackValidationError(f"{_format_path(child_path)} is executable content")
+            if key.startswith(("!", "&", "*", "<<")):
+                raise PackValidationError(f"{_format_path(child_path)} has a forbidden field name")
+            _check_forbidden_content(child, child_path)
+        return
+    if isinstance(value, list):
+        for index, child in enumerate(value):
+            _check_forbidden_content(child, (*path, str(index)))
+        return
+    if isinstance(value, str):
+        if _TEMPLATE_PATTERN.search(value):
+            raise PackValidationError(f"{_format_path(path)} contains template expansion")
+        if _EXECUTABLE_PATTERN.search(value):
+            raise PackValidationError(f"{_format_path(path)} contains executable content")
+        if path != ("metadata", "homepage") and _REMOTE_URL_PATTERN.match(value):
+            raise PackValidationError(f"{_format_path(path)} contains a remote URL")
+
+
+def _validate_pack(pack: SignalPack, em_radar_version: str) -> None:
+    if pack.api_version != API_VERSION:
+        raise PackValidationError(f"apiVersion must be {API_VERSION}")
+    if pack.kind != PACK_KIND:
+        raise PackValidationError(f"kind must be {PACK_KIND}")
+    if not _NAME_PATTERN.fullmatch(pack.metadata.name):
+        raise PackValidationError("metadata.name must be lowercase kebab-case")
+    _parse_semver(pack.metadata.version, "metadata.version")
+    if pack.metadata.min_emradar_version is not None:
+        minimum = _parse_semver(pack.metadata.min_emradar_version, "metadata.min_emradar_version")
+        running = _parse_semver(em_radar_version, "running EM Radar version")
+        if _compare_semver(minimum, running) > 0:
+            raise PackValidationError(
+                f"Pack requires EM Radar {pack.metadata.min_emradar_version} or newer"
+            )
+
+    for index, signal in enumerate(pack.spec.signals):
+        catalog_entry = SIGNAL_CATALOG.get(signal.id)
+        if catalog_entry is None:
+            raise PackValidationError(
+                f"spec.signals.{index}.id references unknown signal {signal.id}"
+            )
+        try:
+            catalog_entry.params_schema.model_validate(signal.params or {})
+        except ValidationError as exc:
+            raise PackValidationError(f"Invalid params for signal {signal.id}: {exc}") from exc
+
+
+def _parse_semver(version: str, field_name: str) -> tuple[int, int, int, tuple[str, ...] | None]:
+    match = _SEMVER_PATTERN.fullmatch(version)
+    if match is None:
+        raise PackValidationError(f"{field_name} must be a valid semantic version")
+    prerelease = tuple(match.group(4).split(".")) if match.group(4) is not None else None
+    return int(match.group(1)), int(match.group(2)), int(match.group(3)), prerelease
+
+
+def _compare_semver(
+    left: tuple[int, int, int, tuple[str, ...] | None],
+    right: tuple[int, int, int, tuple[str, ...] | None],
+) -> int:
+    if left[:3] != right[:3]:
+        return 1 if left[:3] > right[:3] else -1
+    left_pre, right_pre = left[3], right[3]
+    if left_pre == right_pre:
+        return 0
+    if left_pre is None:
+        return 1
+    if right_pre is None:
+        return -1
+    for left_part, right_part in zip(left_pre, right_pre, strict=False):
+        if left_part == right_part:
+            continue
+        if left_part.isdigit() and right_part.isdigit():
+            return 1 if int(left_part) > int(right_part) else -1
+        if left_part.isdigit() != right_part.isdigit():
+            return -1 if left_part.isdigit() else 1
+        return 1 if left_part > right_part else -1
+    return (len(left_pre) > len(right_pre)) - (len(left_pre) < len(right_pre))
+
+
+def _collect_warnings(
+    pack: SignalPack, context: PackValidationContext
+) -> Sequence[PackValidationWarning]:
+    warnings: list[PackValidationWarning] = []
+    severity_rank = {Severity.INFO: 0, Severity.WARNING: 1, Severity.CRITICAL: 2}
+    defaults = pack.spec.defaults
+    if defaults is not None:
+        warnings.extend(_scope_warnings(defaults.scope, context, "spec.defaults.scope"))
+    for index, signal in enumerate(pack.spec.signals):
+        catalog_entry = SIGNAL_CATALOG[signal.id]
+        effective_severity = signal.severity or (defaults.severity_override if defaults else None)
+        if (
+            effective_severity is not None
+            and severity_rank[catalog_entry.default_severity] - severity_rank[effective_severity]
+            >= 2
+        ):
+            severity_path = (
+                f"spec.signals.{index}.severity"
+                if signal.severity is not None
+                else "spec.defaults.severity_override"
+            )
+            warnings.append(
+                PackValidationWarning(
+                    code="severity-demotion",
+                    message=(
+                        f"{signal.id} is demoted from {catalog_entry.default_severity.value} "
+                        f"to {effective_severity.value}"
+                    ),
+                    path=severity_path,
+                )
+            )
+        warnings.extend(_scope_warnings(signal.scope, context, f"spec.signals.{index}.scope"))
+
+    if pack.spec.field_mappings is not None and pack.spec.field_mappings != context.field_mappings:
+        warnings.append(
+            PackValidationWarning(
+                code="advisory-field-mappings",
+                message="Field mappings are advisory and differ from the current mappings",
+                path="spec.field_mappings",
+            )
+        )
+    return warnings
+
+
+def _scope_warnings(
+    scope: SignalScope | None, context: PackValidationContext, path: str
+) -> list[PackValidationWarning]:
+    warnings: list[PackValidationWarning] = []
+    if scope is None:
+        return warnings
+    if context.project_keys is not None:
+        for project_key in scope.project_keys or []:
+            if project_key not in context.project_keys:
+                warnings.append(
+                    PackValidationWarning(
+                        code="unknown-scope-target",
+                        message=f"Project key {project_key} does not exist",
+                        path=f"{path}.project_keys",
+                    )
+                )
+    if context.repository_paths is not None:
+        for repository_path in scope.repository_paths or []:
+            if not any(
+                fnmatch(candidate, repository_path) for candidate in context.repository_paths
+            ):
+                warnings.append(
+                    PackValidationWarning(
+                        code="unknown-scope-target",
+                        message=f"Repository path {repository_path} does not exist",
+                        path=f"{path}.repository_paths",
+                    )
+                )
+    return warnings
+
+
+def _format_path(path: tuple[str, ...]) -> str:
+    return ".".join(path) or "document"
