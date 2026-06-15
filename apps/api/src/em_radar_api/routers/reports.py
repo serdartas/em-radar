@@ -122,6 +122,7 @@ async def run_report(
     connector = DemoConnector({})
 
     try:
+        users = await connector.list_users()
         projects = await connector.list_projects()
         boards = [
             board
@@ -185,7 +186,19 @@ async def run_report(
     finally:
         await connector.close()
 
-    identity = persist_fetch(session, projects=projects, boards=boards, sprints=sprints)
+    identity = persist_fetch(
+        session,
+        users=users,
+        projects=projects,
+        boards=boards,
+        sprints=sprints,
+        workitems=workitems,
+        repositories=repositories,
+        mergerequests=merge_requests,
+        reviews=reviews,
+        transitions=transitions,
+        comments=comments,
+    )
     session.add(_team_row(team))
     session.commit()
     persisted_window = _persisted_window(window, identity.identity_map)
@@ -197,10 +210,12 @@ async def run_report(
         ReportTable(
             evaluation_window_id=window.id,
             signal_pack_snapshot=_signal_pack_snapshot(),
-            status=ReportStatus.RUNNING,
+            status=ReportStatus.PENDING,
             started_at=started_at,
         ),
     )
+    report.status = ReportStatus.RUNNING
+    save_report(session, report)
 
     try:
         findings = SignalEvaluator().evaluate(
@@ -218,19 +233,23 @@ async def run_report(
             ),
             EvaluationContext(now=started_at, window=window, team=team),
         )
-        add_findings(session, [SignalFindingTable(**finding.model_dump()) for finding in findings])
+        persisted_findings = [
+            _persisted_finding(finding, identity.identity_map) for finding in findings
+        ]
+        add_findings(session, persisted_findings)
         report.status = ReportStatus.SUCCEEDED
         report.finished_at = datetime.now(timezone.utc)
         report.findings_count_by_severity = _counts_by_severity(findings)
         save_report(session, report)
     except Exception as error:
+        session.rollback()
         report.status = ReportStatus.FAILED
         report.finished_at = datetime.now(timezone.utc)
         report.error = str(error)
         save_report(session, report)
         raise
 
-    return ReportDetailResponse.from_report_with_findings(report, findings)
+    return ReportDetailResponse.from_report_with_findings(report, persisted_findings)
 
 
 @router.get("/reports", response_model=list[ReportSummaryResponse])
@@ -285,6 +304,14 @@ def _persisted_window(window: EvaluationWindow, identity_map: dict[UUID, UUID]) 
     return window.model_copy(
         update={"sprint_id": identity_map.get(window.sprint_id, window.sprint_id)}
     )
+
+
+def _persisted_finding(
+    finding: SignalFinding, identity_map: dict[UUID, UUID]
+) -> SignalFindingTable:
+    data = finding.model_dump()
+    data["entity_id"] = identity_map.get(finding.entity_id, finding.entity_id)
+    return SignalFindingTable(**data)
 
 
 def _signal_pack_snapshot() -> dict[str, object]:

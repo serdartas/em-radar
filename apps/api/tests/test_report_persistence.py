@@ -1,10 +1,13 @@
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
+import pytest
 from fastapi.testclient import TestClient
-from sqlmodel import select
+from sqlalchemy.exc import IntegrityError
+from sqlmodel import Session, select
 
 from em_radar_api.repositories.reports import get_findings, get_report
+from em_radar_api.tables import ReportTable, SignalFindingTable, WorkItemTable
 
 
 def test_demo_run_persists_succeeded_report_with_severity_counts(api_client: TestClient) -> None:
@@ -22,6 +25,30 @@ def test_demo_run_persists_succeeded_report_with_severity_counts(api_client: Tes
     assert sum(counts.values()) == len(body["findings"])
     assert counts["warning"] == len(body["findings"])
     assert body["signal_pack_snapshot"]["schema_id"] == "emradar.dev/v1"
+
+
+def test_report_run_follows_status_lifecycle(
+    api_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from em_radar_api.routers import reports
+
+    statuses: list[str] = []
+    original_create_report = reports.create_report
+    original_save_report = reports.save_report
+
+    def capture_create(session: Session, report: ReportTable) -> ReportTable:
+        statuses.append(str(report.status))
+        return original_create_report(session, report)
+
+    def capture_save(session: Session, report: ReportTable) -> ReportTable:
+        statuses.append(str(report.status))
+        return original_save_report(session, report)
+
+    monkeypatch.setattr(reports, "create_report", capture_create)
+    monkeypatch.setattr(reports, "save_report", capture_save)
+
+    assert api_client.post("/api/reports/run", json={"connector": "demo"}).status_code == 200
+    assert statuses == ["pending", "running", "succeeded"]
 
 
 def test_get_report_returns_persisted_detail_and_list(api_client: TestClient) -> None:
@@ -51,18 +78,44 @@ def test_report_survives_a_fresh_db_session(api_harness: SimpleNamespace) -> Non
     assert all(str(finding.report_id) == report_id for finding in findings)
 
 
-def test_findings_uniqueness_invariant_is_enforced(api_harness: SimpleNamespace) -> None:
-    from em_radar_api.tables import SignalFindingTable
-
+def test_findings_reference_persisted_entities(api_harness: SimpleNamespace) -> None:
     report_id = api_harness.client.post("/api/reports/run", json={"connector": "demo"}).json()["id"]
 
     with api_harness.session_factory() as session:
         findings = session.exec(
             select(SignalFindingTable).where(SignalFindingTable.report_id == UUID(report_id))
         ).all()
-        keys = {finding.uniqueness_key for finding in findings}
+        workitem_ids = set(session.exec(select(WorkItemTable.id)).all())
 
-    assert len(keys) == len(findings)
+    assert findings
+    assert {finding.entity_id for finding in findings} <= workitem_ids
+    assert len({finding.uniqueness_key for finding in findings}) == len(findings)
+
+
+def test_insert_failure_marks_report_failed(
+    api_harness: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from em_radar_api.routers import reports
+
+    def add_duplicate_findings(session: Session, findings: list[SignalFindingTable]) -> None:
+        first = findings[0]
+        duplicate_data = first.model_dump()
+        duplicate_data["id"] = uuid4()
+        duplicate = SignalFindingTable(**duplicate_data)
+        session.add_all([first, duplicate])
+        session.commit()
+
+    monkeypatch.setattr(reports, "add_findings", add_duplicate_findings)
+
+    with pytest.raises(IntegrityError):
+        api_harness.client.post("/api/reports/run", json={"connector": "demo"})
+
+    with api_harness.session_factory() as session:
+        report = session.exec(select(ReportTable)).one()
+
+    assert report.status == "failed"
+    assert report.finished_at is not None
+    assert report.error is not None
 
 
 def test_get_unknown_report_returns_404(api_client: TestClient) -> None:
