@@ -31,6 +31,9 @@ where = [
     "packages/normalizer/src",
 ]
 
+[tool.setuptools.data-files]
+"packages/config/defaults" = ["packages/config/defaults/default-pack.yaml"]
+
 [tool.pytest.ini_options]
 pythonpath = ["apps/api/src"]
 
