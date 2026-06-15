@@ -1,13 +1,19 @@
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
+from sqlalchemy.orm import sessionmaker
+from sqlmodel import Session
 from starlette.exceptions import HTTPException
 from starlette.responses import Response
 from starlette.staticfiles import StaticFiles
 from starlette.types import Scope
 
+from em_radar_api.db import session_factory
 from em_radar_api.routers.health import router as health_router
 from em_radar_api.routers.reports import router as reports_router
+from em_radar_api.startup import seed_default_signal_configs
 
 
 class SPAStaticFiles(StaticFiles):
@@ -28,8 +34,17 @@ def _is_api_path(path: str) -> bool:
     return path == "/api" or path.startswith("/api/")
 
 
-def create_app(static_dir: Path | None = None) -> FastAPI:
-    app = FastAPI(title="EM Radar")
+def create_app(
+    static_dir: Path | None = None,
+    app_session_factory: sessionmaker[Session] = session_factory,
+) -> FastAPI:
+    @asynccontextmanager
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        del app
+        seed_default_signal_configs(app_session_factory)
+        yield
+
+    app = FastAPI(title="EM Radar", lifespan=lifespan)
     app.include_router(health_router, prefix="/api")
     app.include_router(reports_router, prefix="/api")
 
