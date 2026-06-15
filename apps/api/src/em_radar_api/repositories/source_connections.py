@@ -12,11 +12,16 @@ from em_radar_api.source_connections import (
     SourceConnectionTable,
     SourceConnectionUpdate,
 )
+from em_radar_api.tables import TeamProfileTable
 from em_radar_core.connectors import ConnectorBase
 
 ConnectorT = TypeVar("ConnectorT", bound=ConnectorBase)
 CREDENTIAL_FIELD_NAMES = frozenset({"token", "password", "api_key", "secret", "authorization"})
 SECRET_MARKER = "__em_radar_secret__"
+
+
+class SourceConnectionInUse(ValueError):
+    pass
 
 
 def create_source_connection(
@@ -50,6 +55,8 @@ def update_source_connection(
     values = update.model_dump(exclude_unset=True)
     if "config" in values:
         values["config"] = _stored_config(cast(Mapping[str, object], values["config"]))
+    candidate = SourceConnectionTable.model_validate(row, update=values)
+    _validate_team_scopes(session, connection_id, candidate)
     row.sqlmodel_update(values)
     _write(session, row)
     return _masked_read(row)
@@ -59,6 +66,8 @@ def delete_source_connection(session: Session, connection_id: UUID) -> bool:
     row = session.get(SourceConnectionTable, connection_id)
     if row is None:
         return False
+    if _referencing_teams(session, connection_id):
+        raise SourceConnectionInUse("source connection is referenced by a team")
     session.delete(row)
     session.commit()
     return True
@@ -79,6 +88,44 @@ def _write(session: Session, row: SourceConnectionTable) -> None:
     session.add(row)
     session.commit()
     session.refresh(row)
+
+
+def _validate_team_scopes(
+    session: Session,
+    connection_id: UUID,
+    candidate: SourceConnectionTable,
+) -> None:
+    for team in _referencing_teams(session, connection_id):
+        connections = [
+            candidate
+            if referenced_id == connection_id
+            else session.get(SourceConnectionTable, referenced_id)
+            for referenced_id in team.connection_ids
+        ]
+        scoped_ids = (
+            ("project_ids", team.project_ids, "selected_project_ids"),
+            ("board_ids", team.board_ids, "selected_board_ids"),
+            ("repository_ids", team.repository_ids, "selected_repository_ids"),
+        )
+        for field_name, values, connection_field in scoped_ids:
+            available = {
+                item
+                for connection in connections
+                if connection is not None
+                for item in getattr(connection, connection_field)
+            }
+            if not set(values).issubset(available):
+                raise SourceConnectionInUse(
+                    f"source connection update would invalidate team {field_name}"
+                )
+
+
+def _referencing_teams(session: Session, connection_id: UUID) -> list[TeamProfileTable]:
+    return [
+        team
+        for team in session.exec(select(TeamProfileTable)).all()
+        if connection_id in team.connection_ids
+    ]
 
 
 def _masked_read(row: SourceConnectionTable) -> SourceConnectionRead:

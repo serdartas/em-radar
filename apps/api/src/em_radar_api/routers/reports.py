@@ -287,13 +287,7 @@ def _evaluation_window(
 
 
 def _team_row(team: TeamProfile) -> TeamProfileTable:
-    """Persist the team so the evaluation window FK resolves. ``TeamProfile``'s scope id
-    lists use plain JSON columns (typed CRUD arrives with M2-14), so ids are stored as
-    strings here rather than raw ``UUID`` objects the JSON encoder cannot serialize."""
-    data = team.model_dump()
-    for field in ("connection_ids", "project_ids", "board_ids", "repository_ids"):
-        data[field] = [str(value) for value in data[field]]
-    return TeamProfileTable(**data)
+    return TeamProfileTable.model_validate(team)
 
 
 def _persisted_window(window: EvaluationWindow, identity_map: dict[UUID, UUID]) -> EvaluationWindow:
