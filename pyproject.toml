@@ -19,6 +19,7 @@ dev = [
     "alembic>=1.18.4",
     "fastapi",
     "httpx",
+    "jsonschema",
     "pytest",
     "ruff",
 ]
