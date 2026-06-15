@@ -15,6 +15,7 @@ from em_radar_api.routers.connectors import router as connectors_router
 from em_radar_api.routers.health import router as health_router
 from em_radar_api.routers.reports import router as reports_router
 from em_radar_api.routers.signal_pack import router as signal_pack_router
+from em_radar_api.routers.teams import router as teams_router
 from em_radar_api.startup import seed_default_signal_configs
 
 
@@ -51,6 +52,7 @@ def create_app(
     app.include_router(health_router, prefix="/api")
     app.include_router(reports_router, prefix="/api")
     app.include_router(signal_pack_router, prefix="/api")
+    app.include_router(teams_router, prefix="/api")
 
     static_dir = static_dir or Path(__file__).parent / "static"
     if static_dir.is_dir():

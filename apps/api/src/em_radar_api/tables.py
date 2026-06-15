@@ -5,7 +5,7 @@ from sqlmodel import Field
 
 from em_radar_api.models.signal_pack_history import SignalPackHistory  # noqa: F401
 from em_radar_api.signal_configs import SignalConfigTable  # noqa: F401
-from em_radar_api.source_connections import SourceConnectionTable  # noqa: F401
+from em_radar_api.source_connections import SourceConnectionTable, UUIDListJSON  # noqa: F401
 
 from em_radar_core.models import (
     Board,
@@ -118,6 +118,10 @@ class TeamProfileTable(TeamProfile, table=True):
     __tablename__ = "team_profile"
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
+    connection_ids: list[UUID] = Field(default_factory=list, sa_type=UUIDListJSON)
+    project_ids: list[UUID] = Field(sa_type=UUIDListJSON)
+    board_ids: list[UUID] = Field(default_factory=list, sa_type=UUIDListJSON)
+    repository_ids: list[UUID] = Field(sa_type=UUIDListJSON)
 
 
 class EvaluationWindowTable(EvaluationWindow, table=True):
