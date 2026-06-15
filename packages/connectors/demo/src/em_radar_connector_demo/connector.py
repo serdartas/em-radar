@@ -54,7 +54,9 @@ class DemoConnector:
             permissions=["read"],
         )
 
-    def describe_capabilities(self) -> Capabilities:
+    @classmethod
+    def describe_capabilities(cls) -> Capabilities:
+        del cls
         return Capabilities(
             provides_workitems=True,
             provides_sprints=True,
