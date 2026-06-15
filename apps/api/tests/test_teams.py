@@ -135,3 +135,14 @@ def test_team_scope_ids_must_belong_to_existing_connections(
 
     assert response.status_code == 422
     assert response.json()["detail"] == "project_ids must reference the selected connections"
+
+
+def test_team_referenced_by_evaluation_window_cannot_be_deleted(api_client: TestClient) -> None:
+    assert api_client.post("/api/reports/run", json={"connector": "demo"}).status_code == 200
+    team = api_client.get("/api/teams").json()[0]
+
+    response = api_client.delete(f"/api/teams/{team['id']}")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "team is referenced by an evaluation window"
+    assert api_client.get(f"/api/teams/{team['id']}").status_code == 200

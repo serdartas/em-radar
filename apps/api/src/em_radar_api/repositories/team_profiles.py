@@ -5,12 +5,16 @@ from pydantic import ValidationError
 from sqlmodel import Session, select
 
 from em_radar_api.source_connections import SourceConnectionTable
-from em_radar_api.tables import TeamProfileTable
+from em_radar_api.tables import EvaluationWindowTable, TeamProfileTable
 from em_radar_api.team_profiles import TeamProfileCreate, TeamProfileRead, TeamProfileUpdate
 from em_radar_core.models import WorkingMode
 
 
 class InvalidTeamProfile(ValueError):
+    pass
+
+
+class TeamProfileInUse(ValueError):
     pass
 
 
@@ -63,6 +67,11 @@ def delete_team_profile(session: Session, team_id: UUID) -> bool:
     row = session.get(TeamProfileTable, team_id)
     if row is None:
         return False
+    window = session.exec(
+        select(EvaluationWindowTable).where(EvaluationWindowTable.team_profile_id == team_id)
+    ).first()
+    if window is not None:
+        raise TeamProfileInUse("team is referenced by an evaluation window")
     session.delete(row)
     session.commit()
     return True

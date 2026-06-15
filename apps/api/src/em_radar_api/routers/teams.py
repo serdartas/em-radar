@@ -7,6 +7,7 @@ from starlette.responses import Response
 from em_radar_api.db import get_session, get_write_session
 from em_radar_api.repositories.team_profiles import (
     InvalidTeamProfile,
+    TeamProfileInUse,
     create_team_profile,
     delete_team_profile,
     get_team_profile,
@@ -59,8 +60,11 @@ def patch_team(
 
 @router.delete("/teams/{team_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_team(team_id: UUID, session: Session = Depends(get_write_session)) -> Response:
-    if not delete_team_profile(session, team_id):
-        raise _team_not_found()
+    try:
+        if not delete_team_profile(session, team_id):
+            raise _team_not_found()
+    except TeamProfileInUse as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
