@@ -64,6 +64,41 @@ def test_connection_success_returns_user_and_permissions(monkeypatch: pytest.Mon
     asyncio.run(run())
 
 
+def test_connection_uses_bearer_for_pat_only_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token = "jira-token-1234"
+
+    async def run() -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            assert request.headers["authorization"] == f"Bearer {token}"
+            if request.url.path == "/rest/api/3/myself":
+                return httpx.Response(200, json={"displayName": "Jira User"})
+            if request.url.path == "/rest/api/3/mypermissions":
+                return httpx.Response(200, json={"permissions": {}})
+            raise AssertionError(f"unexpected path: {request.url.path}")
+
+        monkeypatch.setattr(
+            jira_connector_module,
+            "CLIENT_FACTORY",
+            _client_factory_for(handler),
+        )
+        connector = JiraConnector(
+            {
+                "base_url": "https://jira.example.com",
+                "token": token,
+            }
+        )
+        result = await connector.test_connection()
+        await connector.close()
+
+        assert result.ok is True
+        assert result.user_display_name == "Jira User"
+        assert result.permissions == []
+
+    asyncio.run(run())
+
+
 def test_connection_raises_auth_error_on_401(monkeypatch: pytest.MonkeyPatch) -> None:
     token = "jira-token-1234"
 
