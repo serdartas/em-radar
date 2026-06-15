@@ -109,7 +109,11 @@ describe("SourceConnectionsPage", () => {
     )
     renderPage()
 
-    fireEvent.click(await screen.findByRole("button", { name: "Test connection" }))
+    fireEvent.change(await screen.findByLabelText(/Base URL/), {
+      target: { value: "https://demo.invalid" },
+    })
+    fireEvent.change(screen.getByLabelText(/Token/), { target: { value: "rejected-token" } })
+    fireEvent.click(screen.getByRole("button", { name: "Test connection" }))
 
     await waitFor(() => {
       expect(screen.getByText("Credentials were rejected.")).toBeInTheDocument()

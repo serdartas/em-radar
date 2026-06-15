@@ -62,7 +62,7 @@ afterEach(() => {
 
 describe("ReportRunnerPage", () => {
   it("runs the demo report and navigates to the persisted results", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const url = typeof input === "string" ? input : input.toString()
       if (url.endsWith("/api/reports/run")) {
         return Promise.resolve(jsonResponse(report))

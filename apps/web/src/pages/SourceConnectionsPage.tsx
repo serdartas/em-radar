@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 
 import { SchemaForm } from "@/components/SchemaForm"
@@ -51,7 +51,7 @@ export function SourceConnectionsPage() {
   const connectorsQuery = useQuery({ queryKey: ["connectors"], queryFn: getConnectors })
   const connectionsQuery = useQuery({ queryKey: ["connections"], queryFn: listConnections })
 
-  const connectors = connectorsQuery.data ?? []
+  const connectors = useMemo(() => connectorsQuery.data ?? [], [connectorsQuery.data])
   const [connectorName, setConnectorName] = useState("")
   const [values, setValues] = useState<Record<string, unknown>>({})
   const [editingId, setEditingId] = useState<string | null>(null)
