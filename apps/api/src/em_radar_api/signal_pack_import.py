@@ -3,9 +3,11 @@ from sqlmodel import Session, select
 
 from em_radar_api.models.signal_pack_history import SignalPackHistory
 from em_radar_api.signal_configs import SignalConfigRead, SignalConfigTable, SignalConfigUpsert
+from em_radar_api.tables import ProjectTable, RepositoryTable
 from em_radar_config import (
     SIGNAL_CATALOG,
     PackLoadResult,
+    PackValidationContext,
     PackValidationWarning,
     SignalEntry,
     SignalPack,
@@ -54,7 +56,7 @@ def preview_signal_pack_import(
     *,
     replace_all: bool = False,
 ) -> SignalPackImportPreview:
-    result = load_signal_pack(raw_yaml)
+    result = load_signal_pack(raw_yaml, _validation_context(session))
     configs = {
         config.signal_id: config
         for config in session.exec(select(SignalConfigTable).order_by(SignalConfigTable.signal_id))
@@ -68,7 +70,7 @@ def apply_signal_pack_import(
     *,
     replace_all: bool = False,
 ) -> SignalPackImportPreview:
-    result = load_signal_pack(raw_yaml)
+    result = load_signal_pack(raw_yaml, _validation_context(session))
     rows = {
         row.signal_id: row
         for row in session.exec(select(SignalConfigTable).order_by(SignalConfigTable.signal_id))
@@ -189,3 +191,10 @@ def _write_config(rows: dict[str, SignalConfigTable], config: SignalConfigUpsert
 
 def _import_warning(warning: PackValidationWarning) -> ImportWarning:
     return ImportWarning(code=warning.code, message=warning.message, path=warning.path)
+
+
+def _validation_context(session: Session) -> PackValidationContext:
+    return PackValidationContext(
+        project_keys=frozenset(session.exec(select(ProjectTable.key))),
+        repository_paths=frozenset(session.exec(select(RepositoryTable.full_path))),
+    )

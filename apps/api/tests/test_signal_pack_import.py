@@ -5,7 +5,8 @@ from sqlmodel import Session, select
 from em_radar_api.models.signal_pack_history import SignalPackHistory
 from em_radar_api.repositories.signal_configs import list_signal_configs, upsert_signal_config
 from em_radar_api.signal_configs import SignalConfigUpsert
-from em_radar_core.models import Severity
+from em_radar_api.tables import ProjectTable, RepositoryTable
+from em_radar_core.models import Severity, Source
 
 MINIMAL_PACK = """\
 apiVersion: emradar.dev/v1
@@ -22,6 +23,16 @@ spec:
       params:
         days_threshold: 2
 """
+
+SCOPED_PACK = MINIMAL_PACK.replace(
+    "      params:\n",
+    """\
+      scope:
+        project_keys: [KNOWN, MISSING]
+        repository_paths: [known/repository, missing/*]
+      params:
+""",
+)
 
 
 def test_import_preview_and_additive_apply_change_only_pack_signals_and_store_yaml(
@@ -107,6 +118,47 @@ def test_invalid_pack_is_rejected_without_state_change(
         assert len(configs) == 1
         assert configs[0].params == {"days_threshold": 1}
         assert list(session.exec(select(SignalPackHistory))) == []
+
+
+def test_import_preview_warns_about_unknown_scope_targets(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+) -> None:
+    with session_factory() as session:
+        session.add(
+            ProjectTable(
+                source=Source.DEMO,
+                external_id="known-project",
+                key="KNOWN",
+                name="Known project",
+            )
+        )
+        session.add(
+            RepositoryTable(
+                source=Source.DEMO,
+                external_id="known-repository",
+                name="Known repository",
+                full_path="known/repository",
+                default_branch="main",
+            )
+        )
+        session.commit()
+
+    response = api_client.post("/api/signal-pack/import", json={"raw_yaml": SCOPED_PACK})
+
+    assert response.status_code == 200
+    assert response.json()["warnings"] == [
+        {
+            "code": "unknown-scope-target",
+            "message": "Project key MISSING does not exist",
+            "path": "spec.signals.0.scope.project_keys",
+        },
+        {
+            "code": "unknown-scope-target",
+            "message": "Repository path missing/* does not exist",
+            "path": "spec.signals.0.scope.repository_paths",
+        },
+    ]
 
 
 def test_replace_all_resets_signals_not_in_pack(
