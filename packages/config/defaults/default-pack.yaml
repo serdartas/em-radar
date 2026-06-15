@@ -1,0 +1,76 @@
+apiVersion: emradar.dev/v1
+kind: SignalPack
+metadata:
+  name: default
+  version: 1.0.0
+  description: Default EM Radar signal pack with the documented MVP catalog settings.
+spec:
+  defaults:
+    severity_override: null
+  signals:
+    - id: stale-in-progress-work-item
+      enabled: true
+      severity: warning
+      params:
+        days_threshold: 7
+        exclude_labels: []
+    - id: blocked-without-update
+      enabled: true
+      severity: critical
+      params:
+        days_threshold: 3
+    - id: story-without-acceptance-criteria
+      enabled: true
+      severity: warning
+      params: {}
+    - id: story-without-parent-epic
+      enabled: true
+      severity: info
+      params: {}
+    - id: epic-too-broad
+      enabled: true
+      severity: warning
+      params:
+        max_children: 15
+    - id: epic-without-measurable-description
+      enabled: true
+      severity: info
+      params:
+        min_description_length: 100
+    - id: repeated-carry-over
+      enabled: true
+      severity: warning
+      params:
+        min_sprint_count: 2
+    - id: sprint-scope-churn
+      enabled: true
+      severity: warning
+      params:
+        warning_pct: 20.0
+        critical_pct: 35.0
+    - id: mergerequest-waiting-too-long
+      enabled: true
+      severity: warning
+      params:
+        days_threshold: 3
+    - id: mergerequest-without-linked-workitem
+      enabled: true
+      severity: warning
+      params:
+        workitem_key_pattern: "[A-Z]+-\\d+"
+    - id: large-mergerequest-risk
+      enabled: true
+      severity: warning
+      params:
+        max_files: 20
+        max_changes: 500
+    - id: failing-pipeline-too-long
+      enabled: true
+      severity: warning
+      params:
+        days_threshold: 1
+    - id: merged-without-enough-approval
+      enabled: true
+      severity: critical
+      params:
+        min_approvals: 1

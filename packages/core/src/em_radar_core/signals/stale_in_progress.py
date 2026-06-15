@@ -77,4 +77,3 @@ class StaleInProgressSignal(Signal):
             source_link=item.source_url,
             created_at=ctx.now,
         )
-

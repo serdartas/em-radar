@@ -17,4 +17,3 @@ __all__ = [
     "StaleInProgressSignal",
     "default_registry",
 ]
-

@@ -56,7 +56,9 @@ async def _assert_two_connectors_produce_identical_documented_fixture() -> None:
     sprints = [sprint for board in boards for sprint in await first.list_sprints(str(board.id))]
     repositories = await first.list_repositories()
     active_sprint = next(sprint for sprint in sprints if sprint.state is SprintState.ACTIVE)
-    workitem_scope = WorkItemScope(project_external_ids=[project.external_id for project in projects])
+    workitem_scope = WorkItemScope(
+        project_external_ids=[project.external_id for project in projects]
+    )
     mr_scope = MergeRequestScope(
         repository_external_ids=[repository.external_id for repository in repositories],
         include_closed_unmerged=True,
@@ -79,9 +81,7 @@ async def _assert_two_connectors_produce_identical_documented_fixture() -> None:
         first.fetch_reviews([merge_request.external_id for merge_request in merge_requests])
     )
     transitions = await collect(
-        first.fetch_transitions(
-            "workitem", [workitem.external_id for workitem in all_workitems]
-        )
+        first.fetch_transitions("workitem", [workitem.external_id for workitem in all_workitems])
     )
     workitem_comments = await collect(
         first.fetch_comments("workitem", [workitem.external_id for workitem in all_workitems])
@@ -174,8 +174,7 @@ async def _assert_connection_capabilities_protocols_and_entry_point() -> None:
         )
     )
     assert any(
-        entry_point.name == "demo"
-        and entry_point.value == "em_radar_connector_demo:DemoConnector"
+        entry_point.name == "demo" and entry_point.value == "em_radar_connector_demo:DemoConnector"
         for entry_point in registered
     )
 

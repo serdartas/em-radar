@@ -54,4 +54,3 @@ class Signal(ABC):
     @abstractmethod
     def evaluate(self, data: SignalData, ctx: EvaluationContext) -> list[SignalFinding]:
         """Evaluate canonical data using `ctx.now` as the only current-time source."""
-

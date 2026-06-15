@@ -18,6 +18,7 @@ dev = [
     "alembic>=1.18.4",
     "fastapi",
     "httpx",
+    "pyyaml",
     "pytest",
     "ruff",
 ]
@@ -26,8 +27,12 @@ dev = [
 where = [
     "packages/core/src",
     "packages/connectors/demo/src",
+    "packages/config/src",
     "packages/normalizer/src",
 ]
+
+[tool.setuptools.data-files]
+"packages/config/defaults" = ["packages/config/defaults/default-pack.yaml"]
 
 [tool.pytest.ini_options]
 pythonpath = ["apps/api/src"]
