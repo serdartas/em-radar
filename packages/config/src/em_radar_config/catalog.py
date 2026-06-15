@@ -6,7 +6,7 @@ from em_radar_core.models import Severity
 
 
 class CatalogParams(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
 
 class StaleInProgressWorkItemParams(CatalogParams):
