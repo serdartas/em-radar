@@ -1,11 +1,16 @@
-export type FindingSeverity = "critical" | "info" | "warning"
+import { apiFetch } from "@/lib/api"
+import type { Severity } from "@/lib/severity"
+
+export type Confidence = "high" | "low" | "medium"
+export type EntityType = "mergerequest" | "repository" | "sprint" | "workitem"
+export type ReportStatus = "failed" | "pending" | "running" | "succeeded"
 
 export interface Finding {
   signal_id: string
   signal_name: string
-  severity: FindingSeverity
-  confidence: "high" | "low" | "medium"
-  entity_type: "mergerequest" | "repository" | "sprint" | "workitem"
+  severity: Severity
+  confidence: Confidence
+  entity_type: EntityType
   entity_id: string
   title: string
   reason: string
@@ -14,24 +19,32 @@ export interface Finding {
   source_link: string | null
 }
 
-interface ReportRunResponse {
+export interface ReportSummary {
+  id: string
+  evaluation_window_id: string
+  status: ReportStatus
+  started_at: string
+  finished_at: string | null
+  error: string | null
+  findings_count_by_severity: Partial<Record<Severity, number>>
+}
+
+export interface ReportDetail extends ReportSummary {
+  signal_pack_snapshot: unknown
   findings: Finding[]
 }
 
-const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? "/api").replace(/\/$/, "")
-
-export async function runDemoReport(): Promise<ReportRunResponse> {
-  const response = await fetch(`${apiBaseUrl}/reports/run`, {
+export async function runDemoReport(): Promise<ReportDetail> {
+  return apiFetch<ReportDetail>("/reports/run", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
     body: JSON.stringify({ connector: "demo" }),
   })
+}
 
-  if (!response.ok) {
-    throw new Error("The demo report could not be run.")
-  }
+export async function listReports(): Promise<ReportSummary[]> {
+  return apiFetch<ReportSummary[]>("/reports")
+}
 
-  return response.json() as Promise<ReportRunResponse>
+export async function getReport(reportId: string): Promise<ReportDetail> {
+  return apiFetch<ReportDetail>(`/reports/${reportId}`)
 }
