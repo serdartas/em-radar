@@ -38,6 +38,8 @@ spec:
         ("id: blocked-without-update", "id: unknown-signal"),
         ("days_threshold: 3", "unknown: 3"),
         ("days_threshold: 3", 'days_threshold: "3"'),
+        ("enabled: true", "enabled: 1"),
+        ("enabled: true", 'enabled: "false"'),
     ],
 )
 def test_hard_validation_rules_reject_invalid_packs(old: str, new: str) -> None:
@@ -48,6 +50,15 @@ def test_hard_validation_rules_reject_invalid_packs(old: str, new: str) -> None:
 def test_missing_api_version_is_rejected() -> None:
     with pytest.raises(PackValidationError):
         load_signal_pack(VALID_PACK.replace("apiVersion: emradar.dev/v1\n", ""))
+
+
+def test_duplicate_mapping_keys_are_rejected() -> None:
+    yaml_text = VALID_PACK.replace(
+        "      enabled: true", "      enabled: true\n      enabled: false"
+    )
+
+    with pytest.raises(PackValidationError, match="duplicate key"):
+        load_signal_pack(yaml_text)
 
 
 def test_minimum_em_radar_version_is_honored() -> None:

@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict, Field, JsonValue
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, StrictBool
 
 from em_radar_core.models import Severity, WorkItemType
 
@@ -23,7 +23,7 @@ class PackDefaults(PackModel):
 
 class SignalEntry(PackModel):
     id: str
-    enabled: bool
+    enabled: StrictBool
     severity: Severity | None = None
     scope: SignalScope | None = None
     params: dict[str, JsonValue] | None = None

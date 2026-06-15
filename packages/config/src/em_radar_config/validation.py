@@ -1,11 +1,13 @@
-from collections.abc import Mapping, Sequence
+from collections.abc import Hashable, Mapping, Sequence
 from dataclasses import dataclass, field
 from fnmatch import fnmatch
 import re
 
 from pydantic import ValidationError
 import yaml
+from yaml.constructor import ConstructorError
 from yaml.events import AliasEvent, CollectionStartEvent, ScalarEvent
+from yaml.nodes import MappingNode
 
 from em_radar_config.catalog import SIGNAL_CATALOG
 from em_radar_config.models import FieldMappings, SignalPack, SignalScope
@@ -27,6 +29,29 @@ _TEMPLATE_PATTERN = re.compile(r"\$\{[^}]+\}|\{\{.*?\}\}|<%.*?%>")
 _EXECUTABLE_PATTERN = re.compile(r"^(?:#!|javascript:)|\b(?:eval|exec)\s*\(", re.IGNORECASE)
 _REMOTE_URL_PATTERN = re.compile(r"^(?:https?|ftp)://", re.IGNORECASE)
 _MAX_ALIASES = 20
+
+
+class _UniqueKeySafeLoader(yaml.SafeLoader):
+    def construct_mapping(self, node: MappingNode, deep: bool = False) -> dict[object, object]:
+        seen: set[object] = set()
+        for key_node, _ in node.value:
+            key = self.construct_object(key_node, deep=False)
+            if not isinstance(key, Hashable):
+                raise ConstructorError(
+                    "while constructing a mapping",
+                    node.start_mark,
+                    "found an unhashable mapping key",
+                    key_node.start_mark,
+                )
+            if key in seen:
+                raise ConstructorError(
+                    "while constructing a mapping",
+                    node.start_mark,
+                    f"found duplicate key {key!r}",
+                    key_node.start_mark,
+                )
+            seen.add(key)
+        return super().construct_mapping(node, deep=deep)
 
 
 class PackValidationError(ValueError):
@@ -87,7 +112,7 @@ def _safe_load(yaml_text: str) -> object:
                         raise PackValidationError("YAML contains too many anchors")
                 if event.tag is not None and not event.tag.startswith("tag:yaml.org,2002:"):
                     raise PackValidationError("YAML tagged constructors are forbidden")
-        value = yaml.safe_load(yaml_text)
+        value = yaml.load(yaml_text, Loader=_UniqueKeySafeLoader)
     except PackValidationError:
         raise
     except yaml.YAMLError as exc:
