@@ -36,7 +36,9 @@ class StubConnector:
     async def test_connection(self) -> ConnectionTestResult:
         return ConnectionTestResult(ok=True, detail="Connected")
 
-    def describe_capabilities(self) -> Capabilities:
+    @classmethod
+    def describe_capabilities(cls) -> Capabilities:
+        del cls
         return Capabilities()
 
     async def close(self) -> None:

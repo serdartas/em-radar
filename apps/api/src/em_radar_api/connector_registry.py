@@ -9,8 +9,11 @@ from jsonschema import SchemaError, ValidationError, validators
 from em_radar_core.connectors import (
     ConnectorBase,
     ConnectorConfigError,
+    ConnectorError,
     ConnectorNotFoundError,
 )
+
+from em_radar_api.db import schema_version
 
 ENTRY_POINT_GROUP = "em_radar.connectors"
 CREDENTIAL_FIELD_NAMES = frozenset({"token", "password", "api_key", "secret", "authorization"})
@@ -22,9 +25,9 @@ def list_connectors() -> list[dict[str, object]]:
             "name": connector_type.name,
             "display_name": connector_type.display_name,
             "config_schema": _schema_with_secret_flags(connector_type.config_schema),
-            "capabilities": asdict(connector_type({}).describe_capabilities()),
+            "capabilities": asdict(connector_type.describe_capabilities()),
         }
-        for connector_type in _connector_types()
+        for connector_type in _compatible_connector_types()
     ]
 
 
@@ -54,11 +57,27 @@ def _connector_types() -> list[type[ConnectorBase]]:
     )
 
 
+def _compatible_connector_types() -> list[type[ConnectorBase]]:
+    connector_types = _connector_types()
+    for connector_type in connector_types:
+        _ensure_compatible(connector_type)
+    return connector_types
+
+
 def _connector_type(name: str) -> type[ConnectorBase]:
     for connector_type in _connector_types():
         if connector_type.name == name:
+            _ensure_compatible(connector_type)
             return connector_type
     raise ConnectorNotFoundError(f"Connector {name!r} is not registered")
+
+
+def _ensure_compatible(connector_type: type[ConnectorBase]) -> None:
+    if connector_type.min_model_version > schema_version:
+        raise ConnectorError(
+            f"Connector {connector_type.name!r} requires canonical model version "
+            f"{connector_type.min_model_version}; upgrade EM Radar from version {schema_version}"
+        )
 
 
 def _schema_with_secret_flags(schema: Mapping[str, object]) -> dict[str, object]:

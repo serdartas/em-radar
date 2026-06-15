@@ -8,6 +8,7 @@ from em_radar_core.connectors import (
     ConnectionTestResult,
     ConnectorBase,
     ConnectorConfigError,
+    ConnectorError,
     ConnectorNotFoundError,
 )
 
@@ -27,12 +28,16 @@ class ConfiguredConnector:
     min_model_version: ClassVar[int] = 1
 
     def __init__(self, config: dict[str, object]) -> None:
+        if "token" not in config:
+            raise ValueError("token is required")
         self.config = config
 
     async def test_connection(self) -> ConnectionTestResult:
         return ConnectionTestResult(ok=True, detail="Connected")
 
-    def describe_capabilities(self) -> Capabilities:
+    @classmethod
+    def describe_capabilities(cls) -> Capabilities:
+        del cls
         return Capabilities(provides_workitems=True)
 
     async def close(self) -> None:
@@ -101,3 +106,22 @@ def test_registry_flags_secrets_and_factory_validates_config(
 
     with pytest.raises(ConnectorNotFoundError):
         create_connector("missing", {})
+
+
+def test_registry_rejects_connector_requiring_newer_model_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class IncompatibleConnector(ConfiguredConnector):
+        name = "incompatible"
+        min_model_version = 2
+
+    monkeypatch.setattr(
+        "em_radar_api.connector_registry._connector_types",
+        lambda: [IncompatibleConnector],
+    )
+
+    with pytest.raises(ConnectorError, match="upgrade EM Radar"):
+        list_connectors()
+
+    with pytest.raises(ConnectorError, match="upgrade EM Radar"):
+        create_connector("incompatible", {})
