@@ -9,6 +9,7 @@ dependencies = [
 
 [project.entry-points."em_radar.connectors"]
 demo = "em_radar_connector_demo:DemoConnector"
+jira = "em_radar_connector_jira:JiraConnector"
 
 [build-system]
 requires = ["setuptools"]
@@ -28,6 +29,7 @@ dev = [
 where = [
     "packages/core/src",
     "packages/connectors/demo/src",
+    "packages/connectors/jira/src",
     "packages/config/src",
     "packages/normalizer/src",
 ]
