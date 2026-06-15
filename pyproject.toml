@@ -3,6 +3,7 @@ name = "em-radar-core"
 version = "0.0.0"
 requires-python = ">=3.12"
 dependencies = [
+    "pyyaml",
     "sqlmodel",
 ]
 
@@ -18,7 +19,6 @@ dev = [
     "alembic>=1.18.4",
     "fastapi",
     "httpx",
-    "pyyaml",
     "pytest",
     "ruff",
 ]
