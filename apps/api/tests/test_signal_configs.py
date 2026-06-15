@@ -13,6 +13,7 @@ from em_radar_api.signal_configs import SignalConfigUpsert
 from em_radar_core.models import Severity
 
 SIGNAL_ID = "stale-in-progress-work-item"
+UNIMPLEMENTED_SIGNAL_ID = "blocked-without-update"
 
 
 def test_signal_config_upsert_and_reset_to_catalog_defaults() -> None:
@@ -58,12 +59,44 @@ def test_reset_all_restores_defaults_without_seeding_missing_rows() -> None:
             session,
             SignalConfigUpsert(signal_id=SIGNAL_ID, enabled=False, params={"days_threshold": 1}),
         )
+        upsert_signal_config(
+            session,
+            SignalConfigUpsert(
+                signal_id=UNIMPLEMENTED_SIGNAL_ID,
+                enabled=False,
+                params={"days_threshold": 1},
+            ),
+        )
 
         reset = reset_all_signal_configs(session)
 
-        assert len(reset) == 1
-        assert reset[0].enabled
-        assert reset[0].params == {"days_threshold": 7, "exclude_labels": []}
+        assert len(reset) == 2
+        assert all(config.enabled for config in reset)
+        assert {config.signal_id: config.params for config in reset} == {
+            SIGNAL_ID: {"days_threshold": 7, "exclude_labels": []},
+            UNIMPLEMENTED_SIGNAL_ID: {"days_threshold": 3},
+        }
+
+
+def test_unimplemented_catalog_signal_can_be_upserted_and_reset() -> None:
+    engine = create_db_engine(":memory:")
+    SQLModel.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        created = upsert_signal_config(
+            session,
+            SignalConfigUpsert(
+                signal_id=UNIMPLEMENTED_SIGNAL_ID,
+                enabled=False,
+                params={"days_threshold": 1},
+            ),
+        )
+
+        reset = reset_signal_config(session, UNIMPLEMENTED_SIGNAL_ID)
+
+        assert reset.id == created.id
+        assert reset.enabled
+        assert reset.params == {"days_threshold": 3}
 
 
 def test_unknown_signal_id_is_rejected() -> None:

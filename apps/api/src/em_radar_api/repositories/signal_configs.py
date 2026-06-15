@@ -1,18 +1,17 @@
 from sqlmodel import Session, select
 
 from em_radar_api.signal_configs import SignalConfigRead, SignalConfigTable, SignalConfigUpsert
-from em_radar_core.signals import Signal, SignalRegistry, default_registry
+from em_radar_config import SIGNAL_CATALOG, SignalCatalogEntry
 
 
 def upsert_signal_config(
     session: Session,
     config: SignalConfigUpsert,
-    registry: SignalRegistry = default_registry,
 ) -> SignalConfigRead:
-    signal_type = _get_signal_type(config.signal_id, registry)
+    catalog_entry = _get_catalog_entry(config.signal_id)
     normalized_config = config.model_copy(
         update={
-            "params": signal_type.params_schema.model_validate(config.params).model_dump(
+            "params": catalog_entry.params_schema.model_validate(config.params).model_dump(
                 mode="json"
             )
         }
@@ -34,13 +33,12 @@ def list_signal_configs(session: Session) -> list[SignalConfigRead]:
 def reset_signal_config(
     session: Session,
     signal_id: str,
-    registry: SignalRegistry = default_registry,
 ) -> SignalConfigRead:
-    signal_type = _get_signal_type(signal_id, registry)
+    catalog_entry = _get_catalog_entry(signal_id)
     row = _get_row(session, signal_id)
     defaults = SignalConfigUpsert(
         signal_id=signal_id,
-        params=signal_type.params_schema().model_dump(mode="json"),
+        params=catalog_entry.params_schema().model_dump(mode="json"),
     )
     if row is None:
         row = SignalConfigTable.model_validate(defaults)
@@ -50,15 +48,12 @@ def reset_signal_config(
     return SignalConfigRead.model_validate(row)
 
 
-def reset_all_signal_configs(
-    session: Session,
-    registry: SignalRegistry = default_registry,
-) -> list[SignalConfigRead]:
+def reset_all_signal_configs(session: Session) -> list[SignalConfigRead]:
     for row in session.exec(select(SignalConfigTable)).all():
-        signal_type = _get_signal_type(row.signal_id, registry)
+        catalog_entry = _get_catalog_entry(row.signal_id)
         defaults = SignalConfigUpsert(
             signal_id=row.signal_id,
-            params=signal_type.params_schema().model_dump(mode="json"),
+            params=catalog_entry.params_schema().model_dump(mode="json"),
         )
         row.sqlmodel_update(defaults.model_dump())
         session.add(row)
@@ -72,9 +67,9 @@ def _get_row(session: Session, signal_id: str) -> SignalConfigTable | None:
     ).one_or_none()
 
 
-def _get_signal_type(signal_id: str, registry: SignalRegistry) -> type[Signal]:
+def _get_catalog_entry(signal_id: str) -> SignalCatalogEntry:
     try:
-        return registry.get(signal_id)
+        return SIGNAL_CATALOG[signal_id]
     except KeyError as error:
         raise ValueError(f"unknown signal id: {signal_id}") from error
 

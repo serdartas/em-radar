@@ -64,6 +64,7 @@ def test_default_pack_is_included_in_distribution_and_docker_artifacts() -> None
     pyproject = tomllib.loads((REPOSITORY_ROOT / "pyproject.toml").read_text())
     dockerfile = (REPOSITORY_ROOT / "deploy" / "docker" / "Dockerfile").read_text()
 
+    assert "pyyaml" in pyproject["project"]["dependencies"]
     assert pyproject["tool"]["setuptools"]["data-files"]["packages/config/defaults"] == [
         "packages/config/defaults/default-pack.yaml"
     ]

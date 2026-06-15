@@ -10,7 +10,7 @@ class CatalogParams(BaseModel):
 
 
 class StaleInProgressWorkItemParams(CatalogParams):
-    days_threshold: int = 7
+    days_threshold: int = Field(default=7, ge=0)
     exclude_labels: list[str] = Field(default_factory=list)
 
 

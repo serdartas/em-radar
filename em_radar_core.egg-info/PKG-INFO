@@ -4,5 +4,6 @@ Version: 0.0.0
 Requires-Python: >=3.12
 License-File: LICENSE
 License-File: NOTICE
+Requires-Dist: pyyaml
 Requires-Dist: sqlmodel
 Dynamic: license-file
