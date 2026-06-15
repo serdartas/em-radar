@@ -21,6 +21,7 @@ COPY packages/core/src ./packages/core/src
 COPY packages/connectors/demo/src ./packages/connectors/demo/src
 COPY packages/config/src ./packages/config/src
 COPY packages/config/defaults ./packages/config/defaults
+COPY packages/normalizer/src ./packages/normalizer/src
 COPY apps/api/pyproject.toml apps/api/uv.lock ./apps/api/
 COPY apps/api/src ./apps/api/src
 COPY alembic.ini ./

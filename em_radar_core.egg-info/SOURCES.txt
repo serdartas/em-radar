@@ -16,6 +16,8 @@ packages/config/src/em_radar_config/validation.py
 packages/connectors/demo/src/em_radar_connector_demo/__init__.py
 packages/connectors/demo/src/em_radar_connector_demo/connector.py
 packages/connectors/demo/src/em_radar_connector_demo/fixtures.py
+packages/connectors/jira/src/em_radar_connector_jira/__init__.py
+packages/connectors/jira/src/em_radar_connector_jira/connector.py
 packages/core/src/em_radar_core/__init__.py
 packages/core/src/em_radar_core/connectors.py
 packages/core/src/em_radar_core/evaluation/__init__.py

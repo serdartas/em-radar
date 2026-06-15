@@ -1,2 +1,3 @@
 [em_radar.connectors]
 demo = em_radar_connector_demo:DemoConnector
+jira = em_radar_connector_jira:JiraConnector
