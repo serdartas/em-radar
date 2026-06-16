@@ -152,10 +152,10 @@ class JiraConnector:
         for external_id in entity_external_ids:
             issue_payload = await self._request_json(
                 f"/rest/api/2/issue/{external_id}",
-                params={"fields": "key"},
+                params={"fields": "key", "expand": "changelog"},
             )
             issue_key = _required_str(issue_payload, "key", "issue")
-            histories = await self._request_paginated_changelog(external_id)
+            histories = await self._changelog_histories(external_id, issue_payload)
             for transition in _transitions_from_changelog(issue_key, histories, status_categories):
                 yield transition
 
@@ -275,6 +275,19 @@ class JiraConnector:
                 raise ConnectorDataError("Jira changelog pagination did not advance")
             start_at = next_start_at
 
+    async def _changelog_histories(
+        self,
+        issue_external_id: str,
+        issue_payload: Mapping[str, object],
+    ) -> list[Mapping[str, object]]:
+        try:
+            return await self._request_paginated_changelog(issue_external_id)
+        except ConnectorNotFoundError:
+            changelog = _optional_mapping(issue_payload.get("changelog"))
+            if changelog is None:
+                raise
+            return _payload_histories(changelog)
+
     @property
     def _base_url(self) -> str:
         return str(self.config.base_url).rstrip("/")
@@ -338,6 +351,8 @@ def _payload_values(payload: Mapping[str, object]) -> list[Mapping[str, object]]
 
 def _payload_histories(payload: Mapping[str, object]) -> list[Mapping[str, object]]:
     raw_values = payload.get("values")
+    if raw_values is None:
+        raw_values = payload.get("histories")
     if not isinstance(raw_values, list):
         raise ConnectorDataError("Jira changelog response did not contain values")
     if not all(isinstance(value, Mapping) for value in raw_values):

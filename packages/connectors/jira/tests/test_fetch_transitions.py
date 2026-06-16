@@ -38,6 +38,7 @@ def test_fetch_transitions_normalizes_changelog_status_items(
                 )
             if request.url.path == "/rest/api/2/issue/10002":
                 assert request.url.params["fields"] == "key"
+                assert request.url.params["expand"] == "changelog"
                 return httpx.Response(200, json={"id": "10002", "key": "ENG-2"})
             if request.url.path == "/rest/api/2/issue/10002/changelog":
                 assert request.url.params["startAt"] == "0"
@@ -124,6 +125,67 @@ def test_fetch_transitions_normalizes_changelog_status_items(
         "/rest/api/2/issue/10002",
         "/rest/api/2/issue/10002/changelog",
     ]
+
+
+def test_fetch_transitions_falls_back_to_expanded_changelog_for_jira_server(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def run() -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/rest/api/2/status":
+                return httpx.Response(
+                    200,
+                    json=[
+                        _status("1", "To Do", "new"),
+                        _status("2", "In Progress", "indeterminate"),
+                    ],
+                )
+            if request.url.path == "/rest/api/2/issue/10002":
+                assert request.url.params["fields"] == "key"
+                assert request.url.params["expand"] == "changelog"
+                return httpx.Response(
+                    200,
+                    json={
+                        "id": "10002",
+                        "key": "ENG-2",
+                        "changelog": {
+                            "startAt": 0,
+                            "maxResults": 1,
+                            "total": 1,
+                            "histories": [
+                                _history(
+                                    "201",
+                                    "2026-06-01T09:00:00.000Z",
+                                    {"name": "server-user", "displayName": "Ada"},
+                                    [_status_item("1", "To Do", "2", "In Progress")],
+                                )
+                            ],
+                        },
+                    },
+                )
+            if request.url.path == "/rest/api/2/issue/10002/changelog":
+                return httpx.Response(404, json={"errorMessages": ["not found"]})
+            raise AssertionError(f"unexpected request: {request.url}")
+
+        monkeypatch.setattr(jira_connector_module, "CLIENT_FACTORY", _client_factory_for(handler))
+        connector = JiraConnector(
+            {
+                "base_url": "https://jira.example.com",
+                "token": "jira-token-1234",
+            }
+        )
+
+        transitions = await _collect(connector.fetch_transitions("workitem", ["10002"]))
+        await connector.close()
+
+        assert len(transitions) == 1
+        assert transitions[0].from_status == "To Do"
+        assert transitions[0].to_status == "In Progress"
+        assert transitions[0].from_status_category is StatusCategory.TODO
+        assert transitions[0].to_status_category is StatusCategory.IN_PROGRESS
+        assert transitions[0].actor_id == jira_connector_module._stable_id("user", "server-user")
+
+    asyncio.run(run())
 
 
 async def _collect(iterator: object) -> list[Transition]:
