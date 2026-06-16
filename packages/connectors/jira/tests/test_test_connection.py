@@ -26,9 +26,9 @@ def test_connection_success_returns_user_and_permissions(monkeypatch: pytest.Mon
     async def run() -> None:
         def handler(request: httpx.Request) -> httpx.Response:
             assert request.headers["authorization"] == expected_authorization
-            if request.url.path == "/rest/api/3/myself":
+            if request.url.path == "/rest/api/2/myself":
                 return httpx.Response(200, json={"displayName": "Jira User"})
-            if request.url.path == "/rest/api/3/mypermissions":
+            if request.url.path == "/rest/api/2/mypermissions":
                 return httpx.Response(
                     200,
                     json={
@@ -62,6 +62,47 @@ def test_connection_success_returns_user_and_permissions(monkeypatch: pytest.Mon
         assert result.detail == "Connected to Jira"
 
     asyncio.run(run())
+
+
+def test_connection_preserves_base_url_context_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen_paths: list[str] = []
+
+    async def run() -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen_paths.append(request.url.path)
+            if request.url.path == "/jira/rest/api/2/myself":
+                return httpx.Response(200, json={"name": "jira-user"})
+            if request.url.path == "/jira/rest/api/2/mypermissions":
+                return httpx.Response(200, json={"permissions": {}})
+            raise AssertionError(f"unexpected path: {request.url.path}")
+
+        monkeypatch.setattr(
+            jira_connector_module,
+            "CLIENT_FACTORY",
+            _client_factory_for(handler),
+        )
+        connector = JiraConnector(
+            {
+                "base_url": "https://jira.example.com/jira",
+                "token": "jira-token-1234",
+            }
+        )
+
+        await connector.test_connection()
+        await connector.close()
+
+    asyncio.run(run())
+
+    assert seen_paths == ["/jira/rest/api/2/myself", "/jira/rest/api/2/mypermissions"]
+
+
+def test_capabilities_match_m3_01_connection_test_only_scope() -> None:
+    capabilities = JiraConnector.describe_capabilities()
+
+    assert capabilities.provides_workitems is False
+    assert capabilities.provides_sprints is False
+    assert capabilities.provides_transitions is False
+    assert capabilities.supports_incremental_fetch is False
 
 
 def test_connection_raises_auth_error_on_401(monkeypatch: pytest.MonkeyPatch) -> None:

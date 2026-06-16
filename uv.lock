@@ -79,6 +79,7 @@ name = "em-radar-core"
 version = "0.0.0"
 source = { editable = "." }
 dependencies = [
+    { name = "httpx" },
     { name = "pyyaml" },
     { name = "sqlmodel" },
 ]
@@ -87,7 +88,6 @@ dependencies = [
 dev = [
     { name = "alembic" },
     { name = "fastapi" },
-    { name = "httpx" },
     { name = "jsonschema" },
     { name = "pytest" },
     { name = "ruff" },
@@ -95,6 +95,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "httpx" },
     { name = "pyyaml" },
     { name = "sqlmodel" },
 ]
@@ -103,7 +104,6 @@ requires-dist = [
 dev = [
     { name = "alembic", specifier = ">=1.18.4" },
     { name = "fastapi" },
-    { name = "httpx" },
     { name = "jsonschema" },
     { name = "pytest" },
     { name = "ruff" },
