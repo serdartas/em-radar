@@ -309,7 +309,7 @@ class JiraConnector:
         payloads = await self._request_json_list("/rest/api/2/status")
         categories: dict[str, StatusCategory] = {}
         for payload in payloads:
-            category = _status_category(payload, [])
+            category = _status_category(payload, [], self.config.field_mapping)
             status_id = _optional_str(payload, "id")
             name = _optional_str(payload, "name")
             if status_id is not None:
