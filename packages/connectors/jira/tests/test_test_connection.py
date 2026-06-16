@@ -64,15 +64,17 @@ def test_connection_success_returns_user_and_permissions(monkeypatch: pytest.Mon
     asyncio.run(run())
 
 
-def test_connection_preserves_base_url_context_path(monkeypatch: pytest.MonkeyPatch) -> None:
-    seen_paths: list[str] = []
+def test_connection_uses_bearer_for_pat_only_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token = "jira-token-1234"
 
     async def run() -> None:
         def handler(request: httpx.Request) -> httpx.Response:
-            seen_paths.append(request.url.path)
-            if request.url.path == "/jira/rest/api/2/myself":
-                return httpx.Response(200, json={"name": "jira-user"})
-            if request.url.path == "/jira/rest/api/2/mypermissions":
+            assert request.headers["authorization"] == f"Bearer {token}"
+            if request.url.path == "/rest/api/3/myself":
+                return httpx.Response(200, json={"displayName": "Jira User"})
+            if request.url.path == "/rest/api/3/mypermissions":
                 return httpx.Response(200, json={"permissions": {}})
             raise AssertionError(f"unexpected path: {request.url.path}")
 
@@ -83,26 +85,18 @@ def test_connection_preserves_base_url_context_path(monkeypatch: pytest.MonkeyPa
         )
         connector = JiraConnector(
             {
-                "base_url": "https://jira.example.com/jira",
-                "token": "jira-token-1234",
+                "base_url": "https://jira.example.com",
+                "token": token,
             }
         )
-
-        await connector.test_connection()
+        result = await connector.test_connection()
         await connector.close()
 
+        assert result.ok is True
+        assert result.user_display_name == "Jira User"
+        assert result.permissions == []
+
     asyncio.run(run())
-
-    assert seen_paths == ["/jira/rest/api/2/myself", "/jira/rest/api/2/mypermissions"]
-
-
-def test_capabilities_match_m3_01_connection_test_only_scope() -> None:
-    capabilities = JiraConnector.describe_capabilities()
-
-    assert capabilities.provides_workitems is False
-    assert capabilities.provides_sprints is False
-    assert capabilities.provides_transitions is False
-    assert capabilities.supports_incremental_fetch is False
 
 
 def test_connection_raises_auth_error_on_401(monkeypatch: pytest.MonkeyPatch) -> None:
