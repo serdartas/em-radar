@@ -12,7 +12,7 @@ from em_radar_core.connectors import (
     WorkItemProvider,
     WorkItemScope,
 )
-from em_radar_core.evaluation import SignalEvaluator
+from em_radar_core.evaluation import SignalConfig, SignalEvaluator
 from em_radar_core.models import (
     Confidence,
     EntityType,
@@ -21,10 +21,14 @@ from em_radar_core.models import (
     ReportStatus,
     Severity,
     SignalFinding,
+    Source,
     Sprint,
     SprintState,
     TeamProfile,
+    Transition,
+    User,
     WindowType,
+    WorkItem,
     WorkingMode,
 )
 from em_radar_core.signals import SignalData, default_registry
@@ -43,6 +47,7 @@ from em_radar_api.repositories.reports import (
     list_reports,
     save_report,
 )
+from em_radar_api.repositories.signal_configs import list_signal_configs
 from em_radar_api.repositories.source_connections import (
     get_source_connection,
     instantiate_connector,
@@ -280,6 +285,7 @@ async def _run_demo_report(
                 comments=tuple(comments),
             ),
             EvaluationContext(now=started_at, window=window, team=team),
+            _signal_configs(session),
         )
         persisted_findings = [
             _persisted_finding(finding, identity.identity_map) for finding in findings
@@ -389,6 +395,7 @@ async def _run_jira_report(
 
     identity = persist_fetch(
         session,
+        users=_placeholder_jira_users(workitems, transitions),
         projects=projects,
         boards=boards,
         sprints=sprints,
@@ -424,6 +431,7 @@ async def _run_jira_report(
                 transitions=tuple(transitions),
             ),
             EvaluationContext(now=started_at, window=window, team=team),
+            _signal_configs(session),
         )
         persisted_findings = [
             _persisted_finding(finding, identity.identity_map) for finding in findings
@@ -513,6 +521,48 @@ def _signal_pack_snapshot() -> dict[str, object]:
             for signal in (default_registry.get(signal_id) for signal_id in default_registry.ids())
         ],
     }
+
+
+def _signal_configs(session: Session) -> list[SignalConfig]:
+    stored = {config.signal_id: config for config in list_signal_configs(session)}
+    configs: list[SignalConfig] = []
+    for signal_id in default_registry.ids():
+        stored_config = stored.get(signal_id)
+        if stored_config is None:
+            configs.append(SignalConfig(signal_id=signal_id))
+        else:
+            configs.append(
+                SignalConfig(
+                    signal_id=signal_id,
+                    enabled=stored_config.enabled,
+                    params=stored_config.params,
+                )
+            )
+    return configs
+
+
+def _placeholder_jira_users(
+    workitems: Sequence[WorkItem],
+    transitions: Sequence[Transition],
+) -> list[User]:
+    user_ids = {
+        user_id
+        for user_id in (
+            *[workitem.assignee_id for workitem in workitems],
+            *[workitem.reporter_id for workitem in workitems],
+            *[transition.actor_id for transition in transitions],
+        )
+        if user_id is not None
+    }
+    return [
+        User(
+            id=user_id,
+            source=Source.JIRA,
+            external_id=str(user_id),
+            display_name="Unknown Jira user",
+        )
+        for user_id in sorted(user_ids)
+    ]
 
 
 def _counts_by_severity(findings: Sequence[SignalFinding]) -> dict[Severity, int]:

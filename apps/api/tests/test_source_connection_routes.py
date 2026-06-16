@@ -1,19 +1,28 @@
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from typing import ClassVar
+from uuid import UUID
 
 from fastapi.testclient import TestClient
+from sqlalchemy.orm import sessionmaker
+from sqlmodel import Session, select
 
 from em_radar_core.connectors import Capabilities, ConnectionTestResult, WorkItemScope
 from em_radar_core.models import (
     Board,
     BoardType,
+    EntityType,
     EvaluationWindow,
     Project,
     Source,
     Sprint,
     SprintState,
+    StatusCategory,
+    Transition,
     WorkItem,
+    WorkItemType,
 )
+from em_radar_api.tables import UserTable
 
 
 class JiraTestConnector:
@@ -92,8 +101,41 @@ class JiraTestConnector:
         window: EvaluationWindow,
     ) -> AsyncIterator[WorkItem]:
         del scope, window
-        return
-        yield
+        yield WorkItem(
+            id=UUID("80a0d17d-5fb4-46c4-bc3a-e8b4f85c9cb0"),
+            source=Source.JIRA,
+            external_id="PLAT-1",
+            project_id=UUID("4c7a2c4f-e62f-4a78-bf6f-81f0a2a08826"),
+            key="PLAT-1",
+            type=WorkItemType.STORY,
+            title="Assigned Jira story",
+            status="In Progress",
+            status_category=StatusCategory.IN_PROGRESS,
+            assignee_id=UUID("7de90589-74cc-4f11-a205-17d3bcd60735"),
+            reporter_id=UUID("b60ef25e-379e-446d-b6d7-f7610f8ab6a1"),
+            sprint_ids=[UUID("45cdfd02-9cde-4c65-a618-7728fc9fb495")],
+            current_sprint_id=UUID("45cdfd02-9cde-4c65-a618-7728fc9fb495"),
+            created_at=datetime(2026, 6, 1, tzinfo=UTC),
+            updated_at=datetime(2026, 6, 10, tzinfo=UTC),
+        )
+
+    async def fetch_transitions(
+        self,
+        entity_type: str,
+        entity_external_ids: list[str],
+    ) -> AsyncIterator[Transition]:
+        assert entity_type == "workitem"
+        assert entity_external_ids == ["PLAT-1"]
+        yield Transition(
+            entity_type=EntityType.WORKITEM,
+            entity_id=UUID("80a0d17d-5fb4-46c4-bc3a-e8b4f85c9cb0"),
+            from_status="To Do",
+            to_status="In Progress",
+            from_status_category=StatusCategory.TODO,
+            to_status_category=StatusCategory.IN_PROGRESS,
+            actor_id=UUID("ef482427-5e1b-45fd-bc1c-832e887116dd"),
+            occurred_at=datetime(2026, 6, 2, tzinfo=UTC),
+        )
 
 
 def test_source_connection_routes_crud_test_and_preserve_omitted_config(
@@ -178,7 +220,11 @@ def test_source_connection_jira_list_routes(api_client: TestClient, monkeypatch)
     assert sprints.json()[0]["state"] == "active"
 
 
-def test_jira_active_sprint_report_run(api_client: TestClient, monkeypatch) -> None:
+def test_jira_active_sprint_report_run_persists_user_references(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+    monkeypatch,
+) -> None:
     monkeypatch.setattr(
         "em_radar_api.connector_registry._connector_types",
         lambda: [JiraTestConnector],
@@ -208,3 +254,12 @@ def test_jira_active_sprint_report_run(api_client: TestClient, monkeypatch) -> N
     assert response.status_code == 200
     assert response.json()["status"] == "succeeded"
     assert response.json()["findings"] == []
+
+    with session_factory() as session:
+        users = session.exec(select(UserTable).order_by(UserTable.external_id)).all()
+
+    assert {user.external_id for user in users} == {
+        "7de90589-74cc-4f11-a205-17d3bcd60735",
+        "b60ef25e-379e-446d-b6d7-f7610f8ab6a1",
+        "ef482427-5e1b-45fd-bc1c-832e887116dd",
+    }
