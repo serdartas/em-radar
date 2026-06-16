@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from datetime import datetime, timezone
-from typing import ClassVar, cast
+from typing import ClassVar, Literal, cast
 from uuid import UUID, uuid5
 
 import httpx
@@ -23,12 +23,14 @@ from em_radar_core.connectors import (
 from em_radar_core.models import (
     Board,
     BoardType,
+    EntityType,
     EvaluationWindow,
     Project,
     Source,
     Sprint,
     SprintState,
     StatusCategory,
+    Transition,
     WindowType,
     WorkItem,
     WorkItemType,
@@ -104,7 +106,7 @@ class JiraConnector:
         return Capabilities(
             provides_workitems=True,
             provides_sprints=True,
-            provides_transitions=False,
+            provides_transitions=True,
             supports_incremental_fetch=True,
         )
 
@@ -137,6 +139,25 @@ class JiraConnector:
             workitem = _workitem_from_payload(payload, self._base_url)
             if _workitem_in_window(workitem, window):
                 yield workitem
+
+    async def fetch_transitions(
+        self,
+        entity_type: Literal["workitem", "mergerequest"],
+        entity_external_ids: list[str],
+    ) -> AsyncIterator[Transition]:
+        if entity_type != EntityType.WORKITEM:
+            raise ConnectorDataError("Jira transitions only support workitems")
+
+        status_categories = await self._status_categories()
+        for external_id in entity_external_ids:
+            issue_payload = await self._request_json(
+                f"/rest/api/2/issue/{external_id}",
+                params={"fields": "key", "expand": "changelog"},
+            )
+            issue_key = _required_str(issue_payload, "key", "issue")
+            histories = await self._changelog_histories(external_id, issue_payload)
+            for transition in _transitions_from_changelog(issue_key, histories, status_categories):
+                yield transition
 
     async def close(self) -> None:
         await self._client.aclose()
@@ -233,9 +254,56 @@ class JiraConnector:
                 raise ConnectorDataError("Jira issue pagination did not advance")
             start_at = next_start_at
 
+    async def _request_paginated_changelog(
+        self,
+        issue_external_id: str,
+    ) -> list[Mapping[str, object]]:
+        histories: list[Mapping[str, object]] = []
+        start_at = 0
+        while True:
+            payload = await self._request_json(
+                f"/rest/api/2/issue/{issue_external_id}/changelog",
+                params={"startAt": start_at, "maxResults": PAGE_SIZE},
+            )
+            page_values = _payload_histories(payload)
+            histories.extend(page_values)
+
+            next_start_at = start_at + len(page_values)
+            if _is_last_changelog_page(payload, next_start_at):
+                return histories
+            if next_start_at == start_at:
+                raise ConnectorDataError("Jira changelog pagination did not advance")
+            start_at = next_start_at
+
+    async def _changelog_histories(
+        self,
+        issue_external_id: str,
+        issue_payload: Mapping[str, object],
+    ) -> list[Mapping[str, object]]:
+        try:
+            return await self._request_paginated_changelog(issue_external_id)
+        except ConnectorNotFoundError:
+            changelog = _optional_mapping(issue_payload.get("changelog"))
+            if changelog is None:
+                raise
+            return _payload_histories(changelog)
+
     @property
     def _base_url(self) -> str:
         return str(self.config.base_url).rstrip("/")
+
+    async def _status_categories(self) -> dict[str, StatusCategory]:
+        payloads = await self._request_json_list("/rest/api/2/status")
+        categories: dict[str, StatusCategory] = {}
+        for payload in payloads:
+            category = _status_category(payload, [])
+            status_id = _optional_str(payload, "id")
+            name = _optional_str(payload, "name")
+            if status_id is not None:
+                categories[status_id] = category
+            if name is not None:
+                categories[_status_key(name)] = category
+        return categories
 
 
 def _authorization_header(config: JiraConnectorConfig) -> str:
@@ -281,6 +349,17 @@ def _payload_values(payload: Mapping[str, object]) -> list[Mapping[str, object]]
     return cast(list[Mapping[str, object]], raw_values)
 
 
+def _payload_histories(payload: Mapping[str, object]) -> list[Mapping[str, object]]:
+    raw_values = payload.get("values")
+    if raw_values is None:
+        raw_values = payload.get("histories")
+    if not isinstance(raw_values, list):
+        raise ConnectorDataError("Jira changelog response did not contain values")
+    if not all(isinstance(value, Mapping) for value in raw_values):
+        raise ConnectorDataError("Jira changelog response contained an invalid history")
+    return cast(list[Mapping[str, object]], raw_values)
+
+
 def _payload_issues(payload: Mapping[str, object]) -> list[Mapping[str, object]]:
     raw_issues = payload.get("issues")
     if not isinstance(raw_issues, list):
@@ -312,6 +391,18 @@ def _is_last_issue_page(payload: Mapping[str, object], next_start_at: int) -> bo
         return len(_payload_issues(payload)) < max_results
 
     return len(_payload_issues(payload)) < PAGE_SIZE
+
+
+def _is_last_changelog_page(payload: Mapping[str, object], next_start_at: int) -> bool:
+    total = payload.get("total")
+    if isinstance(total, int):
+        return next_start_at >= total
+
+    max_results = payload.get("maxResults")
+    if isinstance(max_results, int):
+        return len(_payload_histories(payload)) < max_results
+
+    return len(_payload_histories(payload)) < PAGE_SIZE
 
 
 def _project_from_payload(payload: Mapping[str, object], base_url: str) -> Project:
@@ -411,6 +502,51 @@ def _workitem_from_payload(payload: Mapping[str, object], base_url: str) -> Work
         created_at=_parse_datetime(_optional_str(fields, "created")),
         updated_at=_parse_datetime(_optional_str(fields, "updated")),
     )
+
+
+def _transitions_from_changelog(
+    issue_key: str,
+    histories: Sequence[Mapping[str, object]],
+    status_categories: Mapping[str, StatusCategory],
+) -> list[Transition]:
+    transitions: list[Transition] = []
+    for history in histories:
+        occurred_at = _required_datetime(history, "created", "changelog history")
+        actor_id = _user_id(history.get("author"))
+        history_id = _required_str(history, "id", "changelog history")
+        items = history.get("items")
+        if not isinstance(items, list) or not all(isinstance(item, Mapping) for item in items):
+            raise ConnectorDataError("Jira changelog history contained invalid items")
+
+        for index, item in enumerate(cast(list[Mapping[str, object]], items)):
+            if _optional_str(item, "field") != "status":
+                continue
+            to_status = _required_str(item, "toString", "status changelog item")
+            transitions.append(
+                Transition(
+                    id=_stable_id("transition", f"{issue_key}:{history_id}:{index}"),
+                    entity_type=EntityType.WORKITEM,
+                    entity_id=_stable_id("workitem", issue_key),
+                    from_status=_optional_str(item, "fromString"),
+                    to_status=to_status,
+                    from_status_category=_status_category_for_changelog_value(
+                        item,
+                        "from",
+                        "fromString",
+                        status_categories,
+                    ),
+                    to_status_category=_required_status_category_for_changelog_value(
+                        item,
+                        "to",
+                        "toString",
+                        status_categories,
+                    ),
+                    actor_id=actor_id,
+                    occurred_at=occurred_at,
+                )
+            )
+
+    return sorted(transitions, key=lambda transition: transition.occurred_at)
 
 
 def _workitem_common_fields(
@@ -536,6 +672,47 @@ def _status_category(status: Mapping[str, object], labels: Sequence[str]) -> Sta
     if normalized in {"done", "3"}:
         return StatusCategory.DONE
     raise ConnectorDataError(f"Unsupported Jira status category: {normalized or '<missing>'}")
+
+
+def _status_key(value: str) -> str:
+    return value.strip().lower()
+
+
+def _status_category_for_changelog_value(
+    item: Mapping[str, object],
+    status_id_key: str,
+    status_name_key: str,
+    status_categories: Mapping[str, StatusCategory],
+) -> StatusCategory | None:
+    status_id = _optional_str(item, status_id_key)
+    if status_id is not None and status_id in status_categories:
+        return status_categories[status_id]
+
+    status_name = _optional_str(item, status_name_key)
+    if status_name is not None:
+        status_key = _status_key(status_name)
+        if status_key in status_categories:
+            return status_categories[status_key]
+
+    return None
+
+
+def _required_status_category_for_changelog_value(
+    item: Mapping[str, object],
+    status_id_key: str,
+    status_name_key: str,
+    status_categories: Mapping[str, StatusCategory],
+) -> StatusCategory:
+    category = _status_category_for_changelog_value(
+        item,
+        status_id_key,
+        status_name_key,
+        status_categories,
+    )
+    if category is None:
+        status_value = _optional_str(item, status_id_key) or _optional_str(item, status_name_key)
+        raise ConnectorDataError(f"Unknown Jira status in changelog: {status_value or '<missing>'}")
+    return category
 
 
 def _is_blocked(status_name: str, labels: Sequence[str]) -> bool:
@@ -669,6 +846,13 @@ def _parse_datetime(value: str | None) -> datetime | None:
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
+
+
+def _required_datetime(payload: Mapping[str, object], key: str, entity: str) -> datetime:
+    parsed = _parse_datetime(_required_str(payload, key, entity))
+    if parsed is None:
+        raise ConnectorDataError(f"Jira {entity} payload was missing {key}")
+    return parsed
 
 
 def _board_url(base_url: str, board_id: str, project_key: str | None) -> str | None:
