@@ -34,7 +34,7 @@ def test_run_demo_report_accepts_date_range_window(api_client: TestClient) -> No
     assert response.json()["findings"]
 
 
-def test_run_report_rejects_non_demo_connector_and_invalid_window(api_client: TestClient) -> None:
+def test_run_report_rejects_missing_jira_scope_and_invalid_window(api_client: TestClient) -> None:
     assert api_client.post("/api/reports/run", json={"connector": "jira"}).status_code == 422
     assert (
         api_client.post(

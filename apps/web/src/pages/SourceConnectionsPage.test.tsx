@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { MemoryRouter } from "react-router-dom"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { SourceConnectionsPage } from "@/pages/SourceConnectionsPage"
@@ -27,6 +28,12 @@ const demoConnector = {
     supports_pagination_cursor: false,
     max_window_days: null,
   },
+}
+
+const jiraConnector = {
+  ...demoConnector,
+  name: "jira",
+  display_name: "Jira (Cloud or Server)",
 }
 
 const testResult = {
@@ -68,7 +75,9 @@ function renderPage() {
   })
   return render(
     <QueryClientProvider client={queryClient}>
-      <SourceConnectionsPage />
+      <MemoryRouter>
+        <SourceConnectionsPage />
+      </MemoryRouter>
     </QueryClientProvider>,
   )
 }
@@ -166,5 +175,79 @@ describe("SourceConnectionsPage", () => {
         base_url: "https://updated.invalid",
       })
     })
+  })
+
+  it("loads Jira project and board choices and enables running the active sprint report", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = typeof input === "string" ? input : input.toString()
+      if (url.endsWith("/api/connectors")) {
+        return Promise.resolve(jsonResponse([jiraConnector]))
+      }
+      if (url.endsWith("/api/connections") && (init?.method ?? "GET") === "GET") {
+        return Promise.resolve(
+          jsonResponse([
+            {
+              id: "connection-1",
+              connector_name: "jira",
+              config: { base_url: "https://jira.invalid", token: "****5678" },
+              selected_project_ids: [],
+              selected_board_ids: [],
+              selected_repository_ids: [],
+              created_at: "2026-06-01T10:00:00Z",
+            },
+          ]),
+        )
+      }
+      if (url.endsWith("/api/connections/connection-1/projects")) {
+        return Promise.resolve(
+          jsonResponse([
+            {
+              id: "project-1",
+              external_id: "10000",
+              key: "PLAT",
+              name: "Platform",
+            },
+          ]),
+        )
+      }
+      if (url.endsWith("/api/connections/connection-1/projects/10000/boards")) {
+        return Promise.resolve(
+          jsonResponse([
+            {
+              id: "board-1",
+              external_id: "20000",
+              project_id: "project-1",
+              name: "Platform Scrum",
+              type: "scrum",
+            },
+          ]),
+        )
+      }
+      if (url.endsWith("/api/connections/connection-1/boards/20000/sprints")) {
+        return Promise.resolve(
+          jsonResponse([
+            {
+              id: "sprint-1",
+              external_id: "30000",
+              board_id: "board-1",
+              name: "Platform Sprint 12",
+              state: "active",
+              start_date: "2026-06-01T00:00:00Z",
+              end_date: "2026-06-15T00:00:00Z",
+              complete_date: null,
+              goal: null,
+            },
+          ]),
+        )
+      }
+      throw new Error(`unexpected fetch: ${init?.method ?? "GET"} ${url}`)
+    })
+
+    renderPage()
+
+    expect(await screen.findByText("Platform Scrum")).toBeInTheDocument()
+    expect(screen.getByText("Scrum · 14 days")).toBeInTheDocument()
+    expect(screen.getByText("Active sprint: Platform Sprint 12")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Run report" })).toBeEnabled()
   })
 })

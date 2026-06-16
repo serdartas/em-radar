@@ -34,10 +34,36 @@ export interface ReportDetail extends ReportSummary {
   findings: Finding[]
 }
 
+export interface JiraSprintReportRequest {
+  connectionId: string
+  projectExternalId: string
+  boardExternalId: string
+  workingMode: "kanban" | "scrum"
+  sprintLengthDays: number | null
+}
+
 export async function runDemoReport(): Promise<ReportDetail> {
   return apiFetch<ReportDetail>("/reports/run", {
     method: "POST",
     body: JSON.stringify({ connector: "demo" }),
+  })
+}
+
+export async function runJiraSprintReport(
+  request: JiraSprintReportRequest,
+): Promise<ReportDetail> {
+  return apiFetch<ReportDetail>("/reports/run", {
+    method: "POST",
+    body: JSON.stringify({
+      connector: "jira",
+      jira: {
+        connection_id: request.connectionId,
+        project_external_id: request.projectExternalId,
+        board_external_id: request.boardExternalId,
+        working_mode: request.workingMode,
+        sprint_length_days: request.sprintLengthDays,
+      },
+    }),
   })
 }
 

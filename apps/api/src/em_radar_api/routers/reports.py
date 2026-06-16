@@ -4,7 +4,14 @@ from typing import Literal, Self
 from uuid import UUID
 
 from em_radar_connector_demo import DemoConnector
-from em_radar_core.connectors import MergeRequestScope, WorkItemScope
+from em_radar_core.connectors import (
+    ConnectorConfigError,
+    ConnectorError,
+    MergeRequestScope,
+    TransitionProvider,
+    WorkItemProvider,
+    WorkItemScope,
+)
 from em_radar_core.evaluation import SignalEvaluator
 from em_radar_core.models import (
     Confidence,
@@ -18,6 +25,7 @@ from em_radar_core.models import (
     SprintState,
     TeamProfile,
     WindowType,
+    WorkingMode,
 )
 from em_radar_core.signals import SignalData, default_registry
 from fastapi import APIRouter, Depends, HTTPException
@@ -25,6 +33,7 @@ from pydantic import BaseModel, JsonValue, model_validator
 from sqlmodel import Session
 
 from em_radar_api.db import get_session, get_write_session
+from em_radar_api.connector_registry import create_connector
 from em_radar_api.repositories.canonical import persist_fetch
 from em_radar_api.repositories.reports import (
     add_findings,
@@ -34,6 +43,11 @@ from em_radar_api.repositories.reports import (
     list_reports,
     save_report,
 )
+from em_radar_api.repositories.source_connections import (
+    get_source_connection,
+    instantiate_connector,
+)
+from em_radar_api.source_connections import ConnectorName
 from em_radar_api.tables import (
     EvaluationWindowTable,
     ReportTable,
@@ -60,9 +74,32 @@ class ReportWindowRequest(BaseModel):
         return self
 
 
+class JiraReportRequest(BaseModel):
+    connection_id: UUID
+    project_external_id: str
+    board_external_id: str
+    working_mode: WorkingMode
+    sprint_length_days: int | None = None
+
+    @model_validator(mode="after")
+    def validate_working_mode(self) -> Self:
+        if self.working_mode is WorkingMode.KANBAN and self.sprint_length_days is not None:
+            raise ValueError("sprint_length_days must be null for kanban reports")
+        return self
+
+
 class ReportRunRequest(BaseModel):
-    connector: Literal["demo"]
+    connector: Literal["demo", "jira"]
     window: ReportWindowRequest | None = None
+    jira: JiraReportRequest | None = None
+
+    @model_validator(mode="after")
+    def validate_connector_scope(self) -> Self:
+        if self.connector == "jira" and self.jira is None:
+            raise ValueError("jira reports require jira scope")
+        if self.connector == "demo" and self.jira is not None:
+            raise ValueError("demo reports do not accept jira scope")
+        return self
 
 
 class FindingResponse(BaseModel):
@@ -118,6 +155,17 @@ async def run_report(
     request: ReportRunRequest,
     session: Session = Depends(get_write_session),
 ) -> ReportDetailResponse:
+    if request.connector == "jira":
+        if request.jira is None:
+            raise HTTPException(status_code=422, detail="jira reports require jira scope")
+        return await _run_jira_report(request.jira, session)
+    return await _run_demo_report(request.window, session)
+
+
+async def _run_demo_report(
+    requested_window: ReportWindowRequest | None,
+    session: Session,
+) -> ReportDetailResponse:
     started_at = datetime.now(timezone.utc)
     connector = DemoConnector({})
 
@@ -142,7 +190,7 @@ async def run_report(
             created_at=started_at,
             updated_at=started_at,
         )
-        window = _evaluation_window(request.window, sprints, team.id)
+        window = _evaluation_window(requested_window, sprints, team.id)
 
         workitems = await _collect(
             connector.fetch_workitems(
@@ -230,6 +278,150 @@ async def run_report(
                 reviews=tuple(reviews),
                 transitions=tuple(transitions),
                 comments=tuple(comments),
+            ),
+            EvaluationContext(now=started_at, window=window, team=team),
+        )
+        persisted_findings = [
+            _persisted_finding(finding, identity.identity_map) for finding in findings
+        ]
+        add_findings(session, persisted_findings)
+        report.status = ReportStatus.SUCCEEDED
+        report.finished_at = datetime.now(timezone.utc)
+        report.findings_count_by_severity = _counts_by_severity(findings)
+        save_report(session, report)
+    except Exception as error:
+        session.rollback()
+        report.status = ReportStatus.FAILED
+        report.finished_at = datetime.now(timezone.utc)
+        report.error = str(error)
+        save_report(session, report)
+        raise
+
+    return ReportDetailResponse.from_report_with_findings(report, persisted_findings)
+
+
+async def _run_jira_report(
+    request: JiraReportRequest,
+    session: Session,
+) -> ReportDetailResponse:
+    started_at = datetime.now(timezone.utc)
+    connection = get_source_connection(session, request.connection_id)
+    if connection is None:
+        raise HTTPException(status_code=404, detail="connection not found")
+    if connection.connector_name != ConnectorName.JIRA:
+        raise HTTPException(status_code=400, detail="connection is not a Jira connection")
+
+    try:
+        connector = instantiate_connector(
+            session,
+            request.connection_id,
+            lambda config: create_connector("jira", config),
+        )
+    except ConnectorConfigError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    if connector is None:
+        raise HTTPException(status_code=404, detail="connection not found")
+    if not isinstance(connector, WorkItemProvider):
+        raise HTTPException(status_code=400, detail="connection does not support Jira reports")
+
+    try:
+        projects = [
+            project
+            for project in await connector.list_projects()
+            if project.external_id == request.project_external_id
+        ]
+        if not projects:
+            raise HTTPException(status_code=404, detail="Jira project not found")
+        boards = [
+            board
+            for board in await connector.list_boards(request.project_external_id)
+            if board.external_id == request.board_external_id
+        ]
+        if not boards:
+            raise HTTPException(status_code=404, detail="Jira board not found")
+        sprints = await connector.list_sprints(request.board_external_id)
+        active_sprint = next(
+            (sprint for sprint in sprints if sprint.state is SprintState.ACTIVE),
+            None,
+        )
+        if active_sprint is None:
+            raise HTTPException(status_code=422, detail="Jira board has no active sprint")
+
+        team = TeamProfile(
+            name=f"{projects[0].key} Jira sprint",
+            connection_ids=[request.connection_id],
+            project_ids=[projects[0].id],
+            board_ids=[boards[0].id],
+            repository_ids=[],
+            working_mode=request.working_mode,
+            sprint_length_days=request.sprint_length_days,
+            created_at=started_at,
+            updated_at=started_at,
+        )
+        window = EvaluationWindow(
+            window_type=WindowType.SPRINT,
+            sprint_id=active_sprint.id,
+            team_profile_id=team.id,
+        )
+        workitems = await _collect(
+            connector.fetch_workitems(
+                WorkItemScope(
+                    project_external_ids=[request.project_external_id],
+                    board_external_ids=[request.board_external_id],
+                ),
+                window,
+            )
+        )
+        transitions = (
+            await _collect(
+                connector.fetch_transitions(
+                    "workitem",
+                    [workitem.external_id for workitem in workitems],
+                )
+            )
+            if isinstance(connector, TransitionProvider)
+            else []
+        )
+    except ConnectorError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    finally:
+        await connector.close()
+
+    identity = persist_fetch(
+        session,
+        projects=projects,
+        boards=boards,
+        sprints=sprints,
+        workitems=workitems,
+        transitions=transitions,
+    )
+    session.add(_team_row(team))
+    session.commit()
+    persisted_window = _persisted_window(window, identity.identity_map)
+    session.add(EvaluationWindowTable(**persisted_window.model_dump()))
+    session.commit()
+
+    report = create_report(
+        session,
+        ReportTable(
+            evaluation_window_id=window.id,
+            signal_pack_snapshot=_signal_pack_snapshot(),
+            status=ReportStatus.PENDING,
+            started_at=started_at,
+        ),
+    )
+    report.status = ReportStatus.RUNNING
+    save_report(session, report)
+
+    try:
+        findings = SignalEvaluator().evaluate(
+            SignalData(
+                report_id=report.id,
+                projects=tuple(projects),
+                boards=tuple(boards),
+                sprints=tuple(sprints),
+                workitems=tuple(workitems),
+                transitions=tuple(transitions),
             ),
             EvaluationContext(now=started_at, window=window, team=team),
         )

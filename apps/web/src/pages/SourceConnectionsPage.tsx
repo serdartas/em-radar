@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useNavigate } from "react-router-dom"
 
 import { SchemaForm } from "@/components/SchemaForm"
 import { Badge } from "@/components/ui/badge"
@@ -14,6 +15,11 @@ import {
   type ConnectionTestResult,
   createConnection,
   deleteConnection,
+  type JiraBoard,
+  type JiraSprint,
+  listJiraBoards,
+  listJiraProjects,
+  listJiraSprints,
   listConnections,
   type SourceConnection,
   testConnectionDraft,
@@ -21,6 +27,7 @@ import {
   updateConnection,
 } from "@/lib/connections"
 import { isSecret, type JsonSchema } from "@/lib/jsonSchema"
+import { runJiraSprintReport } from "@/lib/reports"
 
 function defaultValues(schema: JsonSchema): Record<string, unknown> {
   const values: Record<string, unknown> = {}
@@ -159,6 +166,8 @@ export function SourceConnectionsPage() {
         onEdit={startEdit}
       />
 
+      <JiraScopeSection connections={connectionsQuery.data ?? []} />
+
       <Card>
         <form
           aria-labelledby="connection-form-title"
@@ -198,6 +207,8 @@ export function SourceConnectionsPage() {
               />
             )}
 
+            {selectedConnector?.name === "jira" && <JiraTokenGuidance />}
+
             <TestResult error={testMutation.error} result={testMutation.data} />
 
             <div className="flex flex-wrap gap-3">
@@ -234,6 +245,262 @@ export function SourceConnectionsPage() {
       </Card>
     </section>
   )
+}
+
+function JiraTokenGuidance() {
+  return (
+    <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
+      Use a read-only Jira API token for the account that can browse the projects and boards you
+      want to report on. Jira Cloud connections use the email address plus API token.
+    </div>
+  )
+}
+
+interface JiraScopeSectionProps {
+  connections: SourceConnection[]
+}
+
+function JiraScopeSection({ connections }: JiraScopeSectionProps) {
+  const jiraConnections = connections.filter((connection) => connection.connector_name === "jira")
+
+  if (jiraConnections.length === 0) {
+    return null
+  }
+
+  return (
+    <section aria-labelledby="jira-scope-title" className="space-y-4">
+      <header>
+        <h2 className="text-lg font-semibold" id="jira-scope-title">
+          Jira project and board
+        </h2>
+      </header>
+      {jiraConnections.map((connection) => (
+        <JiraScopePanel connection={connection} key={connection.id} />
+      ))}
+    </section>
+  )
+}
+
+interface JiraScopePanelProps {
+  connection: SourceConnection
+}
+
+function JiraScopePanel({ connection }: JiraScopePanelProps) {
+  const navigate = useNavigate()
+  const queryClient = useQueryClient()
+  const [projectExternalId, setProjectExternalId] = useState("")
+  const [boardExternalId, setBoardExternalId] = useState("")
+  const [workingMode, setWorkingMode] = useState<"kanban" | "scrum">("scrum")
+  const [sprintLengthDays, setSprintLengthDays] = useState<number | null>(14)
+
+  const projectsQuery = useQuery({
+    queryKey: ["jira-projects", connection.id],
+    queryFn: () => listJiraProjects(connection.id),
+  })
+  const boardsQuery = useQuery({
+    enabled: projectExternalId !== "",
+    queryKey: ["jira-boards", connection.id, projectExternalId],
+    queryFn: () => listJiraBoards(connection.id, projectExternalId),
+  })
+  const sprintsQuery = useQuery({
+    enabled: boardExternalId !== "",
+    queryKey: ["jira-sprints", connection.id, boardExternalId],
+    queryFn: () => listJiraSprints(connection.id, boardExternalId),
+  })
+  const runReport = useMutation({
+    mutationFn: runJiraSprintReport,
+    onSuccess: (report) => {
+      void queryClient.invalidateQueries({ queryKey: ["reports"], exact: true })
+      navigate(`/reports/results/${report.id}`)
+    },
+  })
+
+  const projects = projectsQuery.data ?? []
+  const boards = boardsQuery.data ?? []
+  const sprints = sprintsQuery.data ?? []
+  const selectedProject = projects.find((project) => project.external_id === projectExternalId)
+  const selectedBoard = boards.find((board) => board.external_id === boardExternalId)
+  const activeSprint = sprints.find((sprint) => sprint.state === "active")
+  const detectedSprintLengthDays = sprintLengthFromSprints(sprints)
+
+  useEffect(() => {
+    if (projectExternalId === "" && projects.length > 0) {
+      setProjectExternalId(projects[0].external_id)
+    }
+  }, [projectExternalId, projects])
+
+  useEffect(() => {
+    setBoardExternalId("")
+  }, [projectExternalId])
+
+  useEffect(() => {
+    if (boardExternalId === "" && boards.length > 0) {
+      setBoardExternalId(boards[0].external_id)
+    }
+  }, [boardExternalId, boards])
+
+  useEffect(() => {
+    if (!selectedBoard) {
+      return
+    }
+    if (selectedBoard.type === "kanban") {
+      setWorkingMode("kanban")
+      setSprintLengthDays(null)
+      return
+    }
+    setWorkingMode("scrum")
+    setSprintLengthDays(detectedSprintLengthDays ?? 14)
+  }, [detectedSprintLengthDays, selectedBoard])
+
+  function submitRun() {
+    if (!selectedProject || !selectedBoard) {
+      return
+    }
+    runReport.mutate({
+      connectionId: connection.id,
+      projectExternalId: selectedProject.external_id,
+      boardExternalId: selectedBoard.external_id,
+      workingMode,
+      sprintLengthDays: workingMode === "scrum" ? sprintLengthDays : null,
+    })
+  }
+
+  return (
+    <Card>
+      <CardContent className="space-y-5 p-4">
+        <div className="grid gap-4 md:grid-cols-2">
+          <div className="space-y-1.5">
+            <Label htmlFor={`jira-project-${connection.id}`}>Project</Label>
+            <Select
+              disabled={projectsQuery.isLoading || projects.length === 0}
+              id={`jira-project-${connection.id}`}
+              onChange={(event) => setProjectExternalId(event.target.value)}
+              value={projectExternalId}
+            >
+              {projects.map((project) => (
+                <option key={project.id} value={project.external_id}>
+                  {project.key} · {project.name}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor={`jira-board-${connection.id}`}>Board</Label>
+            <Select
+              disabled={boardsQuery.isLoading || boards.length === 0}
+              id={`jira-board-${connection.id}`}
+              onChange={(event) => setBoardExternalId(event.target.value)}
+              value={boardExternalId}
+            >
+              {boards.map((board) => (
+                <option key={board.id} value={board.external_id}>
+                  {board.name}
+                </option>
+              ))}
+            </Select>
+          </div>
+        </div>
+
+        {selectedBoard && (
+          <div className="grid gap-4 rounded-md border p-4 md:grid-cols-3">
+            <div>
+              <p className="text-xs font-medium uppercase text-slate-500">Detected</p>
+              <p className="mt-1 text-sm">
+                {modeLabel(selectedBoard, detectedSprintLengthDays)}
+              </p>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor={`jira-mode-${connection.id}`}>Working mode</Label>
+              <Select
+                id={`jira-mode-${connection.id}`}
+                onChange={(event) => {
+                  const nextMode = event.target.value === "kanban" ? "kanban" : "scrum"
+                  setWorkingMode(nextMode)
+                  setSprintLengthDays(nextMode === "scrum" ? detectedSprintLengthDays ?? 14 : null)
+                }}
+                value={workingMode}
+              >
+                <option value="scrum">Scrum</option>
+                <option value="kanban">Kanban</option>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor={`jira-sprint-length-${connection.id}`}>Sprint length</Label>
+              <input
+                className="flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
+                disabled={workingMode === "kanban"}
+                id={`jira-sprint-length-${connection.id}`}
+                min={1}
+                onChange={(event) => setSprintLengthDays(Number(event.target.value))}
+                type="number"
+                value={sprintLengthDays ?? ""}
+              />
+            </div>
+          </div>
+        )}
+
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="text-sm text-slate-600">
+            {sprintsQuery.isLoading && "Loading recent sprints…"}
+            {!sprintsQuery.isLoading && selectedBoard && activeSprint && (
+              <span>Active sprint: {activeSprint.name}</span>
+            )}
+            {!sprintsQuery.isLoading && selectedBoard && !activeSprint && (
+              <span>No active sprint found for this board.</span>
+            )}
+            {(projectsQuery.isError || boardsQuery.isError || sprintsQuery.isError) && (
+              <span className="text-red-700">Jira lists could not be loaded.</span>
+            )}
+          </div>
+          <Button
+            disabled={!selectedBoard || !activeSprint || runReport.isPending}
+            onClick={submitRun}
+            type="button"
+          >
+            {runReport.isPending ? "Running report…" : "Run report"}
+          </Button>
+        </div>
+        {runReport.isError && (
+          <p className="text-sm text-red-700" role="alert">
+            {apiErrorMessage(runReport.error, "The Jira report failed. Please try again.")}
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+function modeLabel(board: JiraBoard, sprintLengthDays: number | null): string {
+  if (board.type === "kanban") {
+    return "Kanban"
+  }
+  if (sprintLengthDays !== null) {
+    return `Scrum · ${sprintLengthDays} days`
+  }
+  return board.type === "scrum" ? "Scrum" : "Unknown"
+}
+
+function sprintLengthFromSprints(sprints: JiraSprint[]): number | null {
+  const lengths = sprints
+    .filter((sprint) => sprint.state === "active" || sprint.state === "closed")
+    .map((sprint) => {
+      if (!sprint.start_date || !sprint.end_date) {
+        return null
+      }
+      const start = Date.parse(sprint.start_date)
+      const end = Date.parse(sprint.end_date)
+      if (Number.isNaN(start) || Number.isNaN(end) || end <= start) {
+        return null
+      }
+      return Math.round((end - start) / 86_400_000)
+    })
+    .filter((length): length is number => length !== null)
+    .sort((left, right) => left - right)
+
+  if (lengths.length === 0) {
+    return null
+  }
+  return lengths[Math.floor(lengths.length / 2)]
 }
 
 interface ConnectionListProps {
