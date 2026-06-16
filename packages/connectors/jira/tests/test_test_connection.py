@@ -72,9 +72,9 @@ def test_connection_uses_bearer_for_pat_only_config(
     async def run() -> None:
         def handler(request: httpx.Request) -> httpx.Response:
             assert request.headers["authorization"] == f"Bearer {token}"
-            if request.url.path == "/rest/api/3/myself":
+            if request.url.path == "/rest/api/2/myself":
                 return httpx.Response(200, json={"displayName": "Jira User"})
-            if request.url.path == "/rest/api/3/mypermissions":
+            if request.url.path == "/rest/api/2/mypermissions":
                 return httpx.Response(200, json={"permissions": {}})
             raise AssertionError(f"unexpected path: {request.url.path}")
 

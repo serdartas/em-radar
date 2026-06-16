@@ -74,7 +74,7 @@ class JiraConnector:
         )
 
     async def list_projects(self) -> list[Project]:
-        payloads = await self._request_paginated_values("/rest/api/3/project/search")
+        payloads = await self._request_json_list("rest/api/2/project")
         return [_project_from_payload(payload, self._base_url) for payload in payloads]
 
     async def list_boards(self, project_id: str) -> list[Board]:
@@ -113,6 +113,24 @@ class JiraConnector:
         if not isinstance(payload, dict):
             raise ConnectorDataError("Jira returned an unexpected payload shape")
         return cast(dict[str, object], payload)
+
+    async def _request_json_list(self, path: str) -> list[Mapping[str, object]]:
+        try:
+            response = await self._client.get(path)
+        except httpx.RequestError as error:
+            raise ConnectorTransientError("Failed to reach Jira") from error
+
+        if response.status_code >= 400:
+            raise _error_for_status(response.status_code)
+
+        try:
+            payload = response.json()
+        except ValueError as error:
+            raise ConnectorDataError("Jira returned invalid JSON") from error
+
+        if not isinstance(payload, list) or not all(isinstance(value, Mapping) for value in payload):
+            raise ConnectorDataError("Jira returned an unexpected payload shape")
+        return cast(list[Mapping[str, object]], payload)
 
     async def _request_paginated_values(
         self,

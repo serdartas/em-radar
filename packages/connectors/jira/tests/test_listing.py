@@ -19,53 +19,36 @@ def _client_factory_for(
     return factory
 
 
-def test_list_projects_consumes_pages_and_normalizes(
+def test_list_projects_uses_server_endpoint_and_normalizes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    seen_start_at: list[str] = []
+    seen_paths: list[str] = []
 
     async def run() -> None:
         def handler(request: httpx.Request) -> httpx.Response:
-            assert request.url.path == "/rest/api/3/project/search"
-            seen_start_at.append(request.url.params["startAt"])
-            if request.url.params["startAt"] == "0":
-                return httpx.Response(
-                    200,
-                    json={
-                        "startAt": 0,
-                        "maxResults": 50,
-                        "total": 2,
-                        "values": [
-                            {
-                                "id": "10000",
-                                "key": "ENG",
-                                "name": "Engineering",
-                                "self": "https://jira.example.com/rest/api/3/project/10000",
-                            }
-                        ],
-                    },
-                )
+            seen_paths.append(request.url.path)
             return httpx.Response(
                 200,
-                json={
-                    "startAt": 1,
-                    "maxResults": 50,
-                    "total": 2,
-                    "values": [
-                        {
-                            "id": "10001",
-                            "key": "OPS",
-                            "name": "Operations",
-                            "self": "https://jira.example.com/rest/api/3/project/10001",
-                        }
-                    ],
-                },
+                json=[
+                    {
+                        "id": "10000",
+                        "key": "ENG",
+                        "name": "Engineering",
+                        "self": "https://jira.example.com/jira/rest/api/2/project/10000",
+                    },
+                    {
+                        "id": "10001",
+                        "key": "OPS",
+                        "name": "Operations",
+                        "self": "https://jira.example.com/jira/rest/api/2/project/10001",
+                    },
+                ],
             )
 
         monkeypatch.setattr(jira_connector_module, "CLIENT_FACTORY", _client_factory_for(handler))
         connector = JiraConnector(
             {
-                "base_url": "https://jira.example.com",
+                "base_url": "https://jira.example.com/jira",
                 "token": "jira-token-1234",
                 "auth_email": "jira.email@example.com",
             }
@@ -78,15 +61,15 @@ def test_list_projects_consumes_pages_and_normalizes(
         assert [project.key for project in projects] == ["ENG", "OPS"]
         assert projects[0].name == "Engineering"
         assert projects[0].source == Source.JIRA
-        assert projects[0].source_url == "https://jira.example.com/browse/ENG"
+        assert projects[0].source_url == "https://jira.example.com/jira/browse/ENG"
         assert projects[0].source_metadata == {
-            "self": "https://jira.example.com/rest/api/3/project/10000"
+            "self": "https://jira.example.com/jira/rest/api/2/project/10000"
         }
         assert projects[0].id != projects[1].id
 
     asyncio.run(run())
 
-    assert seen_start_at == ["0", "1"]
+    assert seen_paths == ["/jira/rest/api/2/project"]
 
 
 def test_list_boards_maps_types_and_project_reference(
@@ -94,21 +77,16 @@ def test_list_boards_maps_types_and_project_reference(
 ) -> None:
     async def run() -> None:
         def handler(request: httpx.Request) -> httpx.Response:
-            if request.url.path == "/rest/api/3/project/search":
+            if request.url.path == "/rest/api/2/project":
                 return httpx.Response(
                     200,
-                    json={
-                        "startAt": 0,
-                        "maxResults": 50,
-                        "isLast": True,
-                        "values": [
-                            {
-                                "id": "10000",
-                                "key": "ENG",
-                                "name": "Engineering",
-                            }
-                        ],
-                    },
+                    json=[
+                        {
+                            "id": "10000",
+                            "key": "ENG",
+                            "name": "Engineering",
+                        }
+                    ],
                 )
 
             assert request.url.path == "/rest/agile/1.0/board"
