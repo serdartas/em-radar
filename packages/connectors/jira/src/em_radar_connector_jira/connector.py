@@ -54,8 +54,8 @@ class JiraConnector:
         )
 
     async def test_connection(self) -> ConnectionTestResult:
-        user_payload = await self._request_json("/rest/api/3/myself")
-        permissions_payload = await self._request_json("/rest/api/3/mypermissions")
+        user_payload = await self._request_json("rest/api/2/myself")
+        permissions_payload = await self._request_json("rest/api/2/mypermissions")
         return ConnectionTestResult(
             ok=True,
             detail="Connected to Jira",
@@ -67,10 +67,10 @@ class JiraConnector:
     def describe_capabilities(cls) -> Capabilities:
         del cls
         return Capabilities(
-            provides_workitems=True,
-            provides_sprints=True,
-            provides_transitions=True,
-            supports_incremental_fetch=True,
+            provides_workitems=False,
+            provides_sprints=False,
+            provides_transitions=False,
+            supports_incremental_fetch=False,
         )
 
     async def list_projects(self) -> list[Project]:
@@ -146,8 +146,10 @@ class JiraConnector:
 
 def _authorization_header(config: JiraConnectorConfig) -> str:
     token = config.token.get_secret_value()
-    username = config.auth_email if config.auth_email is not None else token
-    secret = f"{username}:{token if config.auth_email is not None else ''}".encode("utf-8")
+    if config.auth_email is None:
+        return f"Bearer {token}"
+
+    secret = f"{config.auth_email}:{token}".encode("utf-8")
     encoded = base64.b64encode(secret).decode("ascii")
     return f"Basic {encoded}"
 
