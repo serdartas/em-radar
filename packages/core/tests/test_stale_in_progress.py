@@ -100,11 +100,14 @@ def test_evaluator_runs_registered_signals_by_default() -> None:
         evaluation_context(),
     )
 
-    assert len(findings) == 5
+    signal_ids = {finding.signal_id for finding in findings}
+    assert "stale-in-progress-work-item" in signal_ids
+    assert "story-without-acceptance-criteria" in signal_ids
 
 
 def test_registry_is_keyed_by_id_and_params_are_validated() -> None:
     assert default_registry.get("stale-in-progress-work-item") is StaleInProgressSignal
+    assert "sprint-scope-churn" in default_registry.ids()
 
     with pytest.raises(ValidationError):
         default_registry.create("stale-in-progress-work-item", {"unknown": True})

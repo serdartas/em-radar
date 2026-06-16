@@ -47,6 +47,7 @@ class Signal(ABC):
     name: ClassVar[str]
     default_severity: ClassVar[Severity]
     params_schema: ClassVar[type[SignalParams]]
+    sprint_only: ClassVar[bool] = False
 
     def __init__(self, params: Mapping[str, object] | None = None) -> None:
         self.params = self.params_schema.model_validate(params or {})

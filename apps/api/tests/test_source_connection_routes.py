@@ -107,7 +107,7 @@ class JiraTestConnector:
             external_id="PLAT-1",
             project_id=UUID("4c7a2c4f-e62f-4a78-bf6f-81f0a2a08826"),
             key="PLAT-1",
-            type=WorkItemType.STORY,
+            type=WorkItemType.TASK,
             title="Assigned Jira story",
             status="In Progress",
             status_category=StatusCategory.IN_PROGRESS,

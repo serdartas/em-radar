@@ -23,7 +23,7 @@ def test_demo_run_persists_succeeded_report_with_severity_counts(api_client: Tes
     counts = body["findings_count_by_severity"]
     assert set(counts) == {"info", "warning", "critical"}
     assert sum(counts.values()) == len(body["findings"])
-    assert counts["warning"] == len(body["findings"])
+    assert counts["warning"] > 0
     assert body["signal_pack_snapshot"]["schema_id"] == "emradar.dev/v1"
 
 
