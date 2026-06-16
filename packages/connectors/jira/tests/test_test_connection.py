@@ -26,9 +26,9 @@ def test_connection_success_returns_user_and_permissions(monkeypatch: pytest.Mon
     async def run() -> None:
         def handler(request: httpx.Request) -> httpx.Response:
             assert request.headers["authorization"] == expected_authorization
-            if request.url.path == "/rest/api/3/myself":
+            if request.url.path == "/rest/api/2/myself":
                 return httpx.Response(200, json={"displayName": "Jira User"})
-            if request.url.path == "/rest/api/3/mypermissions":
+            if request.url.path == "/rest/api/2/mypermissions":
                 return httpx.Response(
                     200,
                     json={

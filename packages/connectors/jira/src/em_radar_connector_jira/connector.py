@@ -49,8 +49,8 @@ class JiraConnector:
         )
 
     async def test_connection(self) -> ConnectionTestResult:
-        user_payload = await self._request_json("/rest/api/3/myself")
-        permissions_payload = await self._request_json("/rest/api/3/mypermissions")
+        user_payload = await self._request_json("rest/api/2/myself")
+        permissions_payload = await self._request_json("rest/api/2/mypermissions")
         return ConnectionTestResult(
             ok=True,
             detail="Connected to Jira",
@@ -62,10 +62,10 @@ class JiraConnector:
     def describe_capabilities(cls) -> Capabilities:
         del cls
         return Capabilities(
-            provides_workitems=True,
-            provides_sprints=True,
-            provides_transitions=True,
-            supports_incremental_fetch=True,
+            provides_workitems=False,
+            provides_sprints=False,
+            provides_transitions=False,
+            supports_incremental_fetch=False,
         )
 
     async def close(self) -> None:
