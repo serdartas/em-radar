@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import base64
-from collections.abc import Callable, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from datetime import datetime, timezone
 from typing import ClassVar, cast
 from uuid import UUID, uuid5
@@ -18,12 +18,47 @@ from em_radar_core.connectors import (
     ConnectorNotFoundError,
     ConnectorRateLimitedError,
     ConnectorTransientError,
+    WorkItemScope,
 )
-from em_radar_core.models import Board, BoardType, Project, Source, Sprint, SprintState
+from em_radar_core.models import (
+    Board,
+    BoardType,
+    EvaluationWindow,
+    Project,
+    Source,
+    Sprint,
+    SprintState,
+    StatusCategory,
+    WindowType,
+    WorkItem,
+    WorkItemType,
+)
 
 CLIENT_FACTORY: Callable[..., httpx.AsyncClient] = httpx.AsyncClient
 PAGE_SIZE = 50
 _NAMESPACE = UUID("1b6514a2-8027-43f2-a820-c771c419ca33")
+_STORY_POINTS_FIELD = "customfield_10016"
+_EPIC_LINK_FIELD = "customfield_10014"
+_SPRINT_FIELD = "customfield_10020"
+_ISSUE_FIELDS = (
+    "summary",
+    "description",
+    "issuetype",
+    "status",
+    "assignee",
+    "reporter",
+    "project",
+    "parent",
+    "labels",
+    "components",
+    "created",
+    "updated",
+    "resolutiondate",
+    "duedate",
+    _STORY_POINTS_FIELD,
+    _EPIC_LINK_FIELD,
+    _SPRINT_FIELD,
+)
 
 
 class JiraConnectorConfig(BaseModel):
@@ -67,10 +102,10 @@ class JiraConnector:
     def describe_capabilities(cls) -> Capabilities:
         del cls
         return Capabilities(
-            provides_workitems=False,
-            provides_sprints=False,
+            provides_workitems=True,
+            provides_sprints=True,
             provides_transitions=False,
-            supports_incremental_fetch=False,
+            supports_incremental_fetch=True,
         )
 
     async def list_projects(self) -> list[Project]:
@@ -87,6 +122,19 @@ class JiraConnector:
     async def list_sprints(self, board_id: str) -> list[Sprint]:
         payloads = await self._request_paginated_values(f"/rest/agile/1.0/board/{board_id}/sprint")
         return [_sprint_from_payload(payload, board_id) for payload in payloads]
+
+    async def fetch_workitems(
+        self,
+        scope: WorkItemScope,
+        window: EvaluationWindow,
+    ) -> AsyncIterator[WorkItem]:
+        async for payload in self._request_paginated_issues(
+            params={
+                "jql": _workitem_jql(scope, window),
+                "fields": ",".join(_ISSUE_FIELDS),
+            }
+        ):
+            yield _workitem_from_payload(payload, self._base_url)
 
     async def close(self) -> None:
         await self._client.aclose()
@@ -128,7 +176,9 @@ class JiraConnector:
         except ValueError as error:
             raise ConnectorDataError("Jira returned invalid JSON") from error
 
-        if not isinstance(payload, list) or not all(isinstance(value, Mapping) for value in payload):
+        if not isinstance(payload, list) or not all(
+            isinstance(value, Mapping) for value in payload
+        ):
             raise ConnectorDataError("Jira returned an unexpected payload shape")
         return cast(list[Mapping[str, object]], payload)
 
@@ -155,6 +205,30 @@ class JiraConnector:
                 return values
             if next_start_at == start_at:
                 raise ConnectorDataError("Jira pagination did not advance")
+            start_at = next_start_at
+
+    async def _request_paginated_issues(
+        self,
+        *,
+        params: Mapping[str, object],
+    ) -> AsyncIterator[Mapping[str, object]]:
+        start_at = 0
+        while True:
+            page_params = {
+                "startAt": start_at,
+                "maxResults": PAGE_SIZE,
+                **dict(params),
+            }
+            payload = await self._request_json("/rest/api/2/search", params=page_params)
+            page_values = _payload_issues(payload)
+            for issue in page_values:
+                yield issue
+
+            next_start_at = start_at + len(page_values)
+            if _is_last_issue_page(payload, next_start_at):
+                return
+            if next_start_at == start_at:
+                raise ConnectorDataError("Jira issue pagination did not advance")
             start_at = next_start_at
 
     @property
@@ -205,6 +279,15 @@ def _payload_values(payload: Mapping[str, object]) -> list[Mapping[str, object]]
     return cast(list[Mapping[str, object]], raw_values)
 
 
+def _payload_issues(payload: Mapping[str, object]) -> list[Mapping[str, object]]:
+    raw_issues = payload.get("issues")
+    if not isinstance(raw_issues, list):
+        raise ConnectorDataError("Jira search response did not contain issues")
+    if not all(isinstance(issue, Mapping) for issue in raw_issues):
+        raise ConnectorDataError("Jira search response contained an invalid issue")
+    return cast(list[Mapping[str, object]], raw_issues)
+
+
 def _is_last_page(payload: Mapping[str, object], next_start_at: int) -> bool:
     is_last = payload.get("isLast")
     if isinstance(is_last, bool):
@@ -215,6 +298,18 @@ def _is_last_page(payload: Mapping[str, object], next_start_at: int) -> bool:
         return next_start_at >= total
 
     return len(_payload_values(payload)) < PAGE_SIZE
+
+
+def _is_last_issue_page(payload: Mapping[str, object], next_start_at: int) -> bool:
+    total = payload.get("total")
+    if isinstance(total, int):
+        return next_start_at >= total
+
+    max_results = payload.get("maxResults")
+    if isinstance(max_results, int):
+        return len(_payload_issues(payload)) < max_results
+
+    return len(_payload_issues(payload)) < PAGE_SIZE
 
 
 def _project_from_payload(payload: Mapping[str, object], base_url: str) -> Project:
@@ -275,6 +370,64 @@ def _sprint_from_payload(payload: Mapping[str, object], board_id: str) -> Sprint
     )
 
 
+def _workitem_from_payload(payload: Mapping[str, object], base_url: str) -> WorkItem:
+    external_id = _required_str(payload, "id", "issue")
+    key = _required_str(payload, "key", "issue")
+    fields = _required_mapping(payload, "fields", "issue")
+    status = _required_mapping(fields, "status", "issue")
+    labels = _string_list(fields.get("labels"), "labels")
+    status_category = _status_category(status, labels)
+    sprints = _sprints_from_field(fields.get(_SPRINT_FIELD))
+
+    return WorkItem(
+        **_workitem_common_fields(
+            external_id,
+            key,
+            source_url=f"{base_url}/browse/{key}",
+            source_metadata=_metadata(payload, "self"),
+        ),
+        project_id=_stable_id("project", _project_external_id(fields)),
+        key=key,
+        type=_workitem_type(_required_mapping(fields, "issuetype", "issue")),
+        title=_required_str(fields, "summary", "issue"),
+        description=_optional_str(fields, "description"),
+        status=_required_str(status, "name", "issue status"),
+        status_category=status_category,
+        assignee_id=_user_id(fields.get("assignee")),
+        reporter_id=_user_id(fields.get("reporter")),
+        labels=labels,
+        components=_components(fields.get("components")),
+        parent_id=_parent_id(fields),
+        story_points=_number_or_none(fields.get(_STORY_POINTS_FIELD), _STORY_POINTS_FIELD),
+        is_blocked=status_category is StatusCategory.BLOCKED,
+        resolved_at=_parse_datetime(_optional_str(fields, "resolutiondate"))
+        if status_category is StatusCategory.DONE
+        else None,
+        due_date=_parse_datetime(_optional_str(fields, "duedate")),
+        sprint_ids=[sprint_id for sprint_id, _ in sprints],
+        current_sprint_id=_current_sprint_id(sprints),
+        created_at=_parse_datetime(_optional_str(fields, "created")),
+        updated_at=_parse_datetime(_optional_str(fields, "updated")),
+    )
+
+
+def _workitem_common_fields(
+    external_id: str,
+    key: str,
+    *,
+    source_url: str | None,
+    source_metadata: dict[str, object],
+) -> dict[str, object]:
+    fields = _common_fields(
+        "workitem",
+        external_id,
+        source_url=source_url,
+        source_metadata=source_metadata,
+    )
+    fields["id"] = _stable_id("workitem", key)
+    return fields
+
+
 def _common_fields(
     kind: str,
     external_id: str,
@@ -304,6 +457,13 @@ def _required_str(payload: Mapping[str, object], key: str, entity: str) -> str:
     raise ConnectorDataError(f"Jira {entity} payload was missing {key}")
 
 
+def _required_mapping(payload: Mapping[str, object], key: str, entity: str) -> Mapping[str, object]:
+    value = payload.get(key)
+    if isinstance(value, Mapping):
+        return value
+    raise ConnectorDataError(f"Jira {entity} payload was missing {key}")
+
+
 def _optional_str(payload: Mapping[str, object], key: str) -> str | None:
     value = payload.get(key)
     if isinstance(value, int):
@@ -311,6 +471,10 @@ def _optional_str(payload: Mapping[str, object], key: str) -> str | None:
     if isinstance(value, str) and value:
         return value
     return None
+
+
+def _optional_mapping(value: object) -> Mapping[str, object] | None:
+    return value if isinstance(value, Mapping) else None
 
 
 def _metadata(payload: Mapping[str, object], *keys: str) -> dict[str, object]:
@@ -336,6 +500,163 @@ def _sprint_state(value: str) -> SprintState:
     raise ConnectorDataError(f"Unsupported Jira sprint state: {value}")
 
 
+def _workitem_type(payload: Mapping[str, object]) -> WorkItemType:
+    name = _required_str(payload, "name", "issue type").strip().lower().replace("_", " ")
+    if name == "epic":
+        return WorkItemType.EPIC
+    if name in {"story", "user story"}:
+        return WorkItemType.STORY
+    if name == "bug":
+        return WorkItemType.BUG
+    if name in {"sub-task", "subtask"}:
+        return WorkItemType.SUBTASK
+    if name == "spike":
+        return WorkItemType.SPIKE
+    if name == "task":
+        return WorkItemType.TASK
+    return WorkItemType.OTHER
+
+
+def _status_category(status: Mapping[str, object], labels: Sequence[str]) -> StatusCategory:
+    name = _required_str(status, "name", "issue status")
+    if _is_blocked(name, labels):
+        return StatusCategory.BLOCKED
+
+    status_category = _required_mapping(status, "statusCategory", "issue status")
+    key = _optional_str(status_category, "key")
+    category_id = _optional_str(status_category, "id")
+    category_name = _optional_str(status_category, "name")
+    normalized = (key or category_id or category_name or "").strip().lower().replace(" ", "_")
+    if normalized in {"new", "to_do", "todo", "2"}:
+        return StatusCategory.TODO
+    if normalized in {"indeterminate", "in_progress", "4"}:
+        return StatusCategory.IN_PROGRESS
+    if normalized in {"done", "3"}:
+        return StatusCategory.DONE
+    raise ConnectorDataError(f"Unsupported Jira status category: {normalized or '<missing>'}")
+
+
+def _is_blocked(status_name: str, labels: Sequence[str]) -> bool:
+    return status_name.strip().lower() == "blocked" or any(
+        label.strip().lower() == "blocked" for label in labels
+    )
+
+
+def _project_external_id(fields: Mapping[str, object]) -> str:
+    project = _required_mapping(fields, "project", "issue")
+    return _required_str(project, "id", "issue project")
+
+
+def _user_id(value: object) -> UUID | None:
+    user = _optional_mapping(value)
+    if user is None:
+        return None
+    account_id = (
+        _optional_str(user, "accountId")
+        or _optional_str(user, "key")
+        or _optional_str(user, "name")
+    )
+    return _stable_id("user", account_id) if account_id is not None else None
+
+
+def _parent_id(fields: Mapping[str, object]) -> UUID | None:
+    parent = _optional_mapping(fields.get("parent"))
+    if parent is not None:
+        parent_reference = _optional_str(parent, "key") or _required_str(
+            parent, "id", "issue parent"
+        )
+        return _stable_id("workitem", parent_reference)
+
+    epic_link = fields.get(_EPIC_LINK_FIELD)
+    if isinstance(epic_link, str) and epic_link:
+        return _stable_id("workitem", epic_link)
+    return None
+
+
+def _components(value: object) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ConnectorDataError("Jira issue components field was invalid")
+
+    components: list[str] = []
+    for item in value:
+        component = _optional_mapping(item)
+        if component is None:
+            raise ConnectorDataError("Jira issue component was invalid")
+        name = _optional_str(component, "name")
+        if name is not None:
+            components.append(name)
+    return components
+
+
+def _string_list(value: object, field_name: str) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise ConnectorDataError(f"Jira issue {field_name} field was invalid")
+    return list(value)
+
+
+def _number_or_none(value: object, field_name: str) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, int | float) and not isinstance(value, bool):
+        return float(value)
+    raise ConnectorDataError(f"Jira issue {field_name} field was invalid")
+
+
+def _sprints_from_field(value: object) -> list[tuple[UUID, SprintState | None]]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ConnectorDataError("Jira issue sprint field was invalid")
+
+    sprints: list[tuple[UUID, SprintState | None]] = []
+    for item in value:
+        sprint_id, state = _sprint_reference(item)
+        if sprint_id not in {existing_id for existing_id, _ in sprints}:
+            sprints.append((sprint_id, state))
+    return sprints
+
+
+def _sprint_reference(value: object) -> tuple[UUID, SprintState | None]:
+    if isinstance(value, Mapping):
+        external_id = _required_str(value, "id", "issue sprint")
+        state = (
+            _sprint_state(_required_str(value, "state", "issue sprint"))
+            if "state" in value
+            else None
+        )
+        return _stable_id("sprint", external_id), state
+    if isinstance(value, str):
+        attributes = _legacy_sprint_attributes(value)
+        external_id = attributes.get("id")
+        if external_id is None:
+            raise ConnectorDataError("Jira legacy sprint value was missing id")
+        state = _sprint_state(attributes["state"]) if "state" in attributes else None
+        return _stable_id("sprint", external_id), state
+    raise ConnectorDataError("Jira issue sprint field contained an invalid item")
+
+
+def _legacy_sprint_attributes(value: str) -> dict[str, str]:
+    _, _, body = value.partition("[")
+    body = body.rstrip("]")
+    attributes: dict[str, str] = {}
+    for part in body.split(","):
+        key, separator, raw_value = part.partition("=")
+        if separator and raw_value:
+            attributes[key.strip()] = raw_value.strip()
+    return attributes
+
+
+def _current_sprint_id(sprints: Sequence[tuple[UUID, SprintState | None]]) -> UUID | None:
+    for sprint_id, state in sprints:
+        if state is SprintState.ACTIVE:
+            return sprint_id
+    return None
+
+
 def _parse_datetime(value: str | None) -> datetime | None:
     if value is None:
         return None
@@ -352,6 +673,45 @@ def _board_url(base_url: str, board_id: str, project_key: str | None) -> str | N
     if project_key is None:
         return None
     return f"{base_url}/jira/software/c/projects/{project_key}/boards/{board_id}"
+
+
+def _workitem_jql(scope: WorkItemScope, window: EvaluationWindow) -> str:
+    clauses: list[str] = []
+    if scope.project_external_ids:
+        clauses.append(f"project in ({_jql_list(scope.project_external_ids)})")
+    if scope.workitem_types:
+        clauses.append(f"issuetype in ({_jql_list(_jira_issue_type_names(scope.workitem_types))})")
+    if window.window_type is WindowType.DATE_RANGE:
+        if window.start is None or window.end is None:
+            raise ConnectorDataError("Date-range window was missing start or end")
+        clauses.append(f'updated >= "{_jql_datetime(window.start)}"')
+        clauses.append(f'updated <= "{_jql_datetime(window.end)}"')
+    return " AND ".join(clauses) if clauses else "ORDER BY updated ASC"
+
+
+def _jql_list(values: Sequence[str]) -> str:
+    return ", ".join(f'"{value.replace(chr(34), chr(92) + chr(34))}"' for value in values)
+
+
+def _jira_issue_type_names(types: Sequence[WorkItemType]) -> list[str]:
+    names = {
+        WorkItemType.EPIC: "Epic",
+        WorkItemType.STORY: "Story",
+        WorkItemType.TASK: "Task",
+        WorkItemType.BUG: "Bug",
+        WorkItemType.SUBTASK: "Sub-task",
+        WorkItemType.SPIKE: "Spike",
+        WorkItemType.OTHER: "Other",
+    }
+    return [names[item_type] for item_type in types]
+
+
+def _jql_datetime(value: datetime) -> str:
+    if value.tzinfo is None:
+        normalized = value.replace(tzinfo=timezone.utc)
+    else:
+        normalized = value.astimezone(timezone.utc)
+    return normalized.strftime("%Y-%m-%d %H:%M")
 
 
 def _error_for_status(
