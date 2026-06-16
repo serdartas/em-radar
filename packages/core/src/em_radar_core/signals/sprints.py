@@ -114,11 +114,11 @@ def _scope_counts(
 
 def _first_seen_at(item: WorkItem, transitions: tuple[Transition, ...]) -> datetime | None:
     candidates = [transition.occurred_at for transition in transitions]
-    if item.created_at is not None:
-        candidates.append(item.created_at)
     if item.updated_at is not None:
         candidates.append(item.updated_at)
-    return min(candidates) if candidates else None
+    if candidates:
+        return min(candidates)
+    return item.created_at
 
 
 def _transitions_by_item(

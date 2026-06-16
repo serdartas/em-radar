@@ -78,3 +78,27 @@ def test_transition_history_can_supply_first_seen_time() -> None:
         "added_count": 1,
         "churn_pct": 100.0,
     }
+
+
+def test_backlog_item_updated_after_sprint_start_counts_as_added() -> None:
+    current = sprint("Sprint 1", start_date=NOW - timedelta(days=7))
+    original = workitem("RAD-1", sprint_ids=[current.id], updated_at=NOW - timedelta(days=8))
+    added = workitem(
+        "RAD-2",
+        sprint_ids=[current.id],
+        created_at=NOW - timedelta(days=30),
+        updated_at=NOW - timedelta(days=6),
+    )
+
+    findings = SprintScopeChurnSignal({"warning_pct": 20.0, "critical_pct": 120.0}).evaluate(
+        SignalData(report_id=uuid4(), sprints=(current,), workitems=(original, added)),
+        context(current.id),
+    )
+
+    assert len(findings) == 1
+    assert findings[0].severity is Severity.WARNING
+    assert findings[0].evidence == {
+        "original_count": 1,
+        "added_count": 1,
+        "churn_pct": 100.0,
+    }
