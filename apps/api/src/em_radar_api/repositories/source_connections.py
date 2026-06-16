@@ -187,4 +187,6 @@ def _mask_value(value: object, field_name: str | None = None) -> object:
 
 
 def _mask_secret(secret: str) -> str:
+    if len(secret) <= 4:
+        return "****"
     return f"****{secret[-4:]}"

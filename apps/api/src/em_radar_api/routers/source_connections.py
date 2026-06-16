@@ -1,4 +1,5 @@
 from dataclasses import asdict
+from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -18,11 +19,18 @@ from em_radar_api.repositories.source_connections import (
     update_source_connection,
 )
 from em_radar_api.source_connections import (
+    ConnectorName,
     SourceConnectionCreate,
     SourceConnectionRead,
     SourceConnectionUpdate,
 )
-from em_radar_core.connectors import ConnectorBase, ConnectorConfigError, ConnectorError
+from em_radar_core.connectors import (
+    ConnectorBase,
+    ConnectorConfigError,
+    ConnectorError,
+    WorkItemProvider,
+)
+from em_radar_core.models import Board, BoardType, Project, Sprint, SprintState
 
 router = APIRouter()
 
@@ -32,6 +40,45 @@ class ConnectionTestResponse(BaseModel):
     detail: str
     user_display_name: str | None
     permissions: list[str]
+
+
+class ProjectResponse(BaseModel):
+    id: UUID
+    external_id: str
+    key: str
+    name: str
+
+    @classmethod
+    def from_project(cls, project: Project) -> "ProjectResponse":
+        return cls.model_validate(project, from_attributes=True)
+
+
+class BoardResponse(BaseModel):
+    id: UUID
+    external_id: str
+    project_id: UUID
+    name: str
+    type: BoardType | None
+
+    @classmethod
+    def from_board(cls, board: Board) -> "BoardResponse":
+        return cls.model_validate(board, from_attributes=True)
+
+
+class SprintResponse(BaseModel):
+    id: UUID
+    external_id: str
+    board_id: UUID
+    name: str
+    state: SprintState
+    start_date: datetime | None
+    end_date: datetime | None
+    complete_date: datetime | None
+    goal: str | None
+
+    @classmethod
+    def from_sprint(cls, sprint: Sprint) -> "SprintResponse":
+        return cls.model_validate(sprint, from_attributes=True)
 
 
 @router.get("/connections", response_model=list[SourceConnectionRead])
@@ -105,6 +152,56 @@ async def test_existing_connection(
     return await _test_connector_instance(connector)
 
 
+@router.get("/connections/{connection_id}/projects", response_model=list[ProjectResponse])
+async def list_connection_projects(
+    connection_id: UUID,
+    session: Session = Depends(get_session),
+) -> list[ProjectResponse]:
+    connector = _workitem_connector(session, connection_id)
+    try:
+        return [
+            ProjectResponse.from_project(project) for project in await connector.list_projects()
+        ]
+    finally:
+        await connector.close()
+
+
+@router.get(
+    "/connections/{connection_id}/projects/{project_id}/boards",
+    response_model=list[BoardResponse],
+)
+async def list_connection_boards(
+    connection_id: UUID,
+    project_id: str,
+    session: Session = Depends(get_session),
+) -> list[BoardResponse]:
+    connector = _workitem_connector(session, connection_id)
+    try:
+        return [
+            BoardResponse.from_board(board) for board in await connector.list_boards(project_id)
+        ]
+    finally:
+        await connector.close()
+
+
+@router.get(
+    "/connections/{connection_id}/boards/{board_id}/sprints",
+    response_model=list[SprintResponse],
+)
+async def list_connection_sprints(
+    connection_id: UUID,
+    board_id: str,
+    session: Session = Depends(get_session),
+) -> list[SprintResponse]:
+    connector = _workitem_connector(session, connection_id)
+    try:
+        return [
+            SprintResponse.from_sprint(sprint) for sprint in await connector.list_sprints(board_id)
+        ]
+    finally:
+        await connector.close()
+
+
 async def _test_connector(
     connector_name: str,
     config: dict[str, object],
@@ -126,6 +223,36 @@ async def _test_connector_instance(connector: ConnectorBase) -> ConnectionTestRe
         return _failed_test(str(error))
     finally:
         await connector.close()
+
+
+def _workitem_connector(session: Session, connection_id: UUID) -> WorkItemProvider:
+    connection = get_source_connection(session, connection_id)
+    if connection is None:
+        raise _connection_not_found()
+    if connection.connector_name != ConnectorName.JIRA:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="connection is not a Jira connection",
+        )
+    try:
+        connector = instantiate_connector(
+            session,
+            connection_id,
+            lambda config: create_connector("jira", config),
+        )
+    except ConnectorConfigError as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(error),
+        ) from error
+    if connector is None:
+        raise _connection_not_found()
+    if not isinstance(connector, WorkItemProvider):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="connection does not support Jira work-item lists",
+        )
+    return connector
 
 
 def _failed_test(detail: str) -> ConnectionTestResponse:

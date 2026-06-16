@@ -34,7 +34,25 @@ def test_run_demo_report_accepts_date_range_window(api_client: TestClient) -> No
     assert response.json()["findings"]
 
 
-def test_run_report_rejects_non_demo_connector_and_invalid_window(api_client: TestClient) -> None:
+def test_run_demo_report_uses_persisted_signal_configs(api_client: TestClient) -> None:
+    patch_response = api_client.patch(
+        "/api/signal-configs/stale-in-progress-work-item",
+        json={"enabled": False},
+    )
+    response = api_client.post("/api/reports/run", json={"connector": "demo"})
+
+    assert patch_response.status_code == 200
+    assert response.status_code == 200
+    assert {finding["signal_id"] for finding in response.json()["findings"]} != {
+        "stale-in-progress-work-item"
+    }
+    assert all(
+        finding["signal_id"] != "stale-in-progress-work-item"
+        for finding in response.json()["findings"]
+    )
+
+
+def test_run_report_rejects_missing_jira_scope_and_invalid_window(api_client: TestClient) -> None:
     assert api_client.post("/api/reports/run", json={"connector": "jira"}).status_code == 422
     assert (
         api_client.post(

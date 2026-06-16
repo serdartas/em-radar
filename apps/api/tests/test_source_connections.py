@@ -44,8 +44,8 @@ def test_source_connection_crud_masks_credentials_but_instantiates_with_raw_conf
                 config={
                     "base_url": "https://jira.example.com",
                     "token": "jira-token-12345678",
-                    "nested": {"api_key": "nested-key-87654321"},
-                    "credential_from_type": SecretStr("typed-secret-11223344"),
+                    "nested": {"api_key": "abc"},
+                    "credential_from_type": SecretStr("xyz"),
                 },
                 selected_project_ids=[project_id],
                 selected_board_ids=[board_id],
@@ -56,8 +56,8 @@ def test_source_connection_crud_masks_credentials_but_instantiates_with_raw_conf
         assert created.config == {
             "base_url": "https://jira.example.com",
             "token": "****5678",
-            "nested": {"api_key": "****4321"},
-            "credential_from_type": "****3344",
+            "nested": {"api_key": "****"},
+            "credential_from_type": "****",
         }
         assert created.selected_project_ids == [project_id]
         assert get_source_connection(session, created.id) == created
@@ -66,7 +66,7 @@ def test_source_connection_crud_masks_credentials_but_instantiates_with_raw_conf
         connector = instantiate_connector(session, created.id, RecordingConnector)
         assert connector is not None
         assert connector.config["token"] == "jira-token-12345678"
-        assert connector.config["credential_from_type"] == "typed-secret-11223344"
+        assert connector.config["credential_from_type"] == "xyz"
 
         stored = session.exec(select(SourceConnectionTable)).one()
         assert stored.config["token"] == "jira-token-12345678"
