@@ -188,6 +188,61 @@ def test_fetch_transitions_falls_back_to_expanded_changelog_for_jira_server(
     asyncio.run(run())
 
 
+def test_fetch_transitions_applies_configured_blocked_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def run() -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/rest/api/2/status":
+                return httpx.Response(
+                    200,
+                    json=[
+                        _status("1", "Blocked", "indeterminate"),
+                        _status("2", "Impeded", "indeterminate"),
+                    ],
+                )
+            if request.url.path == "/rest/api/2/issue/10002":
+                return httpx.Response(200, json={"id": "10002", "key": "ENG-2"})
+            if request.url.path == "/rest/api/2/issue/10002/changelog":
+                return httpx.Response(
+                    200,
+                    json={
+                        "startAt": 0,
+                        "maxResults": 50,
+                        "total": 1,
+                        "values": [
+                            _history(
+                                "301",
+                                "2026-06-03T11:00:00.000+0200",
+                                None,
+                                [_status_item("1", "Blocked", "2", "Impeded")],
+                            ),
+                        ],
+                    },
+                )
+            raise AssertionError(f"unexpected request: {request.url}")
+
+        monkeypatch.setattr(jira_connector_module, "CLIENT_FACTORY", _client_factory_for(handler))
+        connector = JiraConnector(
+            {
+                "base_url": "https://jira.example.com",
+                "token": "jira-token-1234",
+                "field_mapping": {
+                    "blocked_status": "Impeded",
+                },
+            }
+        )
+
+        transitions = await _collect(connector.fetch_transitions("workitem", ["10002"]))
+        await connector.close()
+
+        assert len(transitions) == 1
+        assert transitions[0].from_status_category is StatusCategory.IN_PROGRESS
+        assert transitions[0].to_status_category is StatusCategory.BLOCKED
+
+    asyncio.run(run())
+
+
 async def _collect(iterator: object) -> list[Transition]:
     transitions: list[Transition] = []
     async for transition in iterator:

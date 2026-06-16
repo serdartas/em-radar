@@ -7,7 +7,7 @@ from typing import ClassVar, Literal, cast
 from uuid import UUID, uuid5
 
 import httpx
-from pydantic import BaseModel, ConfigDict, HttpUrl, SecretStr, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, SecretStr, ValidationError
 
 from em_radar_core.connectors import (
     Capabilities,
@@ -42,7 +42,10 @@ _NAMESPACE = UUID("1b6514a2-8027-43f2-a820-c771c419ca33")
 _STORY_POINTS_FIELD = "customfield_10016"
 _EPIC_LINK_FIELD = "customfield_10014"
 _SPRINT_FIELD = "customfield_10020"
-_ISSUE_FIELDS = (
+_ACCEPTANCE_CRITERIA_HEADING = "### Acceptance Criteria"
+_BLOCKED_LABEL = "blocked"
+_BLOCKED_STATUS = "Blocked"
+_SYSTEM_ISSUE_FIELDS = (
     "summary",
     "description",
     "issuetype",
@@ -57,10 +60,19 @@ _ISSUE_FIELDS = (
     "updated",
     "resolutiondate",
     "duedate",
-    _STORY_POINTS_FIELD,
-    _EPIC_LINK_FIELD,
     _SPRINT_FIELD,
 )
+
+
+class JiraFieldMappingConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    story_points: str = _STORY_POINTS_FIELD
+    epic_link: str = _EPIC_LINK_FIELD
+    acceptance_criteria: str | None = None
+    acceptance_criteria_heading: str | None = _ACCEPTANCE_CRITERIA_HEADING
+    blocked_label: str | None = _BLOCKED_LABEL
+    blocked_status: str | None = _BLOCKED_STATUS
 
 
 class JiraConnectorConfig(BaseModel):
@@ -70,6 +82,7 @@ class JiraConnectorConfig(BaseModel):
     token: SecretStr
     auth_email: str | None = None
     verify_tls: bool = True
+    field_mapping: JiraFieldMappingConfig = Field(default_factory=JiraFieldMappingConfig)
 
 
 class JiraConnector:
@@ -133,10 +146,10 @@ class JiraConnector:
         async for payload in self._request_paginated_issues(
             params={
                 "jql": _workitem_jql(scope, window),
-                "fields": ",".join(_ISSUE_FIELDS),
+                "fields": ",".join(_issue_fields(self.config.field_mapping)),
             }
         ):
-            workitem = _workitem_from_payload(payload, self._base_url)
+            workitem = _workitem_from_payload(payload, self._base_url, self.config.field_mapping)
             if _workitem_in_window(workitem, window):
                 yield workitem
 
@@ -296,7 +309,7 @@ class JiraConnector:
         payloads = await self._request_json_list("/rest/api/2/status")
         categories: dict[str, StatusCategory] = {}
         for payload in payloads:
-            category = _status_category(payload, [])
+            category = _status_category(payload, [], self.config.field_mapping)
             status_id = _optional_str(payload, "id")
             name = _optional_str(payload, "name")
             if status_id is not None:
@@ -463,13 +476,17 @@ def _sprint_from_payload(payload: Mapping[str, object], board_id: str) -> Sprint
     )
 
 
-def _workitem_from_payload(payload: Mapping[str, object], base_url: str) -> WorkItem:
+def _workitem_from_payload(
+    payload: Mapping[str, object],
+    base_url: str,
+    field_mapping: JiraFieldMappingConfig,
+) -> WorkItem:
     external_id = _required_str(payload, "id", "issue")
     key = _required_str(payload, "key", "issue")
     fields = _required_mapping(payload, "fields", "issue")
     status = _required_mapping(fields, "status", "issue")
     labels = _string_list(fields.get("labels"), "labels")
-    status_category = _status_category(status, labels)
+    status_category = _status_category(status, labels, field_mapping)
     sprints = _sprints_from_field(fields.get(_SPRINT_FIELD))
 
     return WorkItem(
@@ -490,8 +507,12 @@ def _workitem_from_payload(payload: Mapping[str, object], base_url: str) -> Work
         reporter_id=_user_id(fields.get("reporter")),
         labels=labels,
         components=_components(fields.get("components")),
-        parent_id=_parent_id(fields),
-        story_points=_number_or_none(fields.get(_STORY_POINTS_FIELD), _STORY_POINTS_FIELD),
+        parent_id=_parent_id(fields, field_mapping),
+        story_points=_number_or_none(
+            fields.get(field_mapping.story_points),
+            field_mapping.story_points,
+        ),
+        acceptance_criteria=_acceptance_criteria(fields, field_mapping),
         is_blocked=status_category is StatusCategory.BLOCKED,
         resolved_at=_parse_datetime(_optional_str(fields, "resolutiondate"))
         if status_category is StatusCategory.DONE
@@ -655,9 +676,13 @@ def _workitem_type(payload: Mapping[str, object]) -> WorkItemType:
     return WorkItemType.OTHER
 
 
-def _status_category(status: Mapping[str, object], labels: Sequence[str]) -> StatusCategory:
+def _status_category(
+    status: Mapping[str, object],
+    labels: Sequence[str],
+    field_mapping: JiraFieldMappingConfig | None = None,
+) -> StatusCategory:
     name = _required_str(status, "name", "issue status")
-    if _is_blocked(name, labels):
+    if _is_blocked(name, labels, field_mapping or JiraFieldMappingConfig()):
         return StatusCategory.BLOCKED
 
     status_category = _required_mapping(status, "statusCategory", "issue status")
@@ -715,10 +740,25 @@ def _required_status_category_for_changelog_value(
     return category
 
 
-def _is_blocked(status_name: str, labels: Sequence[str]) -> bool:
-    return status_name.strip().lower() == "blocked" or any(
-        label.strip().lower() == "blocked" for label in labels
+def _is_blocked(
+    status_name: str,
+    labels: Sequence[str],
+    field_mapping: JiraFieldMappingConfig,
+) -> bool:
+    blocked_status = field_mapping.blocked_status
+    if blocked_status is not None and _normalized_text(status_name) == _normalized_text(
+        blocked_status
+    ):
+        return True
+
+    blocked_label = field_mapping.blocked_label
+    return blocked_label is not None and any(
+        _normalized_text(label) == _normalized_text(blocked_label) for label in labels
     )
+
+
+def _normalized_text(value: str) -> str:
+    return value.strip().casefold()
 
 
 def _project_external_id(fields: Mapping[str, object]) -> str:
@@ -738,7 +778,7 @@ def _user_id(value: object) -> UUID | None:
     return _stable_id("user", account_id) if account_id is not None else None
 
 
-def _parent_id(fields: Mapping[str, object]) -> UUID | None:
+def _parent_id(fields: Mapping[str, object], field_mapping: JiraFieldMappingConfig) -> UUID | None:
     parent = _optional_mapping(fields.get("parent"))
     if parent is not None:
         parent_reference = _optional_str(parent, "key") or _required_str(
@@ -746,10 +786,73 @@ def _parent_id(fields: Mapping[str, object]) -> UUID | None:
         )
         return _stable_id("workitem", parent_reference)
 
-    epic_link = fields.get(_EPIC_LINK_FIELD)
+    epic_link = fields.get(field_mapping.epic_link)
     if isinstance(epic_link, str) and epic_link:
         return _stable_id("workitem", epic_link)
     return None
+
+
+def _acceptance_criteria(
+    fields: Mapping[str, object],
+    field_mapping: JiraFieldMappingConfig,
+) -> str | None:
+    custom_field = field_mapping.acceptance_criteria
+    if custom_field is not None:
+        custom_value = fields.get(custom_field)
+        if isinstance(custom_value, str):
+            stripped = custom_value.strip()
+            return stripped or None
+        if custom_value is not None:
+            raise ConnectorDataError(f"Jira issue {custom_field} field was invalid")
+
+    heading = field_mapping.acceptance_criteria_heading
+    description = _optional_str(fields, "description")
+    if heading is None or description is None:
+        return None
+    return _section_after_heading(description, heading)
+
+
+def _issue_fields(field_mapping: JiraFieldMappingConfig) -> tuple[str, ...]:
+    configurable_fields = [
+        field_mapping.story_points,
+        field_mapping.epic_link,
+        field_mapping.acceptance_criteria,
+    ]
+    fields = [*_SYSTEM_ISSUE_FIELDS]
+    for field_name in configurable_fields:
+        if field_name is not None and field_name not in fields:
+            fields.append(field_name)
+    return tuple(fields)
+
+
+def _section_after_heading(value: str, heading: str) -> str | None:
+    lines = value.splitlines()
+    heading_marker = heading.strip()
+    heading_level = _markdown_heading_level(heading_marker)
+    if heading_level is None:
+        return None
+
+    body: list[str] = []
+    found = False
+    for line in lines:
+        if not found:
+            found = line.strip().casefold() == heading_marker.casefold()
+            continue
+
+        line_heading_level = _markdown_heading_level(line.strip())
+        if line_heading_level is not None and line_heading_level <= heading_level:
+            break
+        body.append(line)
+
+    criteria = "\n".join(body).strip()
+    return criteria or None
+
+
+def _markdown_heading_level(value: str) -> int | None:
+    hashes, _, title = value.partition(" ")
+    if not hashes or set(hashes) != {"#"} or not title:
+        return None
+    return len(hashes)
 
 
 def _components(value: object) -> list[str]:
