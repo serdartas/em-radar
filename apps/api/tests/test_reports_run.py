@@ -4,7 +4,7 @@ from em_radar_connector_demo import FIXTURE_NOW
 from fastapi.testclient import TestClient
 
 
-def test_run_demo_report_returns_deterministic_stale_findings(api_client: TestClient) -> None:
+def test_run_demo_report_returns_deterministic_signal_findings(api_client: TestClient) -> None:
     first = api_client.post("/api/reports/run", json={"connector": "demo"})
     second = api_client.post("/api/reports/run", json={"connector": "demo"})
 
@@ -12,9 +12,9 @@ def test_run_demo_report_returns_deterministic_stale_findings(api_client: TestCl
     assert second.status_code == 200
     assert first.json()["findings"] == second.json()["findings"]
     assert len(first.json()["findings"]) > 0
-    assert {finding["signal_id"] for finding in first.json()["findings"]} == {
-        "stale-in-progress-work-item"
-    }
+    signal_ids = {finding["signal_id"] for finding in first.json()["findings"]}
+    assert "stale-in-progress-work-item" in signal_ids
+    assert "story-without-acceptance-criteria" in signal_ids
 
 
 def test_run_demo_report_accepts_date_range_window(api_client: TestClient) -> None:
