@@ -134,7 +134,9 @@ class JiraConnector:
                 "fields": ",".join(_ISSUE_FIELDS),
             }
         ):
-            yield _workitem_from_payload(payload, self._base_url)
+            workitem = _workitem_from_payload(payload, self._base_url)
+            if _workitem_in_window(workitem, window):
+                yield workitem
 
     async def close(self) -> None:
         await self._client.aclose()
@@ -682,11 +684,18 @@ def _workitem_jql(scope: WorkItemScope, window: EvaluationWindow) -> str:
     if scope.workitem_types:
         clauses.append(f"issuetype in ({_jql_list(_jira_issue_type_names(scope.workitem_types))})")
     if window.window_type is WindowType.DATE_RANGE:
-        if window.start is None or window.end is None:
-            raise ConnectorDataError("Date-range window was missing start or end")
-        clauses.append(f'updated >= "{_jql_datetime(window.start)}"')
+        if window.end is None:
+            raise ConnectorDataError("Date-range window was missing end")
         clauses.append(f'updated <= "{_jql_datetime(window.end)}"')
     return " AND ".join(clauses) if clauses else "ORDER BY updated ASC"
+
+
+def _workitem_in_window(workitem: WorkItem, window: EvaluationWindow) -> bool:
+    if window.window_type is WindowType.SPRINT:
+        if window.sprint_id is None:
+            raise ConnectorDataError("Sprint window was missing sprint_id")
+        return window.sprint_id in workitem.sprint_ids
+    return True
 
 
 def _jql_list(values: Sequence[str]) -> str:

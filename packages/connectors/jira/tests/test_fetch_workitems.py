@@ -1,7 +1,7 @@
 import asyncio
 from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
@@ -132,8 +132,63 @@ def test_fetch_workitems_normalizes_fixture_issues(monkeypatch: pytest.MonkeyPat
 
     assert seen_jql == [
         'project in ("10000") AND issuetype in ("Epic", "Story", "Bug") '
-        'AND updated >= "2026-06-01 00:00" AND updated <= "2026-06-15 00:00"'
+        'AND updated <= "2026-06-15 00:00"'
     ]
+
+
+def test_fetch_workitems_filters_sprint_windows_to_selected_sprint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    selected_sprint_id = jira_connector_module._stable_id("sprint", "402")
+    seen_jql: list[str] = []
+
+    async def run() -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen_jql.append(request.url.params["jql"])
+            return httpx.Response(
+                200,
+                json={
+                    "startAt": 0,
+                    "maxResults": 50,
+                    "total": 3,
+                    "issues": [
+                        _issue(
+                            issue_id="10001",
+                            key="ENG-1",
+                            sprints=[{"id": 401, "state": "active", "name": "Sprint 23"}],
+                        ),
+                        _issue(
+                            issue_id="10002",
+                            key="ENG-2",
+                            sprints=[{"id": 402, "state": "active", "name": "Sprint 24"}],
+                        ),
+                        _issue(issue_id="10003", key="ENG-3"),
+                    ],
+                },
+            )
+
+        monkeypatch.setattr(jira_connector_module, "CLIENT_FACTORY", _client_factory_for(handler))
+        connector = JiraConnector(
+            {
+                "base_url": "https://jira.example.com",
+                "token": "jira-token-1234",
+            }
+        )
+
+        workitems = await _collect(
+            connector.fetch_workitems(
+                WorkItemScope(project_external_ids=["10000"]),
+                _sprint_window(selected_sprint_id),
+            )
+        )
+        await connector.close()
+
+        assert [workitem.key for workitem in workitems] == ["ENG-2"]
+        assert workitems[0].current_sprint_id == selected_sprint_id
+
+    asyncio.run(run())
+
+    assert seen_jql == ['project in ("10000")']
 
 
 @pytest.mark.parametrize(
@@ -241,6 +296,14 @@ def _date_window() -> EvaluationWindow:
         window_type=WindowType.DATE_RANGE,
         start=datetime(2026, 6, 1, tzinfo=timezone.utc),
         end=datetime(2026, 6, 15, tzinfo=timezone.utc),
+        team_profile_id=uuid4(),
+    )
+
+
+def _sprint_window(sprint_id: UUID) -> EvaluationWindow:
+    return EvaluationWindow(
+        window_type=WindowType.SPRINT,
+        sprint_id=sprint_id,
         team_profile_id=uuid4(),
     )
 
