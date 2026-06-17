@@ -17,6 +17,7 @@ from em_radar_core.models import (
     Source,
     StatusCategory,
     Transition,
+    UUIDListJSON,
 )
 
 
@@ -91,8 +92,8 @@ def test_merge_request_array_defaults_are_independent_json_fields() -> None:
 
     assert second.linked_workitem_keys == []
     assert second.linked_workitem_ids == []
-    for field_name in ("linked_workitem_keys", "linked_workitem_ids"):
-        assert MergeRequest.model_fields[field_name].metadata[0].sa_type is JSON
+    assert MergeRequest.model_fields["linked_workitem_keys"].metadata[0].sa_type is JSON
+    assert MergeRequest.model_fields["linked_workitem_ids"].metadata[0].sa_type is UUIDListJSON
 
 
 @pytest.mark.parametrize("field_name", ["created_at", "updated_at"])

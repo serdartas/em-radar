@@ -47,6 +47,7 @@ class Signal(ABC):
     name: ClassVar[str]
     default_severity: ClassVar[Severity]
     params_schema: ClassVar[type[SignalParams]]
+    sprint_only: ClassVar[bool] = False
 
     def __init__(self, params: Mapping[str, object] | None = None) -> None:
         self.params = self.params_schema.model_validate(params or {})
@@ -54,4 +55,3 @@ class Signal(ABC):
     @abstractmethod
     def evaluate(self, data: SignalData, ctx: EvaluationContext) -> list[SignalFinding]:
         """Evaluate canonical data using `ctx.now` as the only current-time source."""
-

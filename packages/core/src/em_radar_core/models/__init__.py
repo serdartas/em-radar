@@ -1,4 +1,4 @@
-from em_radar_core.models.common import CommonFields
+from em_radar_core.models.common import CommonFields, UUIDListJSON
 from em_radar_core.models.code import Comment, MergeRequest, Repository, Review, Transition
 from em_radar_core.models.enums import (
     BoardType,
@@ -53,6 +53,7 @@ __all__ = [
     "StatusCategory",
     "Transition",
     "TeamProfile",
+    "UUIDListJSON",
     "User",
     "WorkingMode",
     "WindowType",

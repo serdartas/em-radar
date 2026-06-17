@@ -7,8 +7,10 @@ from em_radar_connector_demo.fixtures import (
     DEMO_REVIEW_COUNT,
     DEMO_SPRINT_COUNT,
     DEMO_TRANSITION_COUNT,
+    DEMO_USER_COUNT,
     DEMO_WORKITEM_COUNT,
     FIXTURE_NOW,
+    build_fixtures,
 )
 
 __all__ = [
@@ -19,7 +21,9 @@ __all__ = [
     "DEMO_REVIEW_COUNT",
     "DEMO_SPRINT_COUNT",
     "DEMO_TRANSITION_COUNT",
+    "DEMO_USER_COUNT",
     "DEMO_WORKITEM_COUNT",
     "DemoConnector",
     "FIXTURE_NOW",
+    "build_fixtures",
 ]

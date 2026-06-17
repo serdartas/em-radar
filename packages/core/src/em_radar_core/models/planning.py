@@ -6,7 +6,7 @@ from pydantic import model_validator
 from sqlalchemy import JSON
 from sqlmodel import Field, SQLModel
 
-from em_radar_core.models.common import CommonFields
+from em_radar_core.models.common import CommonFields, UUIDListJSON
 from em_radar_core.models.enums import (
     BoardType,
     LinkType,
@@ -62,7 +62,7 @@ class WorkItem(CommonFields):
     is_blocked: bool = False
     resolved_at: datetime | None = None
     due_date: datetime | None = None
-    sprint_ids: list[UUID] = Field(default_factory=list, sa_type=JSON)
+    sprint_ids: list[UUID] = Field(default_factory=list, sa_type=UUIDListJSON)
     current_sprint_id: UUID | None = None
 
     @model_validator(mode="after")

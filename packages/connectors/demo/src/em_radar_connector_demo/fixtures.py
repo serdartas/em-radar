@@ -19,6 +19,7 @@ from em_radar_core.models import (
     SprintState,
     StatusCategory,
     Transition,
+    User,
     WorkItem,
     WorkItemType,
 )
@@ -26,6 +27,7 @@ from em_radar_core.models import (
 FIXTURE_NOW = datetime(2026, 6, 1, 12, tzinfo=timezone.utc)
 _NAMESPACE = UUID("d68a6308-cb59-45ee-a6f5-2c2d781b89d7")
 
+DEMO_USER_COUNT = 6
 DEMO_PROJECT_COUNT = 3
 DEMO_SPRINT_COUNT = 3
 DEMO_WORKITEM_COUNT = 30
@@ -42,6 +44,7 @@ def stable_id(kind: str, external_id: str) -> UUID:
 
 @dataclass(frozen=True)
 class DemoFixtures:
+    users: tuple[User, ...]
     projects: tuple[Project, ...]
     boards: tuple[Board, ...]
     sprints: tuple[Sprint, ...]
@@ -54,6 +57,7 @@ class DemoFixtures:
 
 
 def build_fixtures() -> DemoFixtures:
+    users = _build_users()
     projects = _build_projects()
     boards = _build_boards(projects)
     sprints = _build_sprints(boards[0])
@@ -64,6 +68,7 @@ def build_fixtures() -> DemoFixtures:
     transitions = _build_transitions(workitems)
     comments = _build_comments(workitems, mergerequests)
     return DemoFixtures(
+        users=users,
         projects=projects,
         boards=boards,
         sprints=sprints,
@@ -87,6 +92,19 @@ def _common(kind: str, external_id: str, *, age_days: int = 60) -> dict[str, obj
         "created_at": FIXTURE_NOW - timedelta(days=age_days),
         "updated_at": FIXTURE_NOW - timedelta(days=1),
     }
+
+
+def _build_users() -> tuple[User, ...]:
+    return tuple(
+        User(
+            **_common("user", f"user-{number}", age_days=400),
+            display_name=f"Demo User {number}",
+            email=f"user{number}@demo.emradar.dev",
+            username=f"demo-user-{number}",
+            is_bot=number == DEMO_USER_COUNT,
+        )
+        for number in range(1, DEMO_USER_COUNT + 1)
+    )
 
 
 def _build_projects() -> tuple[Project, ...]:
@@ -150,7 +168,10 @@ def _build_workitems(
     )
     items: list[WorkItem] = []
     for number in range(1, DEMO_WORKITEM_COUNT + 1):
-        project = projects[(number - 1) // 10]
+        project_index = (number - 1) // 10
+        project = projects[project_index]
+        item_type = types[(number - 1) % len(types)]
+        parent_id = _epic_parent_id(number, project_index, item_type)
         external_id = f"workitem-{number}"
         status_category, status, is_blocked = _workitem_status(number)
         resolved_at = (
@@ -178,18 +199,23 @@ def _build_workitems(
                 **values,
                 project_id=project.id,
                 key=f"{project.key}-{number}",
-                type=types[(number - 1) % len(types)],
+                type=item_type,
                 title=f"Demo delivery item {number}",
                 description=f"Normalized demo work item {number}.",
                 status=status,
                 status_category=status_category,
-                assignee_id=None if number in {7, 21} else stable_id("user", f"user-{number % 6 + 1}"),
+                assignee_id=None
+                if number in {7, 21}
+                else stable_id("user", f"user-{number % 6 + 1}"),
                 reporter_id=stable_id("user", "user-1"),
                 labels=["blocked"] if is_blocked else [f"area-{number % 3 + 1}"],
                 components=[project.key.lower()],
                 story_points=float((number % 5) + 1),
-                acceptance_criteria=None if number % 4 == 0 else "The expected behavior is verified.",
+                acceptance_criteria=None
+                if number % 4 == 0
+                else "The expected behavior is verified.",
                 is_blocked=is_blocked,
+                parent_id=parent_id,
                 resolved_at=resolved_at,
                 due_date=FIXTURE_NOW + timedelta(days=number % 10 - 3),
                 sprint_ids=sprint_ids,
@@ -197,6 +223,18 @@ def _build_workitems(
             )
         )
     return tuple(items)
+
+
+def _epic_parent_id(number: int, project_index: int, item_type: WorkItemType) -> UUID | None:
+    if item_type is WorkItemType.EPIC:
+        return None
+    project_start = project_index * 10 + 1
+    first_epic = next(
+        candidate
+        for candidate in range(project_start, project_start + 10)
+        if (candidate - 1) % 6 == 0
+    )
+    return stable_id("workitem", f"workitem-{first_epic}")
 
 
 def _workitem_status(number: int) -> tuple[StatusCategory, str, bool]:

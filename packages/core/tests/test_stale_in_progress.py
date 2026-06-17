@@ -92,6 +92,23 @@ def test_evaluator_runs_only_enabled_signals_with_configured_params() -> None:
     assert len(findings) == 5
 
 
+def test_evaluator_applies_configured_severity_override() -> None:
+    fixtures = build_fixtures()
+    findings = SignalEvaluator().evaluate(
+        SignalData(report_id=uuid4(), workitems=fixtures.workitems),
+        evaluation_context(),
+        [
+            SignalConfig(
+                signal_id="stale-in-progress-work-item",
+                severity=Severity.CRITICAL,
+            ),
+        ],
+    )
+
+    assert findings
+    assert {finding.severity for finding in findings} == {Severity.CRITICAL}
+
+
 def test_evaluator_runs_registered_signals_by_default() -> None:
     fixtures = build_fixtures()
 
@@ -100,11 +117,14 @@ def test_evaluator_runs_registered_signals_by_default() -> None:
         evaluation_context(),
     )
 
-    assert len(findings) == 5
+    signal_ids = {finding.signal_id for finding in findings}
+    assert "stale-in-progress-work-item" in signal_ids
+    assert "story-without-acceptance-criteria" in signal_ids
 
 
 def test_registry_is_keyed_by_id_and_params_are_validated() -> None:
     assert default_registry.get("stale-in-progress-work-item") is StaleInProgressSignal
+    assert "sprint-scope-churn" in default_registry.ids()
 
     with pytest.raises(ValidationError):
         default_registry.create("stale-in-progress-work-item", {"unknown": True})

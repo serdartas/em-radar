@@ -15,6 +15,7 @@ from em_radar_core.models import (
     SprintState,
     StatusCategory,
     User,
+    UUIDListJSON,
     WorkItem,
     WorkItemLink,
     WorkItemType,
@@ -81,8 +82,9 @@ def test_work_item_array_defaults_are_independent_json_fields() -> None:
     assert second.labels == []
     assert second.components == []
     assert second.sprint_ids == []
-    for field_name in ("labels", "components", "sprint_ids"):
+    for field_name in ("labels", "components"):
         assert WorkItem.model_fields[field_name].metadata[0].sa_type is JSON
+    assert WorkItem.model_fields["sprint_ids"].metadata[0].sa_type is UUIDListJSON
 
 
 @pytest.mark.parametrize(
