@@ -1,5 +1,5 @@
 from collections.abc import AsyncIterator, Sequence
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Literal, Self
 from uuid import UUID
 
@@ -61,6 +61,7 @@ from em_radar_api.tables import (
 )
 
 router = APIRouter()
+DEFAULT_KANBAN_REPORT_DAYS = 14
 
 
 class ReportWindowRequest(BaseModel):
@@ -257,12 +258,13 @@ async def _run_demo_report(
     persisted_window = _persisted_window(window, identity.identity_map)
     session.add(EvaluationWindowTable(**persisted_window.model_dump()))
     session.commit()
+    signal_configs = _signal_configs(session)
 
     report = create_report(
         session,
         ReportTable(
             evaluation_window_id=window.id,
-            signal_pack_snapshot=_signal_pack_snapshot(),
+            signal_pack_snapshot=_signal_pack_snapshot(signal_configs),
             status=ReportStatus.PENDING,
             started_at=started_at,
         ),
@@ -285,7 +287,7 @@ async def _run_demo_report(
                 comments=tuple(comments),
             ),
             EvaluationContext(now=started_at, window=window, team=team),
-            _signal_configs(session),
+            signal_configs,
         )
         persisted_findings = [
             _persisted_finding(finding, identity.identity_map) for finding in findings
@@ -346,15 +348,9 @@ async def _run_jira_report(
         if not boards:
             raise HTTPException(status_code=404, detail="Jira board not found")
         sprints = await connector.list_sprints(request.board_external_id)
-        active_sprint = next(
-            (sprint for sprint in sprints if sprint.state is SprintState.ACTIVE),
-            None,
-        )
-        if active_sprint is None:
-            raise HTTPException(status_code=422, detail="Jira board has no active sprint")
 
         team = TeamProfile(
-            name=f"{projects[0].key} Jira sprint",
+            name=f"{projects[0].key} Jira {request.working_mode.value}",
             connection_ids=[request.connection_id],
             project_ids=[projects[0].id],
             board_ids=[boards[0].id],
@@ -364,11 +360,7 @@ async def _run_jira_report(
             created_at=started_at,
             updated_at=started_at,
         )
-        window = EvaluationWindow(
-            window_type=WindowType.SPRINT,
-            sprint_id=active_sprint.id,
-            team_profile_id=team.id,
-        )
+        window = _jira_evaluation_window(request, sprints, team.id, started_at)
         workitems = await _collect(
             connector.fetch_workitems(
                 WorkItemScope(
@@ -407,12 +399,13 @@ async def _run_jira_report(
     persisted_window = _persisted_window(window, identity.identity_map)
     session.add(EvaluationWindowTable(**persisted_window.model_dump()))
     session.commit()
+    signal_configs = _signal_configs(session)
 
     report = create_report(
         session,
         ReportTable(
             evaluation_window_id=window.id,
-            signal_pack_snapshot=_signal_pack_snapshot(),
+            signal_pack_snapshot=_signal_pack_snapshot(signal_configs),
             status=ReportStatus.PENDING,
             started_at=started_at,
         ),
@@ -431,7 +424,7 @@ async def _run_jira_report(
                 transitions=tuple(transitions),
             ),
             EvaluationContext(now=started_at, window=window, team=team),
-            _signal_configs(session),
+            signal_configs,
         )
         persisted_findings = [
             _persisted_finding(finding, identity.identity_map) for finding in findings
@@ -486,6 +479,33 @@ def _evaluation_window(
     )
 
 
+def _jira_evaluation_window(
+    request: JiraReportRequest,
+    sprints: list[Sprint],
+    team_id: UUID,
+    now: datetime,
+) -> EvaluationWindow:
+    if request.working_mode is WorkingMode.KANBAN:
+        return EvaluationWindow(
+            window_type=WindowType.DATE_RANGE,
+            start=now - timedelta(days=DEFAULT_KANBAN_REPORT_DAYS),
+            end=now,
+            team_profile_id=team_id,
+        )
+
+    active_sprint = next(
+        (sprint for sprint in sprints if sprint.state is SprintState.ACTIVE),
+        None,
+    )
+    if active_sprint is None:
+        raise HTTPException(status_code=422, detail="Jira board has no active sprint")
+    return EvaluationWindow(
+        window_type=WindowType.SPRINT,
+        sprint_id=active_sprint.id,
+        team_profile_id=team_id,
+    )
+
+
 def _team_row(team: TeamProfile) -> TeamProfileTable:
     return TeamProfileTable.model_validate(team)
 
@@ -508,7 +528,8 @@ def _persisted_finding(
     return SignalFindingTable(**data)
 
 
-def _signal_pack_snapshot() -> dict[str, object]:
+def _signal_pack_snapshot(configs: Sequence[SignalConfig]) -> dict[str, object]:
+    configs_by_id = {config.signal_id: config for config in configs}
     return {
         "schema_id": "emradar.dev/v1",
         "signals": [
@@ -516,9 +537,12 @@ def _signal_pack_snapshot() -> dict[str, object]:
                 "id": signal.id,
                 "name": signal.name,
                 "default_severity": signal.default_severity.value,
-                "params": signal.params_schema().model_dump(),
+                "enabled": config.enabled,
+                "severity": (config.severity or signal.default_severity).value,
+                "params": dict(config.params),
             }
             for signal in (default_registry.get(signal_id) for signal_id in default_registry.ids())
+            for config in [configs_by_id[signal.id]]
         ],
     }
 
@@ -536,6 +560,7 @@ def _signal_configs(session: Session) -> list[SignalConfig]:
                     signal_id=signal_id,
                     enabled=stored_config.enabled,
                     params=stored_config.params,
+                    severity=stored_config.severity_override,
                 )
             )
     return configs

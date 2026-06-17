@@ -92,6 +92,23 @@ def test_evaluator_runs_only_enabled_signals_with_configured_params() -> None:
     assert len(findings) == 5
 
 
+def test_evaluator_applies_configured_severity_override() -> None:
+    fixtures = build_fixtures()
+    findings = SignalEvaluator().evaluate(
+        SignalData(report_id=uuid4(), workitems=fixtures.workitems),
+        evaluation_context(),
+        [
+            SignalConfig(
+                signal_id="stale-in-progress-work-item",
+                severity=Severity.CRITICAL,
+            ),
+        ],
+    )
+
+    assert findings
+    assert {finding.severity for finding in findings} == {Severity.CRITICAL}
+
+
 def test_evaluator_runs_registered_signals_by_default() -> None:
     fixtures = build_fixtures()
 

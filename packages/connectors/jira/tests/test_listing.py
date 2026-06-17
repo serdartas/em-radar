@@ -153,6 +153,45 @@ def test_list_boards_maps_types_and_project_reference(
     asyncio.run(run())
 
 
+def test_agile_list_calls_preserve_jira_context_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen_paths: list[str] = []
+
+    async def run() -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen_paths.append(request.url.path)
+            if request.url.path.endswith("/board"):
+                return httpx.Response(
+                    200,
+                    json={"startAt": 0, "maxResults": 50, "isLast": True, "values": []},
+                )
+            return httpx.Response(
+                200,
+                json={"startAt": 0, "maxResults": 50, "isLast": True, "values": []},
+            )
+
+        monkeypatch.setattr(jira_connector_module, "CLIENT_FACTORY", _client_factory_for(handler))
+        connector = JiraConnector(
+            {
+                "base_url": "https://jira.example.com/jira",
+                "token": "jira-token-1234",
+                "auth_email": "jira.email@example.com",
+            }
+        )
+
+        await connector.list_boards("10000")
+        await connector.list_sprints("31")
+        await connector.close()
+
+    asyncio.run(run())
+
+    assert seen_paths == [
+        "/jira/rest/agile/1.0/board",
+        "/jira/rest/agile/1.0/board/31/sprint",
+    ]
+
+
 def test_list_sprints_maps_states_dates_goal_and_pages(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

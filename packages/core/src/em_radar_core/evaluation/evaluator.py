@@ -1,7 +1,7 @@
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 
-from em_radar_core.models import EvaluationContext, SignalFinding
+from em_radar_core.models import EvaluationContext, Severity, SignalFinding
 from em_radar_core.signals import SignalData, SignalRegistry, default_registry
 
 
@@ -10,6 +10,7 @@ class SignalConfig:
     signal_id: str
     enabled: bool = True
     params: Mapping[str, object] = field(default_factory=dict)
+    severity: Severity | None = None
 
 
 class SignalEvaluator:
@@ -32,5 +33,14 @@ class SignalEvaluator:
             if not config.enabled:
                 continue
             signal = self._registry.create(config.signal_id, config.params)
-            findings.extend(signal.evaluate(data, ctx))
+            findings.extend(_apply_severity_override(signal.evaluate(data, ctx), config.severity))
         return findings
+
+
+def _apply_severity_override(
+    findings: list[SignalFinding],
+    severity: Severity | None,
+) -> list[SignalFinding]:
+    if severity is None:
+        return findings
+    return [finding.model_copy(update={"severity": severity}) for finding in findings]

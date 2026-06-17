@@ -1,5 +1,5 @@
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime, tzinfo
+from datetime import UTC, datetime, timedelta, tzinfo
 from typing import ClassVar
 from uuid import UUID
 
@@ -22,7 +22,7 @@ from em_radar_core.models import (
     WorkItem,
     WorkItemType,
 )
-from em_radar_api.tables import UserTable
+from em_radar_api.tables import EvaluationWindowTable, UserTable
 
 _REPORT_STARTED_AT = datetime(2026, 6, 17, 12, tzinfo=UTC)
 
@@ -146,6 +146,46 @@ class JiraTestConnector:
             actor_id=UUID("ef482427-5e1b-45fd-bc1c-832e887116dd"),
             occurred_at=datetime(2026, 6, 2, tzinfo=UTC),
         )
+
+
+class JiraKanbanTestConnector(JiraTestConnector):
+    async def list_boards(self, project_id: str) -> list[Board]:
+        assert project_id == "10000"
+        return [
+            Board(
+                id="54111f22-2a3a-4cb4-8c8a-4fc0942dba49",
+                source=Source.JIRA,
+                external_id="20000",
+                project_id="4c7a2c4f-e62f-4a78-bf6f-81f0a2a08826",
+                name="Platform Kanban",
+                type=BoardType.KANBAN,
+            )
+        ]
+
+    async def list_sprints(self, board_id: str) -> list[Sprint]:
+        assert board_id == "20000"
+        return []
+
+    async def fetch_workitems(
+        self,
+        scope: WorkItemScope,
+        window: EvaluationWindow,
+    ) -> AsyncIterator[WorkItem]:
+        del scope
+        assert window.window_type == "date_range"
+        assert window.start == _REPORT_STARTED_AT - timedelta(days=14)
+        assert window.end == _REPORT_STARTED_AT
+        if False:
+            yield
+
+    async def fetch_transitions(
+        self,
+        entity_type: str,
+        entity_external_ids: list[str],
+    ) -> AsyncIterator[Transition]:
+        del entity_type, entity_external_ids
+        if False:
+            yield
 
 
 def test_source_connection_routes_crud_test_and_preserve_omitted_config(
@@ -274,3 +314,49 @@ def test_jira_active_sprint_report_run_persists_user_references(
         "b60ef25e-379e-446d-b6d7-f7610f8ab6a1",
         "ef482427-5e1b-45fd-bc1c-832e887116dd",
     }
+
+
+def test_jira_kanban_report_uses_date_range_without_active_sprint(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "em_radar_api.connector_registry._connector_types",
+        lambda: [JiraKanbanTestConnector],
+    )
+    monkeypatch.setattr("em_radar_api.routers.reports.datetime", FrozenReportDateTime)
+    created = api_client.post(
+        "/api/connections",
+        json={
+            "connector_name": "jira",
+            "config": {"base_url": "https://demo.invalid", "token": "demo-token-123456789"},
+        },
+    ).json()
+
+    response = api_client.post(
+        "/api/reports/run",
+        json={
+            "connector": "jira",
+            "jira": {
+                "connection_id": created["id"],
+                "project_external_id": "10000",
+                "board_external_id": "20000",
+                "working_mode": "kanban",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "succeeded"
+
+    with session_factory() as session:
+        window = session.get(
+            EvaluationWindowTable,
+            UUID(response.json()["evaluation_window_id"]),
+        )
+
+    assert window is not None
+    assert window.window_type == "date_range"
+    assert window.start == (_REPORT_STARTED_AT - timedelta(days=14)).replace(tzinfo=None)
+    assert window.end == _REPORT_STARTED_AT.replace(tzinfo=None)

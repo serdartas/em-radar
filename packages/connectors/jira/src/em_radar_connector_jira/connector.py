@@ -129,13 +129,13 @@ class JiraConnector:
 
     async def list_boards(self, project_id: str) -> list[Board]:
         payloads = await self._request_paginated_values(
-            "/rest/agile/1.0/board",
+            "rest/agile/1.0/board",
             params={"projectKeyOrId": project_id},
         )
         return [_board_from_payload(payload, self._base_url, project_id) for payload in payloads]
 
     async def list_sprints(self, board_id: str) -> list[Sprint]:
-        payloads = await self._request_paginated_values(f"/rest/agile/1.0/board/{board_id}/sprint")
+        payloads = await self._request_paginated_values(f"rest/agile/1.0/board/{board_id}/sprint")
         return [_sprint_from_payload(payload, board_id) for payload in payloads]
 
     async def fetch_workitems(
@@ -164,7 +164,7 @@ class JiraConnector:
         status_categories = await self._status_categories()
         for external_id in entity_external_ids:
             issue_payload = await self._request_json(
-                f"/rest/api/2/issue/{external_id}",
+                f"rest/api/2/issue/{external_id}",
                 params={"fields": "key", "expand": "changelog"},
             )
             issue_key = _required_str(issue_payload, "key", "issue")
@@ -255,7 +255,7 @@ class JiraConnector:
                 "maxResults": PAGE_SIZE,
                 **dict(params),
             }
-            payload = await self._request_json("/rest/api/2/search", params=page_params)
+            payload = await self._request_json("rest/api/2/search", params=page_params)
             page_values = _payload_issues(payload)
             for issue in page_values:
                 yield issue
@@ -275,7 +275,7 @@ class JiraConnector:
         start_at = 0
         while True:
             payload = await self._request_json(
-                f"/rest/api/2/issue/{issue_external_id}/changelog",
+                f"rest/api/2/issue/{issue_external_id}/changelog",
                 params={"startAt": start_at, "maxResults": PAGE_SIZE},
             )
             page_values = _payload_histories(payload)
@@ -306,7 +306,7 @@ class JiraConnector:
         return str(self.config.base_url).rstrip("/")
 
     async def _status_categories(self) -> dict[str, StatusCategory]:
-        payloads = await self._request_json_list("/rest/api/2/status")
+        payloads = await self._request_json_list("rest/api/2/status")
         categories: dict[str, StatusCategory] = {}
         for payload in payloads:
             category = _status_category(payload, [], self.config.field_mapping)
