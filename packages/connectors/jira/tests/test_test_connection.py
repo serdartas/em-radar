@@ -29,6 +29,7 @@ def test_connection_success_returns_user_and_permissions(monkeypatch: pytest.Mon
             if request.url.path == "/rest/api/2/myself":
                 return httpx.Response(200, json={"displayName": "Jira User"})
             if request.url.path == "/rest/api/2/mypermissions":
+                assert request.url.params["permissions"] == "BROWSE_PROJECTS"
                 return httpx.Response(
                     200,
                     json={
@@ -75,6 +76,7 @@ def test_connection_uses_bearer_for_pat_only_config(
             if request.url.path == "/rest/api/2/myself":
                 return httpx.Response(200, json={"displayName": "Jira User"})
             if request.url.path == "/rest/api/2/mypermissions":
+                assert request.url.params["permissions"] == "BROWSE_PROJECTS"
                 return httpx.Response(200, json={"permissions": {}})
             raise AssertionError(f"unexpected path: {request.url.path}")
 

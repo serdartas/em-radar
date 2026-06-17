@@ -244,6 +244,21 @@ def test_updated_fields_are_reflected_without_changing_identity(tmp_path: Path) 
     assert count == DEMO_WORKITEM_COUNT
 
 
+def test_out_of_scope_parent_reference_is_dropped(tmp_path: Path) -> None:
+    fetched = asyncio.run(_fetch_all())
+    session_factory = _cache(tmp_path)
+
+    story = next(item for item in fetched.workitems if item.external_id == "workitem-2")
+    assert story.parent_id is not None
+    project = next(item for item in fetched.projects if item.id == story.project_id)
+
+    with session_factory() as session:
+        persist_fetch(session, projects=[project], workitems=[story])
+        persisted = _work_item(session, "workitem-2")
+
+    assert persisted.parent_id is None
+
+
 def test_history_rows_are_idempotent_without_stable_connector_ids(tmp_path: Path) -> None:
     fetched = asyncio.run(_fetch_all())
     session_factory = _cache(tmp_path)
