@@ -33,16 +33,13 @@ def test_fetch_workitems_normalizes_fixture_issues(monkeypatch: pytest.MonkeyPat
     async def run() -> None:
         def handler(request: httpx.Request) -> httpx.Response:
             seen_jql.append(request.url.params["jql"])
-            assert request.url.path == "/rest/api/2/search"
-            assert request.url.params["startAt"] == "0"
+            assert request.url.path == "/rest/api/2/search/jql"
+            assert "startAt" not in request.url.params
             assert request.url.params["maxResults"] == "50"
             assert "customfield_10016" in request.url.params["fields"]
             return httpx.Response(
                 200,
                 json={
-                    "startAt": 0,
-                    "maxResults": 50,
-                    "total": 3,
                     "issues": [
                         _issue(
                             issue_id="10001",
@@ -148,9 +145,6 @@ def test_fetch_workitems_filters_sprint_windows_to_selected_sprint(
             return httpx.Response(
                 200,
                 json={
-                    "startAt": 0,
-                    "maxResults": 50,
-                    "total": 3,
                     "issues": [
                         _issue(
                             issue_id="10001",
@@ -192,37 +186,32 @@ def test_fetch_workitems_filters_sprint_windows_to_selected_sprint(
 
 
 @pytest.mark.parametrize(
-    ("case", "expected_count", "expected_starts"),
+    ("case", "expected_count", "expected_tokens"),
     [
-        ("empty", 0, ["0"]),
-        ("partial", 1, ["0"]),
-        ("full", 52, ["0", "50"]),
+        ("empty", 0, [None]),
+        ("partial", 1, [None]),
+        ("full", 52, [None, "page-2"]),
     ],
 )
 def test_fetch_workitems_handles_empty_partial_and_full_pages(
     monkeypatch: pytest.MonkeyPatch,
     case: str,
     expected_count: int,
-    expected_starts: list[str],
+    expected_tokens: list[str | None],
 ) -> None:
-    seen_starts: list[str] = []
+    seen_tokens: list[str | None] = []
 
     async def run() -> None:
         pages = _pages_for_case(case)
 
         def handler(request: httpx.Request) -> httpx.Response:
-            start_at = request.url.params["startAt"]
-            seen_starts.append(start_at)
-            page_index = len(seen_starts) - 1
-            return httpx.Response(
-                200,
-                json={
-                    "startAt": int(start_at),
-                    "maxResults": 50,
-                    "total": sum(len(page) for page in pages),
-                    "issues": pages[page_index],
-                },
-            )
+            assert request.url.path == "/rest/api/2/search/jql"
+            seen_tokens.append(request.url.params.get("nextPageToken"))
+            page_index = len(seen_tokens) - 1
+            body: dict[str, object] = {"issues": pages[page_index]}
+            if page_index < len(pages) - 1:
+                body["nextPageToken"] = f"page-{page_index + 2}"
+            return httpx.Response(200, json=body)
 
         monkeypatch.setattr(jira_connector_module, "CLIENT_FACTORY", _client_factory_for(handler))
         connector = JiraConnector(
@@ -242,7 +231,7 @@ def test_fetch_workitems_handles_empty_partial_and_full_pages(
 
     asyncio.run(run())
 
-    assert seen_starts == expected_starts
+    assert seen_tokens == expected_tokens
 
 
 def _pages_for_case(case: str) -> list[list[Mapping[str, object]]]:
@@ -256,6 +245,48 @@ def _pages_for_case(case: str) -> list[list[Mapping[str, object]]]:
             [_issue(issue_id="10051", key="ENG-51"), _issue(issue_id="10052", key="ENG-52")],
         ]
     raise AssertionError(f"unknown case: {case}")
+
+
+def test_fetch_workitems_falls_back_to_classic_search_when_jql_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen_paths: list[str] = []
+
+    async def run() -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen_paths.append(request.url.path)
+            if request.url.path == "/rest/api/2/search/jql":
+                return httpx.Response(404)
+            assert request.url.path == "/rest/api/2/search"
+            assert request.url.params["startAt"] == "0"
+            return httpx.Response(
+                200,
+                json={
+                    "startAt": 0,
+                    "maxResults": 50,
+                    "total": 1,
+                    "issues": [_issue(issue_id="10001", key="ENG-1")],
+                },
+            )
+
+        monkeypatch.setattr(jira_connector_module, "CLIENT_FACTORY", _client_factory_for(handler))
+        connector = JiraConnector(
+            {
+                "base_url": "https://jira.example.com",
+                "token": "jira-token-1234",
+            }
+        )
+
+        workitems = await _collect(
+            connector.fetch_workitems(WorkItemScope(project_external_ids=["10000"]), _date_window())
+        )
+        await connector.close()
+
+        assert [workitem.key for workitem in workitems] == ["ENG-1"]
+
+    asyncio.run(run())
+
+    assert seen_paths == ["/rest/api/2/search/jql", "/rest/api/2/search"]
 
 
 def test_fetch_workitems_wraps_http_errors(monkeypatch: pytest.MonkeyPatch) -> None:
