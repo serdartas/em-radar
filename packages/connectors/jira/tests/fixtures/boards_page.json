@@ -1,0 +1,20 @@
+{
+  "startAt": 0,
+  "maxResults": 50,
+  "isLast": true,
+  "values": [
+    {
+      "id": 31,
+      "name": "Engineering Scrum",
+      "type": "scrum",
+      "location": {"projectId": 10000, "projectKey": "ENG"},
+      "self": "https://jira.example.com/rest/agile/1.0/board/31"
+    },
+    {
+      "id": 32,
+      "name": "Engineering Kanban",
+      "type": "kanban",
+      "location": {"projectId": 10000, "projectKey": "ENG"}
+    }
+  ]
+}

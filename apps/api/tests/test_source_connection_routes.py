@@ -116,7 +116,7 @@ class JiraTestConnector:
             sprint_ids=[UUID("45cdfd02-9cde-4c65-a618-7728fc9fb495")],
             current_sprint_id=UUID("45cdfd02-9cde-4c65-a618-7728fc9fb495"),
             created_at=datetime(2026, 6, 1, tzinfo=UTC),
-            updated_at=datetime(2026, 6, 10, tzinfo=UTC),
+            updated_at=datetime(2026, 6, 16, tzinfo=UTC),
         )
 
     async def fetch_transitions(
