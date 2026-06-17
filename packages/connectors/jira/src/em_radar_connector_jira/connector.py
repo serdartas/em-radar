@@ -45,6 +45,8 @@ _SPRINT_FIELD = "customfield_10020"
 _ACCEPTANCE_CRITERIA_HEADING = "### Acceptance Criteria"
 _BLOCKED_LABEL = "blocked"
 _BLOCKED_STATUS = "Blocked"
+# Jira requires an explicit permission key list on GET /mypermissions (400 otherwise).
+_PERMISSION_KEYS = ("BROWSE_PROJECTS",)
 _SYSTEM_ISSUE_FIELDS = (
     "summary",
     "description",
@@ -105,7 +107,10 @@ class JiraConnector:
 
     async def test_connection(self) -> ConnectionTestResult:
         user_payload = await self._request_json("rest/api/2/myself")
-        permissions_payload = await self._request_json("rest/api/2/mypermissions")
+        permissions_payload = await self._request_json(
+            "rest/api/2/mypermissions",
+            params={"permissions": ",".join(_PERMISSION_KEYS)},
+        )
         return ConnectionTestResult(
             ok=True,
             detail="Connected to Jira",
@@ -248,6 +253,34 @@ class JiraConnector:
         *,
         params: Mapping[str, object],
     ) -> AsyncIterator[Mapping[str, object]]:
+        sent_token: str | None = None
+        while True:
+            page_params: dict[str, object] = {"maxResults": PAGE_SIZE, **dict(params)}
+            if sent_token is not None:
+                page_params["nextPageToken"] = sent_token
+            try:
+                payload = await self._request_json("rest/api/2/search/jql", params=page_params)
+            except ConnectorNotFoundError:
+                # Jira Data Center/Server has no enhanced search; use classic pagination.
+                async for issue in self._request_paginated_issues_legacy(params=params):
+                    yield issue
+                return
+
+            for issue in _payload_issues(payload):
+                yield issue
+
+            received_token = _next_page_token(payload)
+            if received_token is None:
+                return
+            if received_token == sent_token:
+                raise ConnectorDataError("Jira issue pagination did not advance")
+            sent_token = received_token
+
+    async def _request_paginated_issues_legacy(
+        self,
+        *,
+        params: Mapping[str, object],
+    ) -> AsyncIterator[Mapping[str, object]]:
         start_at = 0
         while True:
             page_params = {
@@ -380,6 +413,15 @@ def _payload_issues(payload: Mapping[str, object]) -> list[Mapping[str, object]]
     if not all(isinstance(issue, Mapping) for issue in raw_issues):
         raise ConnectorDataError("Jira search response contained an invalid issue")
     return cast(list[Mapping[str, object]], raw_issues)
+
+
+def _next_page_token(payload: Mapping[str, object]) -> str | None:
+    token = payload.get("nextPageToken")
+    if token is None:
+        return None
+    if isinstance(token, str) and token:
+        return token
+    raise ConnectorDataError("Jira search response contained an invalid nextPageToken")
 
 
 def _is_last_page(payload: Mapping[str, object], next_start_at: int) -> bool:

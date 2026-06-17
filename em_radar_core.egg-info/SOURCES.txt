@@ -31,6 +31,8 @@ packages/core/src/em_radar_core/models/planning.py
 packages/core/src/em_radar_core/signals/__init__.py
 packages/core/src/em_radar_core/signals/base.py
 packages/core/src/em_radar_core/signals/registry.py
+packages/core/src/em_radar_core/signals/sprints.py
 packages/core/src/em_radar_core/signals/stale_in_progress.py
+packages/core/src/em_radar_core/signals/workitems.py
 packages/normalizer/src/em_radar_normalizer/__init__.py
 packages/normalizer/src/em_radar_normalizer/identity.py
