@@ -1,0 +1,30 @@
+{
+  "startAt": 0,
+  "maxResults": 50,
+  "total": 3,
+  "values": [
+    {
+      "id": "101",
+      "created": "2026-06-01T09:00:00.000Z",
+      "author": {"accountId": "user-1", "displayName": "Ada Lovelace"},
+      "items": [
+        {"field": "status", "to": "1", "toString": "To Do"}
+      ]
+    },
+    {
+      "id": "102",
+      "created": "2026-06-03T11:00:00.000+0200",
+      "author": {"accountId": "user-2", "displayName": "Grace Hopper"},
+      "items": [
+        {"field": "status", "from": "1", "fromString": "To Do", "to": "2", "toString": "In Progress"}
+      ]
+    },
+    {
+      "id": "103",
+      "created": "2026-06-06T09:00:00.000Z",
+      "items": [
+        {"field": "status", "from": "2", "fromString": "In Progress", "to": "3", "toString": "Done"}
+      ]
+    }
+  ]
+}

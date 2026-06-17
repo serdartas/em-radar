@@ -1,5 +1,5 @@
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, tzinfo
 from typing import ClassVar
 from uuid import UUID
 
@@ -23,6 +23,16 @@ from em_radar_core.models import (
     WorkItemType,
 )
 from em_radar_api.tables import UserTable
+
+_REPORT_STARTED_AT = datetime(2026, 6, 17, 12, tzinfo=UTC)
+
+
+class FrozenReportDateTime(datetime):
+    @classmethod
+    def now(cls, tz: tzinfo | None = None) -> datetime:
+        if tz is None:
+            return _REPORT_STARTED_AT.replace(tzinfo=None)
+        return _REPORT_STARTED_AT.astimezone(tz)
 
 
 class JiraTestConnector:
@@ -116,7 +126,7 @@ class JiraTestConnector:
             sprint_ids=[UUID("45cdfd02-9cde-4c65-a618-7728fc9fb495")],
             current_sprint_id=UUID("45cdfd02-9cde-4c65-a618-7728fc9fb495"),
             created_at=datetime(2026, 6, 1, tzinfo=UTC),
-            updated_at=datetime(2026, 6, 10, tzinfo=UTC),
+            updated_at=_REPORT_STARTED_AT,
         )
 
     async def fetch_transitions(
@@ -229,6 +239,7 @@ def test_jira_active_sprint_report_run_persists_user_references(
         "em_radar_api.connector_registry._connector_types",
         lambda: [JiraTestConnector],
     )
+    monkeypatch.setattr("em_radar_api.routers.reports.datetime", FrozenReportDateTime)
     created = api_client.post(
         "/api/connections",
         json={

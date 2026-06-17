@@ -1,0 +1,26 @@
+{
+  "startAt": 0,
+  "maxResults": 50,
+  "isLast": true,
+  "values": [
+    {
+      "id": 401,
+      "self": "https://jira.example.com/rest/agile/1.0/sprint/401",
+      "state": "closed",
+      "name": "Sprint 23",
+      "startDate": "2026-05-18T09:00:00.000+0200",
+      "endDate": "2026-05-29T17:00:00.000+0200",
+      "completeDate": "2026-05-29T15:30:00.000Z",
+      "goal": "Finish connector foundations",
+      "originBoardId": 31
+    },
+    {
+      "id": 402,
+      "state": "active",
+      "name": "Sprint 24",
+      "startDate": "2026-06-01T09:00:00.000+0200",
+      "endDate": "2026-06-12T17:00:00.000+0200",
+      "goal": "Stabilize Jira ingest"
+    }
+  ]
+}

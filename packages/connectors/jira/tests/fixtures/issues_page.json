@@ -1,0 +1,74 @@
+{
+  "startAt": 0,
+  "maxResults": 50,
+  "total": 3,
+  "issues": [
+    {
+      "id": "10001",
+      "key": "ENG-1",
+      "self": "https://jira.example.com/rest/api/2/issue/10001",
+      "fields": {
+        "summary": "Engineering platform epic",
+        "description": "Coordinate platform work",
+        "issuetype": {"name": "Epic"},
+        "status": {"name": "To Do", "statusCategory": {"key": "new"}},
+        "project": {"id": "10000", "key": "ENG"},
+        "labels": [],
+        "components": [],
+        "created": "2026-06-01T09:00:00.000+0200",
+        "updated": "2026-06-02T09:00:00.000+0200",
+        "resolutiondate": null,
+        "duedate": null,
+        "customfield_10016": null,
+        "customfield_10020": []
+      }
+    },
+    {
+      "id": "10002",
+      "key": "ENG-2",
+      "self": "https://jira.example.com/rest/api/2/issue/10002",
+      "fields": {
+        "summary": "Build Jira ingest",
+        "description": "Pull Jira issues\n\n### Acceptance Criteria\n- Issues are normalized\n- Pagination is covered\n\n### Notes\nKeep credentials masked",
+        "issuetype": {"name": "Story"},
+        "status": {"name": "In Progress", "statusCategory": {"key": "indeterminate"}},
+        "project": {"id": "10000", "key": "ENG"},
+        "parent": {"id": "10001", "key": "ENG-1"},
+        "labels": ["team-a"],
+        "components": [{"name": "Connectors"}],
+        "assignee": {"accountId": "user-1", "displayName": "Ada Lovelace"},
+        "reporter": {"accountId": "user-2", "displayName": "Grace Hopper"},
+        "created": "2026-06-01T09:00:00.000+0200",
+        "updated": "2026-06-02T09:00:00.000+0200",
+        "resolutiondate": null,
+        "duedate": "2026-06-20",
+        "customfield_10016": 5,
+        "customfield_10020": [
+          {"id": 401, "state": "closed", "name": "Sprint 23"},
+          {"id": 402, "state": "active", "name": "Sprint 24"}
+        ]
+      }
+    },
+    {
+      "id": "10003",
+      "key": "ENG-3",
+      "self": "https://jira.example.com/rest/api/2/issue/10003",
+      "fields": {
+        "summary": "Fix report export",
+        "description": "Report export fails for empty findings",
+        "issuetype": {"name": "Bug"},
+        "status": {"name": "Done", "statusCategory": {"key": "done"}},
+        "project": {"id": "10000", "key": "ENG"},
+        "labels": [],
+        "components": [{"name": "Reports"}],
+        "created": "2026-06-03T09:00:00.000Z",
+        "updated": "2026-06-06T09:00:00.000Z",
+        "resolutiondate": "2026-06-06T09:00:00.000Z",
+        "duedate": null,
+        "customfield_10014": "ENG-1",
+        "customfield_10016": 2,
+        "customfield_10020": []
+      }
+    }
+  ]
+}
