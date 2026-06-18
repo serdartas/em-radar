@@ -21,9 +21,10 @@ class TeamProfile(SQLModel):
     name: str
     description: str | None = None
     connection_ids: list[UUID] = Field(default_factory=list, sa_type=JSON)
-    project_ids: list[UUID] = Field(sa_type=JSON)
+    scope_ids: list[UUID] = Field(default_factory=list, sa_type=JSON)
+    project_ids: list[UUID] = Field(default_factory=list, sa_type=JSON)
     board_ids: list[UUID] = Field(default_factory=list, sa_type=JSON)
-    repository_ids: list[UUID] = Field(sa_type=JSON)
+    repository_ids: list[UUID] = Field(default_factory=list, sa_type=JSON)
     working_mode: WorkingMode = WorkingMode.SCRUM
     sprint_length_days: int | None = None
     member_user_keys: list[str] = Field(default_factory=list, sa_type=JSON)

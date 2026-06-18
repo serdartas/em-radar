@@ -12,6 +12,7 @@ from em_radar_api.source_connections import (
     SourceConnectionTable,
     SourceConnectionUpdate,
 )
+from em_radar_api.scope_definitions import ScopeDefinitionTable
 from em_radar_api.tables import TeamProfileTable
 from em_radar_core.connectors import ConnectorBase
 
@@ -70,6 +71,8 @@ def delete_source_connection(session: Session, connection_id: UUID) -> bool:
     row = session.get(SourceConnectionTable, connection_id)
     if row is None:
         return False
+    if _referencing_scopes(session, connection_id):
+        raise SourceConnectionInUse("source connection is referenced by a scope definition")
     if _referencing_teams(session, connection_id):
         raise SourceConnectionInUse("source connection is referenced by a team")
     session.delete(row)
@@ -130,6 +133,12 @@ def _referencing_teams(session: Session, connection_id: UUID) -> list[TeamProfil
         for team in session.exec(select(TeamProfileTable)).all()
         if connection_id in team.connection_ids
     ]
+
+
+def _referencing_scopes(session: Session, connection_id: UUID) -> list[ScopeDefinitionTable]:
+    return session.exec(
+        select(ScopeDefinitionTable).where(ScopeDefinitionTable.connection_id == connection_id)
+    ).all()
 
 
 def _masked_read(row: SourceConnectionTable) -> SourceConnectionRead:

@@ -20,6 +20,7 @@ EXPECTED_TABLES = {
     "signal_config",
     "signal_finding",
     "signal_pack_history",
+    "scope_definition",
     "source_connection",
     "sprint",
     "team_profile",
