@@ -273,6 +273,48 @@ A status-change event on a WorkItem or MergeRequest. Append-only.
 
 Used directly by *repeated carry-over*, *sprint scope churn*, and *blocked without recent update*.
 
+### 5.12A ScopeDefinition
+
+A reusable subset of data inside a source connection. Scopes are selected from connector-provided
+options and then referenced by teams, reports, and runnable signal definitions.
+
+| Field | Type | Nullable | Description |
+|---|---|---|---|
+| `id` | UUID | no | |
+| `connection_id` | UUID | no | FK to `SourceConnection`. |
+| `name` | string | no | Human-readable name shown in signal builder and reports. |
+| `scope_type` | enum | no | `project`, `board`, `repository`, `saved_filter`, `custom`. |
+| `external_ref` | JSON | no | Source reference: type, id, key, and name where available. |
+| `capabilities` | string[] | no | Scope capabilities such as `sprint`, `kanban`, `statuses`, `labels`. |
+| `created_at` | timestamp | no | |
+| `updated_at` | timestamp | no | |
+
+Scopes do not contain credentials. A connector grants access; scopes define where inside that
+connector reports and signals apply.
+
+### 5.12B SignalDefinition
+
+A persisted runnable signal or template-derived signal. It is structured data, not executable code.
+
+| Field | Type | Nullable | Description |
+|---|---|---|---|
+| `id` | UUID | no | |
+| `name` | string | no | Unique within the local workspace. |
+| `description` | text | yes | |
+| `entity_type` | string | no | Connector capability entity type, such as `issue` or `merge_request`. |
+| `target_scopes` | JSON | no | List of connector/scope references. Enabled signals must have at least one. |
+| `expression` | JSON | no | Rule expression tree from the signal YAML spec. |
+| `report_settings` | JSON | no | Severity, category, and optional message template. |
+| `enabled` | boolean | no | Disabled signals are stored but not evaluated. |
+| `origin` | enum | no | `system_template`, `user_created`, or `imported`. |
+| `template_key` | string | yes | Built-in or imported template key when applicable. |
+| `version` | integer | no | Incremented on edit for audit/debugging. |
+| `created_at` | timestamp | no | |
+| `updated_at` | timestamp | no | |
+
+The signal engine evaluates `SignalDefinition` rows against canonical models only. It never reads
+raw connector payloads or executes user-provided code.
+
 ### 5.12 TeamProfile
 
 A user-defined grouping that scopes a report. Created locally in EM Radar; not pulled from a source.
@@ -283,18 +325,17 @@ A user-defined grouping that scopes a report. Created locally in EM Radar; not p
 | `name` | string | no | |
 | `description` | text | yes | |
 | `connection_ids` | UUID[] | no | Source connections this team draws from. Default `[]`. |
-| `project_ids` | UUID[] | no | Projects included in the team's scope. |
-| `board_ids` | UUID[] | no | Boards included in the team's scope (drives sprint selection). Default `[]`. |
-| `repository_ids` | UUID[] | no | Repositories included in the team's scope. |
+| `scope_ids` | UUID[] | no | Default scopes this team reports against. |
 | `working_mode` | enum | no | `scrum` or `kanban`. See §6.7. Derived from the selected board, user-confirmable. Default `scrum`. |
 | `sprint_length_days` | integer | yes | Inferred sprint cadence (scrum only); null for kanban. |
 | `member_user_keys` | string[] | no | Optional list of `source:external_id` strings to identify team members across sources. |
 | `created_at` | timestamp | no | |
 | `updated_at` | timestamp | no | |
 
-A `TeamProfile` is first-class and created during onboarding (one or more per install). It is
-the scope a report runs against, and its `working_mode` sets the report's default evaluation
-window (sprint vs date range) — see [09-functional-flows §5–§6](./09-functional-flows.md#5-flow-c--team-scope--working-mode-detection).
+A `TeamProfile` is first-class and created during onboarding (one or more per install). Its scopes
+are report-run defaults, while each runnable signal still has explicit `target_scopes`. Its
+`working_mode` sets the default evaluation window (sprint vs date range) — see
+[09-functional-flows §5–§6](./09-functional-flows.md#5-flow-c--team-scope--working-mode-detection).
 
 ### 5.13 EvaluationWindow
 
@@ -317,8 +358,9 @@ A specific result produced by a signal.
 |---|---|---|---|
 | `id` | UUID | no | |
 | `report_id` | UUID | no | FK to Report. |
-| `signal_id` | string | no | Stable ID from the signal catalog (e.g. `stale-in-progress-work-item`). |
+| `signal_id` | string | no | Local signal definition id or template key snapshot. |
 | `signal_name` | string | no | Human-readable name at evaluation time. |
+| `scope_name` | string | yes | Scope name at evaluation time, when applicable. |
 | `severity` | enum | no | See §6.5. |
 | `confidence` | enum | no | See §6.6. |
 | `entity_type` | enum | no | `workitem`, `mergerequest`, `sprint`, or `repository`. |
@@ -369,7 +411,7 @@ The output of evaluating signals against an EvaluationWindow.
 `high`, `medium`, `low`. Reflects how sure the signal is about its finding. MVP deterministic signals are almost always `high`; this field exists so later LLM-assisted signals have a place to express uncertainty.
 
 ### 6.7 WorkingMode
-`scrum`, `kanban`. A team's working mode, derived from the selected Jira board (`Board.type`) and recent sprint cadence, confirmable by the user. Scrum teams default to a sprint evaluation window; kanban teams default to a date-range window. Sprint-only signals are skipped for kanban/date-range runs (see [09-functional-flows §10](./09-functional-flows.md#10-how-working-mode-shapes-signals-no-per-team-config)).
+`scrum`, `kanban`. A team's working mode, derived from the selected Jira board (`Board.type`) and recent sprint cadence, confirmable by the user. Scrum teams default to a sprint evaluation window; kanban teams default to a date-range window. Sprint-only signals are skipped for kanban/date-range runs (see [09-functional-flows §10](./09-functional-flows.md#10-how-working-mode-shapes-signal-availability)).
 
 ## 7. Identity, Linking, and Cross-Source Resolution
 

@@ -777,7 +777,7 @@ Phase 1 is successful when:
 * sprint report works
 * date-range report works
 * at least 10 useful deterministic signals exist
-* signal thresholds can be configured from UI
+* scoped deterministic signal definitions can be configured from UI
 * report output is actionable
 * Markdown export works
 * credentials are handled safely
