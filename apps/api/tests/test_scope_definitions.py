@@ -183,6 +183,97 @@ def test_scope_definitions_validate_connection_and_credentials(api_client: TestC
     assert credential_response.status_code == 422
     assert credential_response.json()["detail"] == "external_ref must not contain credentials"
 
+    variant_response = api_client.post(
+        "/api/scopes",
+        json={
+            "connection_id": connection_response.json()["id"],
+            "name": "Leaky Variant",
+            "scope_type": "project",
+            "external_ref": {
+                "type": "jira_project",
+                "id": "10001",
+                "apiKey": "secret",
+                "access_token": "secret",
+            },
+            "capabilities": ["statuses"],
+        },
+    )
+    assert variant_response.status_code == 422
+    assert variant_response.json()["detail"] == "external_ref must not contain credentials"
+
+
+def test_scope_connection_cannot_move_when_referenced_by_team(api_client: TestClient) -> None:
+    first_connection_response = api_client.post(
+        "/api/connections",
+        json={"connector_name": "jira", "config": {}},
+    )
+    second_connection_response = api_client.post(
+        "/api/connections",
+        json={"connector_name": "jira", "config": {}},
+    )
+    assert first_connection_response.status_code == 201
+    assert second_connection_response.status_code == 201
+
+    scope_response = api_client.post(
+        "/api/scopes",
+        json={
+            "connection_id": first_connection_response.json()["id"],
+            "name": "Custom Jira Scope",
+            "scope_type": "custom",
+            "external_ref": {"type": "custom", "id": "scope-1"},
+            "capabilities": ["statuses"],
+        },
+    )
+    assert scope_response.status_code == 201
+    team_response = api_client.post(
+        "/api/teams",
+        json={
+            "name": "Platform",
+            "connection_ids": [first_connection_response.json()["id"]],
+            "scope_ids": [scope_response.json()["id"]],
+            "working_mode": "kanban",
+        },
+    )
+    assert team_response.status_code == 201
+
+    move_response = api_client.patch(
+        f"/api/scopes/{scope_response.json()['id']}",
+        json={"connection_id": second_connection_response.json()["id"]},
+    )
+    assert move_response.status_code == 409
+    assert move_response.json()["detail"] == "scope definition is referenced by a team"
+
+
+def test_connection_connector_name_cannot_change_when_scopes_reference_it(
+    api_client: TestClient,
+) -> None:
+    connection_response = api_client.post(
+        "/api/connections",
+        json={"connector_name": "jira", "config": {}},
+    )
+    assert connection_response.status_code == 201
+    scope_response = api_client.post(
+        "/api/scopes",
+        json={
+            "connection_id": connection_response.json()["id"],
+            "name": "Platform",
+            "scope_type": "project",
+            "external_ref": {"type": "jira_project", "id": "10000", "key": "PLAT"},
+            "capabilities": ["statuses"],
+        },
+    )
+    assert scope_response.status_code == 201
+
+    response = api_client.patch(
+        f"/api/connections/{connection_response.json()['id']}",
+        json={"connector_name": "gitlab"},
+    )
+    assert response.status_code == 409
+    assert (
+        response.json()["detail"]
+        == "source connection connector_name cannot change while scopes reference it"
+    )
+
 
 def test_jira_project_and_board_listing_populates_scope_definitions(
     api_client: TestClient,

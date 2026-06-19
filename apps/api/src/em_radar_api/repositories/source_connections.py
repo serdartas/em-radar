@@ -17,7 +17,19 @@ from em_radar_api.tables import TeamProfileTable
 from em_radar_core.connectors import ConnectorBase
 
 ConnectorT = TypeVar("ConnectorT", bound=ConnectorBase)
-CREDENTIAL_FIELD_NAMES = frozenset({"token", "password", "api_key", "secret", "authorization"})
+CREDENTIAL_FIELD_NAMES = frozenset(
+    {
+        "accesstoken",
+        "apikey",
+        "authorization",
+        "clientsecret",
+        "password",
+        "privatetoken",
+        "refreshtoken",
+        "secret",
+        "token",
+    }
+)
 SECRET_MARKER = "__em_radar_secret__"
 
 
@@ -60,6 +72,12 @@ def update_source_connection(
             values["config"] = {**row.config, **stored_config}
         else:
             values["config"] = stored_config
+    if values.get(
+        "connector_name", row.connector_name
+    ) != row.connector_name and _referencing_scopes(session, connection_id):
+        raise SourceConnectionInUse(
+            "source connection connector_name cannot change while scopes reference it"
+        )
     candidate = SourceConnectionTable.model_validate(row, update=values)
     _validate_team_scopes(session, connection_id, candidate)
     row.sqlmodel_update(values)
@@ -186,7 +204,7 @@ def _mask_value(value: object, field_name: str | None = None) -> object:
         return _mask_secret(value.get_secret_value())
     if isinstance(value, Mapping) and set(value) == {SECRET_MARKER}:
         return _mask_secret(str(value[SECRET_MARKER]))
-    if field_name is not None and field_name.lower() in CREDENTIAL_FIELD_NAMES:
+    if field_name is not None and is_credential_field_name(field_name):
         return _mask_secret(str(value))
     if isinstance(value, Mapping):
         return {str(key): _mask_value(item, str(key)) for key, item in value.items()}
@@ -199,3 +217,12 @@ def _mask_secret(secret: str) -> str:
     if len(secret) <= 4:
         return "****"
     return f"****{secret[-4:]}"
+
+
+def is_credential_field_name(field_name: str) -> bool:
+    normalized = "".join(character for character in field_name.casefold() if character.isalnum())
+    return (
+        normalized in CREDENTIAL_FIELD_NAMES
+        or normalized.endswith("token")
+        or "secret" in normalized
+    )

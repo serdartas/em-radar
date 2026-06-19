@@ -60,6 +60,8 @@ def patch_scope(
         scope = update_scope_definition(session, scope_id, update)
     except InvalidScopeDefinition as error:
         raise _invalid_scope(error) from error
+    except ScopeDefinitionInUse as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
     if scope is None:
         raise _scope_not_found()
     return scope

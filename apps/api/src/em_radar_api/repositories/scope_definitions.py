@@ -3,7 +3,7 @@ from uuid import UUID
 
 from sqlmodel import Session, select
 
-from em_radar_api.repositories.source_connections import CREDENTIAL_FIELD_NAMES
+from em_radar_api.repositories.source_connections import is_credential_field_name
 from em_radar_api.scope_definitions import (
     ScopeDefinitionCreate,
     ScopeDefinitionRead,
@@ -69,6 +69,12 @@ def update_scope_definition(
         }
     )
     _validate_scope_definition(session, candidate)
+    if (
+        "connection_id" in values
+        and candidate.connection_id != row.connection_id
+        and _referencing_teams(session, scope_id)
+    ):
+        raise ScopeDefinitionInUse("scope definition is referenced by a team")
     row.sqlmodel_update(values)
     row.updated_at = datetime.now(UTC)
     _write(session, row)
@@ -179,7 +185,7 @@ def _validate_scope_definition(session: Session, scope: ScopeDefinitionCreate) -
 
 def _reject_credential_keys(values: dict[str, object]) -> None:
     for key, value in values.items():
-        if key.lower() in CREDENTIAL_FIELD_NAMES:
+        if is_credential_field_name(key):
             raise InvalidScopeDefinition("external_ref must not contain credentials")
         if isinstance(value, dict):
             _reject_credential_keys(value)
