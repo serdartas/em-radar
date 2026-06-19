@@ -7,6 +7,8 @@ import { SignalPackPage } from "@/pages/SignalPackPage"
 const preview = {
   pack_name: "my-pack",
   warnings: [],
+  unresolved_mappings: [],
+  imported_signal_names: [],
   changes: [
     {
       signal_id: "stale-in-progress-work-item",
@@ -41,6 +43,36 @@ afterEach(() => {
 })
 
 describe("SignalPackPage", () => {
+  it("exports with the selected public template mode", async () => {
+    URL.createObjectURL = URL.createObjectURL ?? (() => "blob:signal-pack")
+    URL.revokeObjectURL = URL.revokeObjectURL ?? (() => undefined)
+    const createObjectUrl = vi
+      .spyOn(URL, "createObjectURL")
+      .mockImplementation(() => "blob:signal-pack")
+    const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined)
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined)
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = typeof input === "string" ? input : input.toString()
+      if (url.includes("/api/signal-pack/export")) {
+        return Promise.resolve(new Response("kind: SignalPack", { status: 200 }))
+      }
+      throw new Error(`unexpected fetch: ${url}`)
+    })
+
+    renderPage()
+
+    fireEvent.change(screen.getByLabelText("Export mode"), {
+      target: { value: "public_template" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "Download YAML" }))
+
+    await waitFor(() => {
+      expect(fetchMock.mock.calls[0][0]).toContain("export_type=public_template")
+    })
+    expect(createObjectUrl).toHaveBeenCalled()
+    expect(revokeObjectUrl).toHaveBeenCalledWith("blob:signal-pack")
+  })
+
   it("previews a pack and applies it on confirmation", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const url = typeof input === "string" ? input : input.toString()
@@ -73,6 +105,32 @@ describe("SignalPackPage", () => {
         String(url).endsWith("/api/signal-pack/import/apply"),
       ),
     ).toBe(true)
+  })
+
+  it("shows unresolved mappings for public template imports", async () => {
+    const publicPreview = {
+      ...preview,
+      changes: [],
+      unresolved_mappings: ["public-stale-work"],
+      imported_signal_names: ["Public stale work"],
+    }
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = typeof input === "string" ? input : input.toString()
+      if (url.endsWith("/api/signal-pack/import")) {
+        return Promise.resolve(jsonResponse(publicPreview))
+      }
+      throw new Error(`unexpected fetch: ${url}`)
+    })
+
+    renderPage()
+
+    fireEvent.change(screen.getByLabelText(/Paste pack YAML/), {
+      target: { value: "apiVersion: emradar.dev/v1" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "Preview changes" }))
+
+    expect(await screen.findByLabelText("Unresolved mappings")).toBeInTheDocument()
+    expect(screen.getByText(/public-stale-work requires local connector/)).toBeInTheDocument()
   })
 
   it("surfaces a backend error for an invalid pack without applying", async () => {

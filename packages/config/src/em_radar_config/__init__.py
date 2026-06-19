@@ -1,14 +1,24 @@
 from em_radar_config.catalog import SIGNAL_CATALOG, SignalCatalogEntry
+from em_radar_config.jira_signal_templates import (
+    JIRA_SIGNAL_TEMPLATES,
+    JiraSignalTemplate,
+    instantiate_jira_signal_template,
+    restore_jira_signal_template,
+    seed_jira_signal_templates,
+)
 from em_radar_config.models import (
     FieldMappings,
     GitLabFieldMappings,
     JiraFieldMappings,
     PackDefaults,
     PackMetadata,
+    ConnectorReference,
+    ScopeReference,
     SignalEntry,
     SignalPack,
     SignalPackSpec,
     SignalScope,
+    TemplateEntry,
 )
 from em_radar_config.validation import (
     EM_RADAR_VERSION,
@@ -24,6 +34,9 @@ __all__ = [
     "EM_RADAR_VERSION",
     "GitLabFieldMappings",
     "JiraFieldMappings",
+    "JIRA_SIGNAL_TEMPLATES",
+    "JiraSignalTemplate",
+    "ConnectorReference",
     "PackDefaults",
     "PackLoadResult",
     "PackMetadata",
@@ -31,10 +44,15 @@ __all__ = [
     "PackValidationError",
     "PackValidationWarning",
     "SIGNAL_CATALOG",
+    "ScopeReference",
     "SignalCatalogEntry",
     "SignalEntry",
     "SignalPack",
     "SignalPackSpec",
     "SignalScope",
+    "TemplateEntry",
+    "instantiate_jira_signal_template",
     "load_signal_pack",
+    "restore_jira_signal_template",
+    "seed_jira_signal_templates",
 ]

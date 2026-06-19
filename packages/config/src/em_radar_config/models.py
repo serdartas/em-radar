@@ -22,11 +22,48 @@ class PackDefaults(PackModel):
 
 
 class SignalEntry(PackModel):
-    id: str
-    enabled: StrictBool
+    id: str | None = None
+    name: str | None = None
+    description: str | None = None
+    entity_type: str | None = None
+    target_scopes: list[dict[str, str]] | None = None
+    expression: dict[str, JsonValue] | None = None
+    report_settings: dict[str, JsonValue] | None = None
+    enabled: StrictBool = True
+    origin: str | None = None
+    template_key: str | None = None
     severity: Severity | None = None
     scope: SignalScope | None = None
     params: dict[str, JsonValue] | None = None
+
+
+class ConnectorReference(PackModel):
+    local_ref: str
+    connector_type: str
+    name: str
+    base_url: str | None = None
+    auth: str | None = None
+
+
+class ScopeReference(PackModel):
+    local_ref: str
+    connector_ref: str
+    name: str
+    scope_type: str
+    external_ref: dict[str, JsonValue] = Field(default_factory=dict)
+    capabilities: list[str] = Field(default_factory=list)
+
+
+class TemplateEntry(PackModel):
+    key: str
+    name: str
+    description: str | None = None
+    required_connector_type: str
+    entity_type: str
+    required_scope_capabilities: list[str] = Field(default_factory=list)
+    expression: dict[str, JsonValue]
+    report_settings: dict[str, JsonValue]
+    enabled_by_default: StrictBool = True
 
 
 class JiraFieldMappings(PackModel):
@@ -56,8 +93,12 @@ class PackMetadata(PackModel):
 
 
 class SignalPackSpec(PackModel):
+    export_type: str = "private_backup"
+    connectors: list[ConnectorReference] | None = None
+    scopes: list[ScopeReference] | None = None
+    templates: list[TemplateEntry] | None = None
     defaults: PackDefaults | None = None
-    signals: list[SignalEntry]
+    signals: list[SignalEntry] = Field(default_factory=list)
     field_mappings: FieldMappings | None = None
 
 

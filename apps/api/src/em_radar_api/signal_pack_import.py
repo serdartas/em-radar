@@ -2,6 +2,8 @@ from pydantic import BaseModel, JsonValue
 from sqlmodel import Session, select
 
 from em_radar_api.models.signal_pack_history import SignalPackHistory
+from em_radar_api.repositories.signal_definitions import create_signal_definition
+from em_radar_api.signal_definitions import SignalDefinitionCreate
 from em_radar_api.signal_configs import SignalConfigRead, SignalConfigTable, SignalConfigUpsert
 from em_radar_api.tables import ProjectTable, RepositoryTable
 from em_radar_config import (
@@ -48,6 +50,8 @@ class SignalPackImportPreview(BaseModel):
     pack_name: str
     warnings: list[ImportWarning]
     changes: list[SignalImportDiff]
+    unresolved_mappings: list[str] = []
+    imported_signal_names: list[str] = []
 
 
 def preview_signal_pack_import(
@@ -57,6 +61,8 @@ def preview_signal_pack_import(
     replace_all: bool = False,
 ) -> SignalPackImportPreview:
     result = load_signal_pack(raw_yaml, _validation_context(session))
+    if _is_definition_pack(result.pack):
+        return _preview_definition_pack(result)
     configs = {
         config.signal_id: config
         for config in session.exec(select(SignalConfigTable).order_by(SignalConfigTable.signal_id))
@@ -71,6 +77,28 @@ def apply_signal_pack_import(
     replace_all: bool = False,
 ) -> SignalPackImportPreview:
     result = load_signal_pack(raw_yaml, _validation_context(session))
+    if _is_definition_pack(result.pack):
+        preview = _preview_definition_pack(result)
+        for signal in result.pack.spec.signals:
+            create_signal_definition(session, _definition_from_signal(signal))
+        for template in result.pack.spec.templates or []:
+            create_signal_definition(
+                session,
+                SignalDefinitionCreate(
+                    name=template.name,
+                    description=template.description,
+                    entity_type=template.entity_type,
+                    target_scopes=[],
+                    expression=template.expression,
+                    report_settings=template.report_settings,
+                    enabled=False,
+                    origin="imported",
+                    template_key=template.key,
+                ),
+            )
+        session.add(SignalPackHistory(pack_name=result.pack.metadata.name, raw_yaml=raw_yaml))
+        session.commit()
+        return preview
     rows = {
         row.signal_id: row
         for row in session.exec(select(SignalConfigTable).order_by(SignalConfigTable.signal_id))
@@ -191,6 +219,48 @@ def _write_config(rows: dict[str, SignalConfigTable], config: SignalConfigUpsert
 
 def _import_warning(warning: PackValidationWarning) -> ImportWarning:
     return ImportWarning(code=warning.code, message=warning.message, path=warning.path)
+
+
+def _is_definition_pack(pack: SignalPack) -> bool:
+    return pack.spec.export_type in {"private_backup", "public_template"} and (
+        bool(pack.spec.templates)
+        or any(signal.expression is not None for signal in pack.spec.signals)
+    )
+
+
+def _preview_definition_pack(result: PackLoadResult) -> SignalPackImportPreview:
+    unresolved = [
+        template.key for template in result.pack.spec.templates or [] if template.enabled_by_default
+    ]
+    unresolved.extend(
+        signal.name or signal.id or "unnamed signal"
+        for signal in result.pack.spec.signals
+        if signal.enabled and not signal.target_scopes
+    )
+    return SignalPackImportPreview(
+        pack_name=result.pack.metadata.name,
+        warnings=[_import_warning(warning) for warning in result.warnings],
+        changes=[],
+        unresolved_mappings=unresolved,
+        imported_signal_names=[
+            *(template.name for template in result.pack.spec.templates or []),
+            *(signal.name or signal.id or "unnamed signal" for signal in result.pack.spec.signals),
+        ],
+    )
+
+
+def _definition_from_signal(signal: SignalEntry) -> SignalDefinitionCreate:
+    return SignalDefinitionCreate(
+        name=signal.name or signal.id or "Imported signal",
+        description=signal.description,
+        entity_type=signal.entity_type or "issue",
+        target_scopes=signal.target_scopes or [],
+        expression=signal.expression or {"type": "group", "operator": "all", "conditions": []},
+        report_settings=signal.report_settings or {"severity": "warning", "category": "imported"},
+        enabled=signal.enabled and bool(signal.target_scopes),
+        origin=signal.origin or "imported",
+        template_key=signal.template_key,
+    )
 
 
 def _validation_context(session: Session) -> PackValidationContext:
