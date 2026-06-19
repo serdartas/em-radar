@@ -104,6 +104,35 @@ def test_date_duration_and_deterministic_now_behavior() -> None:
     assert findings[0].evidence["age_since_created"] == 5
 
 
+def test_date_between_condition_matches_datetime_range() -> None:
+    item = workitem(created_at=NOW - timedelta(days=5), updated_at=NOW - timedelta(days=4))
+    expression = {
+        "type": "group",
+        "operator": "all",
+        "conditions": [
+            {
+                "field": "created_at",
+                "operator": "between",
+                "value": {
+                    "start": (NOW - timedelta(days=7)).isoformat(),
+                    "end": (NOW - timedelta(days=3)).isoformat(),
+                },
+            }
+        ],
+    }
+
+    findings = evaluate_signal_definition(
+        _definition(expression),
+        SignalData(report_id=uuid4(), projects=(project(),), workitems=(item,)),
+        context(),
+        JiraConnector.describe_signal_schema(),
+        [_scope()],
+    )
+
+    assert len(findings) == 1
+    assert findings[0].evidence["created_at"] == item.created_at.isoformat()
+
+
 def test_sprint_field_availability_is_validated() -> None:
     expression = {
         "type": "group",

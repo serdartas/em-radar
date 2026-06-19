@@ -29,6 +29,7 @@ interface BuilderDraft {
   field: string
   operator: string
   amount: number
+  value: unknown
 }
 
 export function SignalSettingsPage() {
@@ -67,6 +68,7 @@ export function SignalSettingsPage() {
       field: condition.field,
       operator: condition.operator,
       amount: condition.amount,
+      value: condition.value,
     })
   }
 
@@ -255,17 +257,7 @@ function SignalBuilder({
           scope_type: selectedScope.scope_type,
         },
       ],
-      expression: {
-        type: "group",
-        operator: "all",
-        conditions: [
-          {
-            field: draft.field,
-            operator: draft.operator,
-            value: { amount: draft.amount, unit: "days" },
-          },
-        ],
-      },
+      expression: expressionFromDraft(template.expression, draft, selectedField),
       report_settings: template.report_settings,
       enabled: true,
       origin: "system_template",
@@ -296,6 +288,7 @@ function SignalBuilder({
                   field: condition.field,
                   operator: condition.operator,
                   amount: condition.amount,
+                  value: condition.value,
                 })
               }}
               value={draft.templateKey}
@@ -345,6 +338,8 @@ function SignalBuilder({
                     ...draft,
                     field: event.target.value,
                     operator: nextField?.operators[0] ?? "is",
+                    value: defaultValueForField(nextField),
+                    amount: nextField?.type === "duration" ? draft.amount : 0,
                   })
                 }}
                 value={draft.field}
@@ -372,17 +367,25 @@ function SignalBuilder({
             </div>
           </div>
 
-          <div className="space-y-1.5">
-            <Label htmlFor="builder-duration">Duration days</Label>
-            <input
-              className="w-full rounded-md border px-3 py-2 text-sm"
-              id="builder-duration"
-              min={0}
-              onChange={(event) => onChange({ ...draft, amount: Number(event.target.value) })}
-              type="number"
-              value={draft.amount}
+          {selectedField?.type === "duration" ? (
+            <div className="space-y-1.5">
+              <Label htmlFor="builder-duration">Duration days</Label>
+              <input
+                className="w-full rounded-md border px-3 py-2 text-sm"
+                id="builder-duration"
+                min={0}
+                onChange={(event) => onChange({ ...draft, amount: Number(event.target.value) })}
+                type="number"
+                value={draft.amount}
+              />
+            </div>
+          ) : (
+            <SignalValueControl
+              field={selectedField}
+              onChange={(value) => onChange({ ...draft, value })}
+              value={draft.value}
             />
-          </div>
+          )}
 
           <div className="rounded-md border p-3 text-sm">
             <p className="font-medium">Preview</p>
@@ -408,10 +411,7 @@ function SignalBuilder({
 }
 
 function firstCondition(expression: Record<string, unknown>) {
-  const conditions = Array.isArray(expression.conditions) ? expression.conditions : []
-  const condition = conditions.find(
-    (item): item is Record<string, unknown> => typeof item === "object" && item !== null,
-  )
+  const condition = firstLeafCondition(expression)
   const value = condition && typeof condition.value === "object" ? condition.value : null
   const amount =
     value !== null && "amount" in value && typeof value.amount === "number" ? value.amount : 3
@@ -419,7 +419,128 @@ function firstCondition(expression: Record<string, unknown>) {
     field: typeof condition?.field === "string" ? condition.field : "age_in_current_status",
     operator: typeof condition?.operator === "string" ? condition.operator : "greater_than",
     amount,
+    value: condition?.value ?? "",
   }
+}
+
+function SignalValueControl({
+  field,
+  onChange,
+  value,
+}: {
+  field: SignalField | undefined
+  onChange: (value: unknown) => void
+  value: unknown
+}) {
+  const stringValue = typeof value === "string" ? value : String(value ?? "")
+  if (field && field.values.length > 0) {
+    return (
+      <div className="space-y-1.5">
+        <Label htmlFor="builder-value">Value</Label>
+        <Select
+          id="builder-value"
+          onChange={(event) => onChange(event.target.value)}
+          value={stringValue}
+        >
+          {field.values.map((item) => (
+            <option key={String(item)} value={String(item)}>
+              {String(item)}
+            </option>
+          ))}
+        </Select>
+      </div>
+    )
+  }
+  return (
+    <div className="space-y-1.5">
+      <Label htmlFor="builder-value">Value</Label>
+      <input
+        className="w-full rounded-md border px-3 py-2 text-sm"
+        id="builder-value"
+        onChange={(event) => onChange(event.target.value)}
+        value={stringValue}
+      />
+    </div>
+  )
+}
+
+function expressionFromDraft(
+  expression: Record<string, unknown>,
+  draft: BuilderDraft,
+  field: SignalField | undefined,
+) {
+  const condition = {
+    field: draft.field,
+    operator: draft.operator,
+    value: field?.type === "duration" ? { amount: draft.amount, unit: "days" } : draft.value,
+  }
+  const clone = jsonClone(expression)
+  if (replaceFirstLeafCondition(clone, condition)) {
+    return clone
+  }
+  return {
+    ...clone,
+    type: "group",
+    operator: clone.operator === "any" ? "any" : "all",
+    conditions: [...(Array.isArray(clone.conditions) ? clone.conditions : []), condition],
+  }
+}
+
+function firstLeafCondition(expression: Record<string, unknown>): Record<string, unknown> | null {
+  const conditions = Array.isArray(expression.conditions) ? expression.conditions : []
+  for (const item of conditions) {
+    if (typeof item !== "object" || item === null) {
+      continue
+    }
+    const condition = item as Record<string, unknown>
+    if (condition.type === "group") {
+      const nested = firstLeafCondition(condition)
+      if (nested) {
+        return nested
+      }
+    } else {
+      return condition
+    }
+  }
+  return null
+}
+
+function replaceFirstLeafCondition(
+  expression: Record<string, unknown>,
+  replacement: Record<string, unknown>,
+): boolean {
+  const conditions = Array.isArray(expression.conditions) ? expression.conditions : []
+  for (let index = 0; index < conditions.length; index += 1) {
+    const item = conditions[index]
+    if (typeof item !== "object" || item === null) {
+      continue
+    }
+    const condition = item as Record<string, unknown>
+    if (condition.type === "group") {
+      if (replaceFirstLeafCondition(condition, replacement)) {
+        return true
+      }
+    } else {
+      conditions[index] = replacement
+      expression.conditions = conditions
+      return true
+    }
+  }
+  return false
+}
+
+function defaultValueForField(field: SignalField | undefined): unknown {
+  if (!field) {
+    return ""
+  }
+  if (field.type === "duration") {
+    return { amount: 3, unit: "days" }
+  }
+  return field.values[0] ?? ""
+}
+
+function jsonClone(value: Record<string, unknown>): Record<string, unknown> {
+  return JSON.parse(JSON.stringify(value)) as Record<string, unknown>
 }
 
 function previewWarnings(field: SignalField | undefined, scope: ScopeDefinition | undefined) {

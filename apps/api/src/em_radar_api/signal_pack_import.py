@@ -3,6 +3,7 @@ from sqlmodel import Session, select
 
 from em_radar_api.models.signal_pack_history import SignalPackHistory
 from em_radar_api.repositories.signal_definitions import create_signal_definition
+from em_radar_api.scope_definitions import ScopeDefinitionTable
 from em_radar_api.signal_definitions import SignalDefinitionCreate
 from em_radar_api.signal_configs import SignalConfigRead, SignalConfigTable, SignalConfigUpsert
 from em_radar_api.tables import ProjectTable, RepositoryTable
@@ -62,7 +63,7 @@ def preview_signal_pack_import(
 ) -> SignalPackImportPreview:
     result = load_signal_pack(raw_yaml, _validation_context(session))
     if _is_definition_pack(result.pack):
-        return _preview_definition_pack(result)
+        return _preview_definition_pack(session, result)
     configs = {
         config.signal_id: config
         for config in session.exec(select(SignalConfigTable).order_by(SignalConfigTable.signal_id))
@@ -78,9 +79,9 @@ def apply_signal_pack_import(
 ) -> SignalPackImportPreview:
     result = load_signal_pack(raw_yaml, _validation_context(session))
     if _is_definition_pack(result.pack):
-        preview = _preview_definition_pack(result)
+        preview = _preview_definition_pack(session, result)
         for signal in result.pack.spec.signals:
-            create_signal_definition(session, _definition_from_signal(signal))
+            create_signal_definition(session, _definition_from_signal(signal, session, result.pack))
         for template in result.pack.spec.templates or []:
             create_signal_definition(
                 session,
@@ -228,14 +229,15 @@ def _is_definition_pack(pack: SignalPack) -> bool:
     )
 
 
-def _preview_definition_pack(result: PackLoadResult) -> SignalPackImportPreview:
+def _preview_definition_pack(session: Session, result: PackLoadResult) -> SignalPackImportPreview:
+    scope_mapping = _scope_mapping(session, result.pack)
     unresolved = [
         template.key for template in result.pack.spec.templates or [] if template.enabled_by_default
     ]
     unresolved.extend(
         signal.name or signal.id or "unnamed signal"
         for signal in result.pack.spec.signals
-        if signal.enabled and not signal.target_scopes
+        if signal.enabled and _has_unresolved_scope(signal, scope_mapping)
     )
     return SignalPackImportPreview(
         pack_name=result.pack.metadata.name,
@@ -249,18 +251,107 @@ def _preview_definition_pack(result: PackLoadResult) -> SignalPackImportPreview:
     )
 
 
-def _definition_from_signal(signal: SignalEntry) -> SignalDefinitionCreate:
+def _definition_from_signal(
+    signal: SignalEntry,
+    session: Session,
+    pack: SignalPack,
+) -> SignalDefinitionCreate:
+    scope_mapping = _scope_mapping(session, pack)
+    target_scopes = _mapped_target_scopes(signal, scope_mapping)
     return SignalDefinitionCreate(
         name=signal.name or signal.id or "Imported signal",
         description=signal.description,
         entity_type=signal.entity_type or "issue",
-        target_scopes=signal.target_scopes or [],
+        target_scopes=target_scopes,
         expression=signal.expression or {"type": "group", "operator": "all", "conditions": []},
         report_settings=signal.report_settings or {"severity": "warning", "category": "imported"},
-        enabled=signal.enabled and bool(signal.target_scopes),
+        enabled=signal.enabled
+        and bool(target_scopes)
+        and not _has_unresolved_scope(signal, scope_mapping),
         origin=signal.origin or "imported",
         template_key=signal.template_key,
     )
+
+
+def _scope_mapping(session: Session, pack: SignalPack) -> dict[str, dict[str, str]]:
+    local_scopes = session.exec(select(ScopeDefinitionTable)).all()
+    mapping: dict[str, dict[str, str]] = {}
+    exported_scopes = pack.spec.scopes or []
+    for exported in exported_scopes:
+        local = _matching_scope(
+            local_scopes, exported.scope_type, exported.external_ref, exported.name
+        )
+        if local is not None:
+            mapping[exported.local_ref] = {
+                "connector_id": str(local.connection_id),
+                "scope_id": str(local.id),
+                "scope_type": local.scope_type.value,
+            }
+    for local in local_scopes:
+        mapping.setdefault(
+            str(local.id),
+            {
+                "connector_id": str(local.connection_id),
+                "scope_id": str(local.id),
+                "scope_type": local.scope_type.value,
+            },
+        )
+    return mapping
+
+
+def _matching_scope(
+    local_scopes: list[ScopeDefinitionTable],
+    scope_type: str,
+    external_ref: dict[str, JsonValue],
+    name: str,
+) -> ScopeDefinitionTable | None:
+    for local in local_scopes:
+        if local.scope_type.value != scope_type:
+            continue
+        if _external_ref_matches(local.external_ref, external_ref):
+            return local
+    return next(
+        (
+            local
+            for local in local_scopes
+            if local.scope_type.value == scope_type and local.name == name
+        ),
+        None,
+    )
+
+
+def _external_ref_matches(
+    local_ref: dict[str, object],
+    exported_ref: dict[str, JsonValue],
+) -> bool:
+    comparable_keys = {"type", "id", "key", "name"}
+    exported_values = {
+        key: exported_ref.get(key) for key in comparable_keys if exported_ref.get(key) is not None
+    }
+    if not exported_values:
+        return False
+    return all(local_ref.get(key) == value for key, value in exported_values.items())
+
+
+def _mapped_target_scopes(
+    signal: SignalEntry,
+    scope_mapping: dict[str, dict[str, str]],
+) -> list[dict[str, str]]:
+    return [
+        scope_mapping[scope_ref]
+        for target in signal.target_scopes or []
+        if (scope_ref := target.get("scope_id") or target.get("scope_ref")) in scope_mapping
+    ]
+
+
+def _has_unresolved_scope(
+    signal: SignalEntry,
+    scope_mapping: dict[str, dict[str, str]],
+) -> bool:
+    target_scopes = signal.target_scopes or []
+    if not target_scopes:
+        return True
+    return len(_mapped_target_scopes(signal, scope_mapping)) != len(target_scopes)
 
 
 def _validation_context(session: Session) -> PackValidationContext:

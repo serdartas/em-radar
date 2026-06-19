@@ -276,6 +276,9 @@ def _compare(observed: object, operator: str, expected: object) -> bool:
         right = _duration_days(expected)
         return left > right if operator == "greater_than" else left < right
     if operator == "between":
+        if isinstance(observed, datetime):
+            start, end = _date_range(value=expected)
+            return start <= observed <= end
         left = _numeric(observed)
         low, high = _range(expected)
         return low <= left <= high
@@ -393,6 +396,16 @@ def _date_value(value: object) -> datetime:
     if isinstance(value, str):
         return datetime.fromisoformat(value)
     raise ExpressionValidationError("date comparison expects an ISO datetime")
+
+
+def _date_range(value: object) -> tuple[datetime, datetime]:
+    if isinstance(value, dict):
+        start = value.get("start") or value.get("min")
+        end = value.get("end") or value.get("max")
+        return _date_value(start), _date_value(end)
+    if isinstance(value, list) and len(value) == 2:
+        return _date_value(value[0]), _date_value(value[1])
+    raise ExpressionValidationError("date between expects start/end or two ISO datetimes")
 
 
 def _json_value(value: object) -> object:

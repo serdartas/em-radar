@@ -91,6 +91,15 @@ const connectors = [
           value_provider: null,
           availability: { requires_scope_capability: ["sprint"] },
         },
+        {
+          key: "status_category",
+          label: "Status Category",
+          type: "enum",
+          operators: ["is", "is_not"],
+          values: ["todo", "in_progress", "done"],
+          value_provider: null,
+          availability: null,
+        },
       ],
     },
   },
@@ -181,5 +190,28 @@ describe("SignalSettingsPage", () => {
 
     expect(screen.getByText(/Sprint day requires sprint scope capability/)).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Save signal" })).toBeDisabled()
+  })
+
+  it("preserves enum values when saving a non-duration condition", async () => {
+    const fetchMock = mockApi()
+    renderPage()
+
+    await screen.findByRole("button", { name: "Duplicate" })
+    fireEvent.change(screen.getByLabelText("Field"), { target: { value: "status_category" } })
+    fireEvent.change(screen.getByLabelText("Value"), { target: { value: "in_progress" } })
+    fireEvent.click(screen.getByRole("button", { name: "Save signal" }))
+
+    await waitFor(() => {
+      const call = fetchMock.mock.calls.find(
+        ([url, init]) => String(url).endsWith("/api/signal-definitions") && init?.method === "POST",
+      )
+      expect(call).toBeTruthy()
+      const body = JSON.parse(String((call?.[1] as RequestInit).body))
+      expect(body.expression.conditions[0]).toMatchObject({
+        field: "status_category",
+        operator: "is",
+        value: "in_progress",
+      })
+    })
   })
 })

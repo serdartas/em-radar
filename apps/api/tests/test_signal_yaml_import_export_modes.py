@@ -132,3 +132,147 @@ spec:
     )
     assert imported["enabled"] is False
     assert imported["target_scopes"] == []
+
+
+def test_private_backup_import_remaps_matching_scope(api_client: TestClient) -> None:
+    connection = api_client.post(
+        "/api/connections",
+        json={"connector_name": "jira", "config": {"base_url": "https://local.invalid"}},
+    ).json()
+    local_scope = api_client.post(
+        "/api/scopes",
+        json={
+            "connection_id": connection["id"],
+            "name": "Local Scrum Board",
+            "scope_type": "board",
+            "external_ref": {
+                "type": "jira_board",
+                "id": "20000",
+                "key": None,
+                "name": "Platform Scrum",
+            },
+            "capabilities": ["sprint", "statuses", "labels"],
+        },
+    ).json()
+    raw_yaml = """
+apiVersion: emradar.dev/v1
+kind: SignalPack
+metadata:
+  name: private-stale-work
+  version: 0.1.0
+  description: Private backup.
+spec:
+  export_type: private_backup
+  scopes:
+    - local_ref: old-scope-id
+      connector_ref: old-connector-id
+      name: Platform Scrum
+      scope_type: board
+      external_ref:
+        type: jira_board
+        id: "20000"
+        key: null
+        name: Platform Scrum
+      capabilities: [sprint, statuses, labels]
+  signals:
+    - id: old-signal-id
+      name: Imported scoped stale work
+      entity_type: issue
+      target_scopes:
+        - connector_id: old-connector-id
+          scope_id: old-scope-id
+          scope_type: board
+      expression:
+        type: group
+        operator: all
+        conditions:
+          - field: status_category
+            operator: is
+            value: in_progress
+      report_settings:
+        severity: warning
+        category: flow
+      enabled: true
+      origin: imported
+"""
+
+    preview = api_client.post(
+        "/api/signal-pack/import",
+        json={"raw_yaml": raw_yaml, "mode": "additive"},
+    )
+    assert preview.status_code == 200
+    assert preview.json().get("unresolved_mappings", []) == []
+
+    apply = api_client.post(
+        "/api/signal-pack/import/apply",
+        json={"raw_yaml": raw_yaml, "mode": "additive"},
+    )
+    assert apply.status_code == 200
+
+    imported = next(
+        definition
+        for definition in api_client.get("/api/signal-definitions").json()
+        if definition["name"] == "Imported scoped stale work"
+    )
+    assert imported["enabled"] is True
+    assert imported["target_scopes"] == [
+        {
+            "connector_id": connection["id"],
+            "scope_id": local_scope["id"],
+            "scope_type": "board",
+        }
+    ]
+
+
+def test_private_backup_import_disables_unresolved_scope(api_client: TestClient) -> None:
+    raw_yaml = """
+apiVersion: emradar.dev/v1
+kind: SignalPack
+metadata:
+  name: unresolved-private-stale-work
+  version: 0.1.0
+  description: Private backup.
+spec:
+  export_type: private_backup
+  signals:
+    - id: old-signal-id
+      name: Imported unresolved stale work
+      entity_type: issue
+      target_scopes:
+        - connector_id: old-connector-id
+          scope_id: missing-scope-id
+          scope_type: board
+      expression:
+        type: group
+        operator: all
+        conditions:
+          - field: status_category
+            operator: is
+            value: in_progress
+      report_settings:
+        severity: warning
+        category: flow
+      enabled: true
+      origin: imported
+"""
+
+    preview = api_client.post(
+        "/api/signal-pack/import",
+        json={"raw_yaml": raw_yaml, "mode": "additive"},
+    )
+    assert preview.status_code == 200
+    assert preview.json()["unresolved_mappings"] == ["Imported unresolved stale work"]
+
+    apply = api_client.post(
+        "/api/signal-pack/import/apply",
+        json={"raw_yaml": raw_yaml, "mode": "additive"},
+    )
+    assert apply.status_code == 200
+
+    imported = next(
+        definition
+        for definition in api_client.get("/api/signal-definitions").json()
+        if definition["name"] == "Imported unresolved stale work"
+    )
+    assert imported["enabled"] is False
+    assert imported["target_scopes"] == []
