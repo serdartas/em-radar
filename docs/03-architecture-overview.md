@@ -398,8 +398,8 @@ For enterprise or multi-user deployment
 The storage layer stores:
 
 * source connection metadata
-* selected projects/boards/repositories
-* signal configuration
+* reusable scope definitions for projects/boards/repositories/saved filters
+* signal templates and runnable signal definitions
 * field mappings
 * normalized source data cache
 * generated reports
@@ -456,12 +456,11 @@ This allows non-coding EMs to configure the system through the UI.
 
 Configuration includes:
 
-* enabled/disabled signals
-* signal thresholds
-* severity overrides
+* reusable scope definitions
+* signal templates and runnable signal definitions
+* signal expressions, target scopes, and report settings
 * Jira field mappings
 * GitLab key extraction pattern
-* selected projects/boards/repositories
 * team profiles
 * report preferences
 
@@ -480,12 +479,14 @@ On first startup:
 
 ### 9.3 Import and Export
 
-The system supports YAML import/export for signal configuration.
+The system supports YAML import/export for signal configuration in private backup and public
+template modes.
 
 Rules:
 
 * credentials must never be exported
 * imported config must be schema-validated
+* public template imports must be mapped to local connectors and scopes before being enabled
 * invalid config must be rejected with clear errors
 * community configs must be declarative only
 * config import must not execute arbitrary code
@@ -505,7 +506,9 @@ It is the core of EM Radar.
 The signal engine is responsible for:
 
 * loading enabled signals
-* reading signal thresholds
+* enforcing explicit target scopes
+* evaluating structured rule expressions
+* validating field/operator availability against connector capability schemas
 * evaluating signals against canonical models
 * producing findings
 * assigning severity
@@ -676,8 +679,8 @@ The UI is responsible for:
 * guiding first-time setup
 * collecting Jira/GitLab connection settings
 * testing source connections
-* selecting projects/boards/repositories
-* configuring signal thresholds
+* selecting reusable scopes
+* creating, editing, previewing, importing, and exporting scoped signal definitions
 * running reports
 * displaying findings
 * exporting reports

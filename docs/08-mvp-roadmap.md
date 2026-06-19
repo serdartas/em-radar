@@ -27,8 +27,9 @@ Reference: [requirements §10 MVP Acceptance Checklist](./02-requirements.md#10-
 | M1 | Canonical model + demo path end-to-end | One signal evaluated against fake data, rendered in the UI. | Demo connector → 1 signal → 1 finding visible. |
 | M2 | Storage, config, UI shell | Persistence and the real UI skeleton. | Signal config editable in UI, survives restart. |
 | M3 | Jira connector | Real Jira data flowing into canonical model. | Real Jira sprint produces real findings for the 8 Jira signals. |
+| M3.1 | Jira signal engine revision | Revised post-UAT signal model applied before GitLab work. | Jira signals use explicit scopes, capability-aware fields, preview, and backup/template import-export. |
 | M4 | GitLab connector | Real GitLab data flowing into canonical model. | Real GitLab repo produces real findings for the 5 MR signals. |
-| M5 | Signal engine (full MVP set) | All 13 signals operational with parameter overrides and scope. | All MVP signals firing correctly with overrideable thresholds. |
+| M5 | Signal engine (full MVP set) | All 13 signals operational with declarative definitions and explicit scopes. | All MVP signals firing correctly through the constrained rule engine. |
 | M6 | Report runner + Markdown export | Sprint and date-range reports, exportable. | Generated report copies cleanly into a doc. |
 | M7 | Privacy and polish | REQ-NF security/privacy hardening, docs, onboarding. | Fresh-machine setup in under 15 minutes following the README. |
 | v0.1.0 | Release | All [§10 acceptance checklist](./02-requirements.md#10-mvp-acceptance-checklist) items pass. | Public-ready repo + release. |
@@ -129,17 +130,51 @@ Reference: [requirements §10 MVP Acceptance Checklist](./02-requirements.md#10-
 
 ---
 
+### M3.1 — Jira signal engine revision
+
+**Goal.** Align the app with the post-UAT signal model before extending it to GitLab.
+
+**Scope.**
+- Rework signal persistence from built-in id + params into structured signal definitions with
+  expression trees, report settings, origin metadata, and explicit `target_scopes`.
+- Store reusable scope definitions separately from connectors and teams.
+- Add a Jira capability schema for issue fields, supported operators, scope types, value providers,
+  and sprint-only availability constraints.
+- Update the signal settings UI into a constrained builder: create, duplicate, edit, disable, delete
+  user-created signals, assign Jira scopes, and preview results before saving.
+- Represent the 8 Jira built-in signals as templates that can be instantiated and duplicated.
+- Update YAML import/export to support private backup and public template modes.
+
+**Deliverables.** Real Jira UAT workflows can express team-specific rules such as Scrum stale-work
+checks, Kanban aging checks, and support ticket SLA checks without applying every signal globally to
+every Jira project or board.
+
+**Out of scope.** GitLab-specific fields and MR signal templates.
+
+**Acceptance.**
+- A Jira connector can expose projects/boards as reusable scopes and the signal builder can assign a
+  signal to one or more Jira scopes.
+- A built-in Jira template can be duplicated, edited into a custom scoped rule, previewed, saved, and
+  evaluated.
+- A private backup export preserves connector/scope mappings without secrets.
+- A public template export strips connector, project, board, and user-specific data and imports only
+  after the user maps it to local scopes.
+
+---
+
 ### M4 — GitLab connector
 
 **Goal.** Real GitLab data flowing through the canonical pipeline.
 
 **Scope.**
 - GitLab connector implementing `ConnectorBase`, `MergeRequestProvider`, `ReviewProvider`.
+- GitLab capability schema for merge-request fields, scope types, operators, and value providers,
+  following the M3.1 signal-builder contract.
 - Config schema (URL, token).
 - `test_connection`, `list_repositories`, `fetch_mergerequests`, `fetch_reviews`.
 - Workitem-key extraction from MR title, description, source branch.
 - MR-to-WorkItem linking when matching key exists in cached Jira data.
-- Implement the 5 GitLab signals (catalog 10.9–10.13).
+- Implement the 5 GitLab signal templates and runnable signal definitions (catalog 12.9–12.13).
 
 **Deliverables.** A real GitLab project produces findings for all 5 MR signals. Linked WorkItem evidence appears in MR findings.
 
@@ -155,20 +190,22 @@ Reference: [requirements §10 MVP Acceptance Checklist](./02-requirements.md#10-
 
 ### M5 — Signal engine (full MVP set)
 
-**Goal.** Solidify the engine: scope filters, severity resolution, evidence structure, performance.
+**Goal.** Solidify the generic declarative engine: expression evaluation, capability validation,
+evidence structure, skipping, and performance.
 
 **Scope.**
-- Scope filters per [signal spec §7.4](./06-signal-yaml-spec.md#74-scope-optional-object) wired into every signal.
-- Pack-level defaults (`severity_override`, default scope) applied correctly.
-- Severity resolution order per [signal spec §8](./06-signal-yaml-spec.md#8-severity-resolution-order).
-- Evidence payloads conform to the shapes documented in [signal spec §10](./06-signal-yaml-spec.md#10-built-in-signal-catalog-mvp).
+- Expression evaluation per [signal spec §10](./06-signal-yaml-spec.md#10-rule-expressions) across
+  Jira and GitLab entity types.
+- Explicit `target_scopes` enforced for every enabled runnable signal.
+- Connector capability validation for fields, operators, values, and sprint-only availability.
+- Evidence payloads conform to the shapes documented in [signal spec §12](./06-signal-yaml-spec.md#12-built-in-signal-template-catalog-mvp).
 - Performance: meet [REQ-NF-020](./02-requirements.md#req-nf-020-local-mvp-performance) (60s for 500 work items + 300 MRs on a modern laptop).
 
-**Deliverables.** Engine satisfies the full signal catalog with overrideable parameters and scope. Performance budget met.
+**Deliverables.** Engine satisfies the full signal catalog as scoped declarative signal definitions. Performance budget met.
 
 **Acceptance.**
 - All 13 signals enabled, default pack, target data size, report completes in under 60 seconds.
-- Scope filter unit tests pass for every filterable signal.
+- Expression, scope, capability, and evidence conformance tests pass for every signal template.
 
 ---
 
@@ -236,7 +273,7 @@ Carried as the explicit "do not pull into MVP" list. Reorder as priorities sharp
 - **AI-optional features.** Claude connector, DoR check, weak-AC detection (Phase 4).
 - **Destination connectors.** Slack, Teams, email, Confluence (Phase 5).
 - **Enterprise edition.** PostgreSQL, OIDC, RBAC, audit logs, Helm chart (Phase 6).
-- **Custom user-defined declarative signals** (post-MVP, schema reserved per [signal spec §16](./06-signal-yaml-spec.md#16-forward-compatibility-later)).
+- **Deep arbitrary signal expression nesting** beyond one nested group.
 - **Desktop wrapper** (Tauri/Electron) for non-Docker distribution.
 - **CLI** (`em-radar` binary). Architecture-ready in MVP; full implementation later.
 - **JSON and PDF report exports.**
