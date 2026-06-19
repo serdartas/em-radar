@@ -18,7 +18,7 @@ PACK_KIND = "SignalPack"
 EM_RADAR_VERSION = "0.0.0"
 
 _CREDENTIAL_FIELDS = {"token", "password", "api_key", "secret", "authorization"}
-_EXECUTABLE_FIELDS = {"code", "command", "expression", "script", "template"}
+_EXECUTABLE_FIELDS = {"code", "command", "script"}
 _NAME_PATTERN = re.compile(r"^[a-z][a-z0-9-]{1,62}[a-z0-9]$")
 _SEMVER_PATTERN = re.compile(
     r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
@@ -184,16 +184,21 @@ def _validate_pack(pack: SignalPack, em_radar_version: str) -> None:
                 f"Pack requires EM Radar {pack.metadata.min_emradar_version} or newer"
             )
 
+    if pack.spec.export_type not in {"private_backup", "public_template"}:
+        raise PackValidationError("spec.export_type must be private_backup or public_template")
     for index, signal in enumerate(pack.spec.signals):
-        catalog_entry = SIGNAL_CATALOG.get(signal.id)
-        if catalog_entry is None:
+        if signal.enabled and signal.target_scopes == []:
             raise PackValidationError(
-                f"spec.signals.{index}.id references unknown signal {signal.id}"
+                f"spec.signals.{index}.target_scopes is required when enabled"
             )
-        try:
-            catalog_entry.params_schema.model_validate(signal.params or {})
-        except ValidationError as exc:
-            raise PackValidationError(f"Invalid params for signal {signal.id}: {exc}") from exc
+        if signal.id is not None and signal.id in SIGNAL_CATALOG:
+            catalog_entry = SIGNAL_CATALOG[signal.id]
+            try:
+                catalog_entry.params_schema.model_validate(signal.params or {})
+            except ValidationError as exc:
+                raise PackValidationError(f"Invalid params for signal {signal.id}: {exc}") from exc
+        elif signal.expression is None:
+            raise PackValidationError(f"spec.signals.{index}.expression is required")
 
 
 def _parse_semver(version: str, field_name: str) -> tuple[int, int, int, tuple[str, ...] | None]:
@@ -237,6 +242,8 @@ def _collect_warnings(
     if defaults is not None:
         warnings.extend(_scope_warnings(defaults.scope, context, "spec.defaults.scope"))
     for index, signal in enumerate(pack.spec.signals):
+        if signal.id is None or signal.id not in SIGNAL_CATALOG:
+            continue
         catalog_entry = SIGNAL_CATALOG[signal.id]
         effective_severity = signal.severity or (defaults.severity_override if defaults else None)
         if (

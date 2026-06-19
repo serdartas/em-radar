@@ -18,6 +18,11 @@ from em_radar_core.connectors import (
     ConnectorNotFoundError,
     ConnectorRateLimitedError,
     ConnectorTransientError,
+    FieldAvailability,
+    SignalCapabilitySchema,
+    SignalField,
+    SignalScopeType,
+    ValueProvider,
     WorkItemScope,
 )
 from em_radar_core.models import (
@@ -126,6 +131,92 @@ class JiraConnector:
             provides_sprints=True,
             provides_transitions=True,
             supports_incremental_fetch=True,
+        )
+
+    @classmethod
+    def describe_signal_schema(cls) -> SignalCapabilitySchema:
+        del cls
+        status_provider = ValueProvider(
+            type="dynamic",
+            source="jira_statuses",
+            depends_on=("scope",),
+        )
+        labels_provider = ValueProvider(
+            type="dynamic",
+            source="jira_labels",
+            depends_on=("scope",),
+        )
+        sprint_only = FieldAvailability(requires_scope_capability=("sprint",))
+        return SignalCapabilitySchema(
+            connector_type="jira",
+            entity_types=("issue",),
+            scope_types=(
+                SignalScopeType("project", "Project", ("statuses", "labels")),
+                SignalScopeType("board", "Board", ("statuses", "labels", "sprint", "kanban")),
+                SignalScopeType("saved_filter", "Saved Filter", ("statuses", "labels")),
+            ),
+            fields=(
+                SignalField(
+                    "status",
+                    "Status",
+                    "enum",
+                    ("is", "is_not", "is_any_of", "is_none_of"),
+                    value_provider=status_provider,
+                ),
+                SignalField(
+                    "status_category",
+                    "Status Category",
+                    "enum",
+                    ("is", "is_not", "is_any_of", "is_none_of"),
+                    values=("todo", "in_progress", "done", "blocked"),
+                ),
+                SignalField(
+                    "labels",
+                    "Labels",
+                    "string_list",
+                    ("contains", "does_not_contain", "contains_any", "does_not_contain_any"),
+                    value_provider=labels_provider,
+                ),
+                SignalField("issue_type", "Issue Type", "enum", ("is", "is_not", "is_any_of")),
+                SignalField("priority", "Priority", "enum", ("is", "is_not", "is_any_of")),
+                SignalField("assignee", "Assignee", "nullable", ("is_empty", "is_not_empty")),
+                SignalField("created_at", "Created date", "date", ("before", "after", "between")),
+                SignalField("updated_at", "Updated date", "date", ("before", "after", "between")),
+                SignalField("resolved_at", "Resolved date", "date", ("before", "after", "between")),
+                SignalField(
+                    "age_since_created",
+                    "Age since created",
+                    "duration",
+                    ("greater_than", "less_than", "between"),
+                ),
+                SignalField(
+                    "age_since_updated",
+                    "Age since updated",
+                    "duration",
+                    ("greater_than", "less_than", "between"),
+                ),
+                SignalField(
+                    "age_in_current_status",
+                    "Age in current status",
+                    "duration",
+                    ("greater_than", "less_than", "between"),
+                ),
+                SignalField(
+                    "sprint_day",
+                    "Sprint day",
+                    "sprint_relative_day",
+                    ("is", "is_before", "is_after", "between"),
+                    availability=sprint_only,
+                ),
+                SignalField(
+                    "sprint_phase",
+                    "Sprint phase",
+                    "enum",
+                    ("is", "is_not"),
+                    values=("first_day", "middle", "last_day"),
+                    availability=sprint_only,
+                ),
+            ),
         )
 
     async def list_projects(self) -> list[Project]:

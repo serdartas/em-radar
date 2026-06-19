@@ -11,6 +11,7 @@ from em_radar_core.connectors import (
     ConnectorConfigError,
     ConnectorError,
     ConnectorNotFoundError,
+    SignalCapabilitySchema,
 )
 
 from em_radar_api.db import schema_version
@@ -20,15 +21,18 @@ CREDENTIAL_FIELD_NAMES = frozenset({"token", "password", "api_key", "secret", "a
 
 
 def list_connectors() -> list[dict[str, object]]:
-    return [
-        {
+    connectors: list[dict[str, object]] = []
+    for connector_type in _compatible_connector_types():
+        descriptor = {
             "name": connector_type.name,
             "display_name": connector_type.display_name,
             "config_schema": _schema_with_secret_flags(connector_type.config_schema),
             "capabilities": asdict(connector_type.describe_capabilities()),
         }
-        for connector_type in _compatible_connector_types()
-    ]
+        if hasattr(connector_type, "describe_signal_schema"):
+            descriptor["signal_schema"] = asdict(_signal_schema(connector_type))
+        connectors.append(descriptor)
+    return connectors
 
 
 def create_connector(name: str, config: Mapping[str, object]) -> ConnectorBase:
@@ -78,6 +82,17 @@ def _ensure_compatible(connector_type: type[ConnectorBase]) -> None:
             f"Connector {connector_type.name!r} requires canonical model version "
             f"{connector_type.min_model_version}; upgrade EM Radar from version {schema_version}"
         )
+
+
+def _signal_schema(connector_type: type[ConnectorBase]) -> SignalCapabilitySchema:
+    if hasattr(connector_type, "describe_signal_schema"):
+        return connector_type.describe_signal_schema()
+    return SignalCapabilitySchema(
+        connector_type=connector_type.name,
+        entity_types=(),
+        scope_types=(),
+        fields=(),
+    )
 
 
 def _schema_with_secret_flags(schema: Mapping[str, object]) -> dict[str, object]:
