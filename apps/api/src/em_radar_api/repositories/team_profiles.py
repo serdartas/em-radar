@@ -4,6 +4,7 @@ from uuid import UUID
 from pydantic import ValidationError
 from sqlmodel import Session, select
 
+from em_radar_api.scope_definitions import ScopeDefinitionTable
 from em_radar_api.source_connections import SourceConnectionTable
 from em_radar_api.tables import EvaluationWindowTable, TeamProfileTable
 from em_radar_api.team_profiles import TeamProfileCreate, TeamProfileRead, TeamProfileUpdate
@@ -86,6 +87,15 @@ def _validate_team_profile(session: Session, team: TeamProfileCreate) -> None:
     ).all()
     if len(connections) != len(set(team.connection_ids)):
         raise InvalidTeamProfile("connection_ids must reference existing connections")
+
+    scopes = session.exec(
+        select(ScopeDefinitionTable).where(ScopeDefinitionTable.id.in_(team.scope_ids))
+    ).all()
+    if len(scopes) != len(set(team.scope_ids)):
+        raise InvalidTeamProfile("scope_ids must reference existing scopes")
+    connection_ids = {connection.id for connection in connections}
+    if any(scope.connection_id not in connection_ids for scope in scopes):
+        raise InvalidTeamProfile("scope_ids must reference the selected connections")
 
     scoped_ids = (
         ("project_ids", team.project_ids, "selected_project_ids"),

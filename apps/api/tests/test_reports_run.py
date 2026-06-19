@@ -91,9 +91,7 @@ def test_run_demo_report_uses_severity_overrides_and_effective_snapshot(
     assert acceptance_findings
     assert {finding["severity"] for finding in acceptance_findings} == {"critical"}
 
-    snapshot = {
-        signal["id"]: signal for signal in body["signal_pack_snapshot"]["signals"]
-    }
+    snapshot = {signal["id"]: signal for signal in body["signal_pack_snapshot"]["signals"]}
     assert snapshot["story-without-acceptance-criteria"]["severity"] == "critical"
     assert snapshot["stale-in-progress-work-item"]["enabled"] is True
     assert snapshot["stale-in-progress-work-item"]["params"]["days_threshold"] == 11

@@ -43,7 +43,7 @@ The Engineering Manager can:
 
 * run EM Radar locally
 * connect Jira and GitLab
-* configure signal thresholds
+* configure scoped deterministic signals
 * run reports
 * inspect findings
 * export reports
@@ -125,8 +125,8 @@ The system shall store local application data in SQLite by default.
 Stored data includes:
 
 * connector configuration
-* selected projects/boards/repositories
-* signal settings
+* reusable scope definitions for selected projects/boards/repositories/saved filters
+* signal definitions, including target scope assignments
 * report history
 * cached normalized source data
 * local user preferences
@@ -461,21 +461,30 @@ Acceptance criteria:
 
 **MVP**
 
-The system shall provide built-in signals with configurable thresholds.
+The system shall provide built-in signals as editable templates backed by structured rule
+definitions.
 
 Users shall be able to:
 
+* instantiate built-in templates for selected scopes
 * enable signals
 * disable signals
-* modify thresholds
-* modify severity where supported
+* duplicate signals
+* edit signal conditions, thresholds, logical grouping, severity, and report category
+* delete user-created or imported signals
 * reset signal settings to defaults
+
+Every runnable signal shall target one or more explicit scopes. A signal must not automatically
+apply to every project, board, repository, or source available through a connector unless the user
+explicitly chooses an "all scopes" option.
 
 Acceptance criteria:
 
 * signal settings can be changed through the UI
 * changes persist after restart
 * disabled signals are not evaluated
+* built-in templates can be duplicated and edited without changing the system default template
+* validation rejects duplicate signal names in the local workspace
 
 ---
 
@@ -524,13 +533,27 @@ Acceptance criteria:
 
 ### REQ-F-034 — User-defined Declarative Signals
 
-**Later**
+**MVP**
 
-The system should allow users to define custom declarative signals using configuration.
+The system shall allow users to create custom declarative signals through a constrained rule
+builder.
 
-This is not required for MVP.
+Custom signals must be structured data, not executable code. The MVP builder shall support:
 
-When implemented, custom signals must be declarative and must not execute arbitrary code.
+* field/operator/value conditions
+* AND/OR logical groups
+* one level of nested grouping
+* date and duration comparisons
+* sprint-aware conditions only when the selected scope supports sprint data
+
+Acceptance criteria:
+
+* the UI only shows fields and operators exposed by the selected connector capability schema
+* custom signal definitions are persisted and evaluated deterministically
+* custom signal definitions can be exported and imported
+* arbitrary scripting or expression-language execution is rejected
+
+Reference: [12-revised-signal-requirements](./12-revised-signal-requirements.md).
 
 ---
 
@@ -572,14 +595,61 @@ Acceptance criteria:
 
 **MVP**
 
-The system shall allow users to configure signals through the UI.
+The system shall allow users to configure signal templates, scopes, and signal definitions through
+the UI.
 
 Acceptance criteria:
 
 * user can see available signals
 * user can enable or disable signals
-* user can edit thresholds
+* user can create, duplicate, edit, and delete user-created signals
+* user can select a connector and explicit target scopes for each runnable signal
+* user can edit conditions with field/operator/value controls
+* user can preview a signal before saving it
 * user can reset to defaults
+
+---
+
+### REQ-F-041A — Reusable Scope Definitions
+
+**MVP**
+
+The system shall store scopes separately from connectors and signals.
+
+A scope represents a subset of data inside a connector, such as a Jira project, Jira board, Jira
+saved filter, GitLab repository, or GitLab group/project selection. Multiple signals may target the
+same scope.
+
+Acceptance criteria:
+
+* connectors represent access to external systems, not signal applicability
+* users can create or select reusable scopes from connector-provided options
+* signal definitions reference scopes by id
+* reports include the scope name for each finding
+
+---
+
+### REQ-F-041B — Connector Capability Schema
+
+**MVP**
+
+Each connector shall expose a capability schema used by the signal builder and importer.
+
+The schema shall describe:
+
+* supported entity types
+* supported scope types
+* supported fields
+* valid operators per field
+* static or dynamic value providers
+* field availability constraints, such as sprint-only fields
+
+Acceptance criteria:
+
+* the signal builder is generated from connector capabilities instead of hardcoding Jira-specific
+  behavior
+* invalid field/operator/scope combinations are blocked before save
+* imported public templates are validated against the selected connector and scope capabilities
 
 ---
 
@@ -587,13 +657,21 @@ Acceptance criteria:
 
 **MVP**
 
-The system shall allow users to export signal configuration as YAML.
+The system shall allow users to export signal configuration as YAML in two modes:
+
+* private backup or migration export
+* public template export
 
 Acceptance criteria:
 
-* exported YAML contains signal settings
+* private backup export may include connector references, scope references, and organization-specific
+  project/board/repository identifiers
+* public template export removes connector-specific, project-specific, board-specific,
+  repository-specific, and user-specific details
+* public template export replaces target scopes with required connector type and scope capabilities
+* exported YAML contains signal definitions and report settings
 * exported YAML contains no credentials
-* exported YAML can be stored in version control if the user chooses
+* public template exports can be stored in version control if the user chooses
 
 ---
 
@@ -601,11 +679,14 @@ Acceptance criteria:
 
 **MVP**
 
-The system shall allow users to import signal configuration from YAML.
+The system shall allow users to import private backup YAML and public template YAML.
 
 Acceptance criteria:
 
-* imported YAML updates signal settings
+* imported private backups try to map connectors and scopes by type, URL, external id, key, or name
+* imported public templates require the user to choose local connectors and target scopes
+* imports validate field/operator/value compatibility against connector capability schemas
+* unresolved mappings keep affected signals disabled until resolved
 * invalid YAML is rejected with a clear error
 * credentials cannot be imported through signal config
 * user can review or confirm import before applying, if feasible

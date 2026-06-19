@@ -14,6 +14,7 @@ from em_radar_api.db import session_factory
 from em_radar_api.routers.connectors import router as connectors_router
 from em_radar_api.routers.health import router as health_router
 from em_radar_api.routers.reports import router as reports_router
+from em_radar_api.routers.scopes import router as scopes_router
 from em_radar_api.routers.signal_configs import router as signal_configs_router
 from em_radar_api.routers.signal_pack import router as signal_pack_router
 from em_radar_api.routers.source_connections import router as source_connections_router
@@ -53,6 +54,7 @@ def create_app(
     app.include_router(connectors_router, prefix="/api")
     app.include_router(health_router, prefix="/api")
     app.include_router(reports_router, prefix="/api")
+    app.include_router(scopes_router, prefix="/api")
     app.include_router(signal_configs_router, prefix="/api")
     app.include_router(signal_pack_router, prefix="/api")
     app.include_router(source_connections_router, prefix="/api")

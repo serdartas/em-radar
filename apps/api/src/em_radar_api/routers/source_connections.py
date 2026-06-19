@@ -9,6 +9,10 @@ from starlette.responses import Response
 
 from em_radar_api.connector_registry import create_connector
 from em_radar_api.db import get_session, get_write_session
+from em_radar_api.repositories.scope_definitions import (
+    upsert_jira_board_scope,
+    upsert_jira_project_scope,
+)
 from em_radar_api.repositories.source_connections import (
     SourceConnectionInUse,
     create_source_connection,
@@ -155,13 +159,14 @@ async def test_existing_connection(
 @router.get("/connections/{connection_id}/projects", response_model=list[ProjectResponse])
 async def list_connection_projects(
     connection_id: UUID,
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_write_session),
 ) -> list[ProjectResponse]:
     connector = _workitem_connector(session, connection_id)
     try:
-        return [
-            ProjectResponse.from_project(project) for project in await connector.list_projects()
-        ]
+        projects = await connector.list_projects()
+        for project in projects:
+            upsert_jira_project_scope(session, connection_id, project)
+        return [ProjectResponse.from_project(project) for project in projects]
     finally:
         await connector.close()
 
@@ -173,13 +178,14 @@ async def list_connection_projects(
 async def list_connection_boards(
     connection_id: UUID,
     project_id: str,
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_write_session),
 ) -> list[BoardResponse]:
     connector = _workitem_connector(session, connection_id)
     try:
-        return [
-            BoardResponse.from_board(board) for board in await connector.list_boards(project_id)
-        ]
+        boards = await connector.list_boards(project_id)
+        for board in boards:
+            upsert_jira_board_scope(session, connection_id, board)
+        return [BoardResponse.from_board(board) for board in boards]
     finally:
         await connector.close()
 
