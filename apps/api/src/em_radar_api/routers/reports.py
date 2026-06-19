@@ -4,6 +4,7 @@ from typing import Literal, Self
 from uuid import UUID
 
 from em_radar_connector_demo import DemoConnector
+from em_radar_connector_jira.connector import JiraConnector
 from em_radar_core.connectors import (
     ConnectorConfigError,
     ConnectorError,
@@ -13,6 +14,7 @@ from em_radar_core.connectors import (
     WorkItemScope,
 )
 from em_radar_core.evaluation import SignalConfig, SignalEvaluator
+from em_radar_core.evaluation import ScopeDescriptor, evaluate_signal_definition
 from em_radar_core.models import (
     Confidence,
     EntityType,
@@ -21,6 +23,8 @@ from em_radar_core.models import (
     ReportStatus,
     Severity,
     SignalFinding,
+    SignalDefinition,
+    SignalOrigin,
     Source,
     Sprint,
     SprintState,
@@ -48,6 +52,8 @@ from em_radar_api.repositories.reports import (
     save_report,
 )
 from em_radar_api.repositories.signal_configs import list_signal_configs
+from em_radar_api.repositories.signal_definitions import list_signal_definitions
+from em_radar_api.repositories.scope_definitions import list_scope_definitions
 from em_radar_api.repositories.source_connections import (
     get_source_connection,
     instantiate_connector,
@@ -400,12 +406,14 @@ async def _run_jira_report(
     session.add(EvaluationWindowTable(**persisted_window.model_dump()))
     session.commit()
     signal_configs = _signal_configs(session)
+    signal_definitions = _signal_definitions(session)
+    scope_descriptors = _scope_descriptors(session, request.connection_id)
 
     report = create_report(
         session,
         ReportTable(
             evaluation_window_id=window.id,
-            signal_pack_snapshot=_signal_pack_snapshot(signal_configs),
+            signal_pack_snapshot=_signal_pack_snapshot(signal_configs, signal_definitions),
             status=ReportStatus.PENDING,
             started_at=started_at,
         ),
@@ -414,18 +422,29 @@ async def _run_jira_report(
     save_report(session, report)
 
     try:
-        findings = SignalEvaluator().evaluate(
-            SignalData(
-                report_id=report.id,
-                projects=tuple(projects),
-                boards=tuple(boards),
-                sprints=tuple(sprints),
-                workitems=tuple(workitems),
-                transitions=tuple(transitions),
-            ),
-            EvaluationContext(now=started_at, window=window, team=team),
-            signal_configs,
+        data = SignalData(
+            report_id=report.id,
+            projects=tuple(projects),
+            boards=tuple(boards),
+            sprints=tuple(sprints),
+            workitems=tuple(workitems),
+            transitions=tuple(transitions),
         )
+        ctx = EvaluationContext(now=started_at, window=window, team=team)
+        findings = [
+            *SignalEvaluator().evaluate(data, ctx, signal_configs),
+            *[
+                finding
+                for definition in signal_definitions
+                for finding in evaluate_signal_definition(
+                    definition,
+                    data,
+                    ctx,
+                    JiraConnector.describe_signal_schema(),
+                    scope_descriptors,
+                )
+            ],
+        ]
         persisted_findings = [
             _persisted_finding(finding, identity.identity_map) for finding in findings
         ]
@@ -528,7 +547,10 @@ def _persisted_finding(
     return SignalFindingTable(**data)
 
 
-def _signal_pack_snapshot(configs: Sequence[SignalConfig]) -> dict[str, object]:
+def _signal_pack_snapshot(
+    configs: Sequence[SignalConfig],
+    definitions: Sequence[SignalDefinition] | None = None,
+) -> dict[str, object]:
     configs_by_id = {config.signal_id: config for config in configs}
     return {
         "schema_id": "emradar.dev/v1",
@@ -543,6 +565,21 @@ def _signal_pack_snapshot(configs: Sequence[SignalConfig]) -> dict[str, object]:
             }
             for signal in (default_registry.get(signal_id) for signal_id in default_registry.ids())
             for config in [configs_by_id[signal.id]]
+        ],
+        "signal_definitions": [
+            {
+                "id": str(definition.id),
+                "name": definition.name,
+                "entity_type": definition.entity_type,
+                "target_scopes": [
+                    target.model_dump(mode="json") for target in definition.target_scopes
+                ],
+                "enabled": definition.enabled,
+                "origin": definition.origin.value,
+                "template_key": definition.template_key,
+                "version": definition.version,
+            }
+            for definition in (definitions or [])
         ],
     }
 
@@ -564,6 +601,43 @@ def _signal_configs(session: Session) -> list[SignalConfig]:
                 )
             )
     return configs
+
+
+def _signal_definitions(session: Session) -> list[SignalDefinition]:
+    definitions: list[SignalDefinition] = []
+    for row in list_signal_definitions(session):
+        definitions.append(
+            SignalDefinition(
+                id=row.id,
+                name=row.name,
+                description=row.description,
+                entity_type=row.entity_type,
+                target_scopes=row.target_scopes,
+                expression=row.expression,
+                report_settings=row.report_settings,
+                enabled=row.enabled,
+                origin=SignalOrigin(row.origin),
+                template_key=row.template_key,
+                version=row.version,
+                created_at=row.created_at,
+                updated_at=row.updated_at,
+            )
+        )
+    return definitions
+
+
+def _scope_descriptors(session: Session, connection_id: UUID) -> list[ScopeDescriptor]:
+    return [
+        ScopeDescriptor(
+            connector_id=str(scope.connection_id),
+            scope_id=str(scope.id),
+            scope_type=scope.scope_type.value,
+            name=scope.name,
+            external_ref=dict(scope.external_ref),
+            capabilities=tuple(scope.capabilities),
+        )
+        for scope in list_scope_definitions(session, connection_id)
+    ]
 
 
 def _placeholder_jira_users(

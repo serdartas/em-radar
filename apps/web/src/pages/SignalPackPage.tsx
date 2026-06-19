@@ -12,6 +12,7 @@ import {
   applySignalPackImport,
   exportSignalPack,
   type ExportMode,
+  type ExportType,
   type ImportMode,
   type ImportRequest,
   previewSignalPackImport,
@@ -44,7 +45,8 @@ export function SignalPackPage() {
 
 function ExportCard() {
   const [mode, setMode] = useState<ExportMode>("minimal")
-  const exportMutation = useMutation({ mutationFn: () => exportSignalPack(mode) })
+  const [exportType, setExportType] = useState<ExportType>("private_backup")
+  const exportMutation = useMutation({ mutationFn: () => exportSignalPack(mode, exportType) })
   const [copied, setCopied] = useState(false)
 
   async function copy() {
@@ -70,16 +72,30 @@ function ExportCard() {
         <h2 className="text-lg font-semibold">Export</h2>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="max-w-xs space-y-1.5">
-          <Label htmlFor="export-mode">Pack contents</Label>
-          <Select
-            id="export-mode"
-            onChange={(event) => setMode(event.target.value as ExportMode)}
-            value={mode}
-          >
-            <option value="minimal">Minimal (only changes from defaults)</option>
-            <option value="full">Full (every signal)</option>
-          </Select>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <Label htmlFor="export-type">Export mode</Label>
+            <Select
+              id="export-type"
+              onChange={(event) => setExportType(event.target.value as ExportType)}
+              value={exportType}
+            >
+              <option value="private_backup">Private backup / migration</option>
+              <option value="public_template">Public template</option>
+              <option value="legacy">Legacy threshold pack</option>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="export-mode">Pack contents</Label>
+            <Select
+              id="export-mode"
+              onChange={(event) => setMode(event.target.value as ExportMode)}
+              value={mode}
+            >
+              <option value="minimal">Minimal (only changes from defaults)</option>
+              <option value="full">Full (every signal)</option>
+            </Select>
+          </div>
         </div>
         <div className="flex flex-wrap gap-3">
           <Button disabled={exportMutation.isPending} onClick={() => void download()}>
@@ -251,6 +267,19 @@ function ImportPreview({ preview }: { preview: SignalPackImportPreview }) {
               key={`${warning.code}-${warning.path}`}
             >
               {warning.message}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {preview.unresolved_mappings.length > 0 && (
+        <ul aria-label="Unresolved mappings" className="space-y-2">
+          {preview.unresolved_mappings.map((mapping) => (
+            <li
+              className="rounded-md border border-amber-200 bg-amber-50 p-2 text-sm text-amber-900"
+              key={mapping}
+            >
+              {mapping} requires local connector and target scope mapping before it can be enabled.
             </li>
           ))}
         </ul>

@@ -18,6 +18,7 @@ EXPECTED_TABLES = {
     "repository",
     "review",
     "signal_config",
+    "signal_definition",
     "signal_finding",
     "signal_pack_history",
     "scope_definition",

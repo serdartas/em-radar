@@ -2,6 +2,7 @@ import { API_BASE_URL, ApiError, apiFetch } from "@/lib/api"
 import type { Severity } from "@/lib/severity"
 
 export type ExportMode = "full" | "minimal"
+export type ExportType = "legacy" | "private_backup" | "public_template"
 export type ImportMode = "additive" | "replace_all"
 
 export interface ImportWarning {
@@ -36,6 +37,8 @@ export interface SignalPackImportPreview {
   pack_name: string
   warnings: ImportWarning[]
   changes: SignalImportDiff[]
+  unresolved_mappings: string[]
+  imported_signal_names: string[]
 }
 
 export interface ImportRequest {
@@ -43,8 +46,9 @@ export interface ImportRequest {
   mode: ImportMode
 }
 
-export async function exportSignalPack(mode: ExportMode): Promise<string> {
-  const response = await fetch(`${API_BASE_URL}/signal-pack/export?mode=${mode}`)
+export async function exportSignalPack(mode: ExportMode, exportType: ExportType): Promise<string> {
+  const params = new URLSearchParams({ mode, export_type: exportType })
+  const response = await fetch(`${API_BASE_URL}/signal-pack/export?${params.toString()}`)
   if (!response.ok) {
     throw new ApiError(response.status, `Export failed with status ${response.status}.`)
   }

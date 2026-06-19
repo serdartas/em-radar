@@ -7,7 +7,10 @@ from starlette.responses import Response
 
 from em_radar_api.db import get_session, get_write_session
 from em_radar_api.repositories.signal_configs import list_signal_configs
-from em_radar_api.signal_pack_export import export_signal_pack
+from em_radar_api.repositories.signal_definitions import list_signal_definitions
+from em_radar_api.repositories.scope_definitions import list_scope_definitions
+from em_radar_api.repositories.source_connections import list_source_connections
+from em_radar_api.signal_pack_export import export_signal_definition_pack, export_signal_pack
 from em_radar_api.signal_pack_import import (
     SignalPackImportPreview,
     apply_signal_pack_import,
@@ -31,13 +34,24 @@ class SignalPackImportRequest(BaseModel):
 @router.get("/signal-pack/export")
 def export_signal_pack_route(
     mode: Literal["minimal", "full"] = "minimal",
+    export_type: Literal["legacy", "private_backup", "public_template"] = "legacy",
     name: PackName = None,
     session: Session = Depends(get_session),
 ) -> Response:
-    yaml_text = export_signal_pack(
-        list_signal_configs(session),
-        full=mode == "full",
-        name=name,
+    yaml_text = (
+        export_signal_pack(
+            list_signal_configs(session),
+            full=mode == "full",
+            name=name,
+        )
+        if export_type == "legacy"
+        else export_signal_definition_pack(
+            list_signal_definitions(session),
+            list_scope_definitions(session),
+            list_source_connections(session),
+            export_type=export_type,
+            name=name,
+        )
     )
     return Response(
         content=yaml_text,
@@ -46,7 +60,11 @@ def export_signal_pack_route(
     )
 
 
-@router.post("/signal-pack/import", response_model=SignalPackImportPreview)
+@router.post(
+    "/signal-pack/import",
+    response_model=SignalPackImportPreview,
+    response_model_exclude_defaults=True,
+)
 def preview_signal_pack_import_route(
     request: SignalPackImportRequest,
     session: Session = Depends(get_session),
@@ -61,7 +79,11 @@ def preview_signal_pack_import_route(
         raise _invalid_pack(error) from error
 
 
-@router.post("/signal-pack/import/apply", response_model=SignalPackImportPreview)
+@router.post(
+    "/signal-pack/import/apply",
+    response_model=SignalPackImportPreview,
+    response_model_exclude_defaults=True,
+)
 def apply_signal_pack_import_route(
     request: SignalPackImportRequest,
     session: Session = Depends(get_write_session),
