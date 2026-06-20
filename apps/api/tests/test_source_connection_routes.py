@@ -22,6 +22,8 @@ from em_radar_core.models import (
     WorkItem,
     WorkItemType,
 )
+from em_radar_api.repositories.signal_configs import upsert_signal_config
+from em_radar_api.signal_configs import SignalConfigUpsert
 from em_radar_api.tables import EvaluationWindowTable, UserTable
 
 _REPORT_STARTED_AT = datetime(2026, 6, 17, 12, tzinfo=UTC)
@@ -318,6 +320,7 @@ def test_jira_active_sprint_report_run_persists_user_references(
 
 def test_jira_report_run_evaluates_saved_signal_definitions(
     api_client: TestClient,
+    session_factory: sessionmaker[Session],
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(
@@ -375,6 +378,15 @@ def test_jira_report_run_evaluates_saved_signal_definitions(
             "origin": "user_created",
         },
     ).json()
+    with session_factory() as session:
+        upsert_signal_config(
+            session,
+            SignalConfigUpsert(
+                signal_id="stale-in-progress-work-item",
+                enabled=True,
+                params={"days_threshold": 3},
+            ),
+        )
 
     response = api_client.post(
         "/api/reports/run",
@@ -393,9 +405,119 @@ def test_jira_report_run_evaluates_saved_signal_definitions(
     assert response.status_code == 200
     findings = response.json()["findings"]
     assert any(finding["signal_id"] == definition["id"] for finding in findings)
+    assert all(finding["signal_id"] != "stale-in-progress-work-item" for finding in findings)
     assert (
         response.json()["signal_pack_snapshot"]["signal_definitions"][0]["id"] == definition["id"]
     )
+
+
+def test_signal_definition_preview_uses_persisted_jira_samples_and_warnings(
+    api_client: TestClient,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "em_radar_api.connector_registry._connector_types",
+        lambda: [JiraTestConnector],
+    )
+    monkeypatch.setattr("em_radar_api.routers.reports.datetime", FrozenReportDateTime)
+    created = api_client.post(
+        "/api/connections",
+        json={
+            "connector_name": "jira",
+            "config": {"base_url": "https://demo.invalid", "token": "demo-token-123456789"},
+        },
+    ).json()
+    board_scope = api_client.post(
+        "/api/scopes",
+        json={
+            "connection_id": created["id"],
+            "name": "Platform Scrum",
+            "scope_type": "board",
+            "external_ref": {"type": "jira_board", "id": "20000", "key": None},
+            "capabilities": ["sprint", "statuses", "labels"],
+        },
+    ).json()
+    project_scope = api_client.post(
+        "/api/scopes",
+        json={
+            "connection_id": created["id"],
+            "name": "Platform",
+            "scope_type": "project",
+            "external_ref": {"type": "jira_project", "id": "10000", "key": "PLAT"},
+            "capabilities": ["statuses", "labels"],
+        },
+    ).json()
+    api_client.post(
+        "/api/reports/run",
+        json={
+            "connector": "jira",
+            "jira": {
+                "connection_id": created["id"],
+                "project_external_id": "10000",
+                "board_external_id": "20000",
+                "working_mode": "scrum",
+                "sprint_length_days": 14,
+            },
+        },
+    )
+
+    response = api_client.post(
+        "/api/signal-definitions/preview",
+        json={
+            "name": "Preview stale Jira work",
+            "entity_type": "issue",
+            "target_scopes": [
+                {
+                    "connector_id": created["id"],
+                    "scope_id": board_scope["id"],
+                    "scope_type": "board",
+                }
+            ],
+            "expression": {
+                "type": "group",
+                "operator": "all",
+                "conditions": [
+                    {
+                        "field": "age_in_current_status",
+                        "operator": "greater_than",
+                        "value": {"amount": 3, "unit": "days"},
+                    }
+                ],
+            },
+            "report_settings": {"severity": "warning", "category": "flow"},
+            "enabled": True,
+            "origin": "user_created",
+        },
+    )
+    warning_response = api_client.post(
+        "/api/signal-definitions/preview",
+        json={
+            "name": "Unsupported sprint field",
+            "entity_type": "issue",
+            "target_scopes": [
+                {
+                    "connector_id": created["id"],
+                    "scope_id": project_scope["id"],
+                    "scope_type": "project",
+                }
+            ],
+            "expression": {
+                "type": "group",
+                "operator": "all",
+                "conditions": [{"field": "sprint_day", "operator": "is_after", "value": 1}],
+            },
+            "report_settings": {"severity": "warning", "category": "flow"},
+            "enabled": True,
+            "origin": "user_created",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["match_count"] == 1
+    assert response.json()["samples"][0]["item_key"] == "PLAT-1"
+    assert "age_in_current_status" in response.json()["samples"][0]["reason"]
+    assert warning_response.status_code == 200
+    assert "requires scope capability" in warning_response.json()["warnings"][0]
 
 
 def test_jira_kanban_report_uses_date_range_without_active_sprint(

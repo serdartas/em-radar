@@ -46,6 +46,19 @@ export interface SignalDefinitionCreate {
   template_key?: string | null
 }
 
+export interface SignalDefinitionPreviewSample {
+  item_key: string
+  title: string
+  reason: string
+  evidence: Record<string, unknown>
+}
+
+export interface SignalDefinitionPreview {
+  match_count: number
+  samples: SignalDefinitionPreviewSample[]
+  warnings: string[]
+}
+
 export async function listSignalTemplates(): Promise<SignalTemplate[]> {
   return apiFetch<SignalTemplate[]>("/signal-templates")
 }
@@ -62,6 +75,15 @@ export async function createSignalDefinition(
   definition: SignalDefinitionCreate,
 ): Promise<SignalDefinition> {
   return apiFetch<SignalDefinition>("/signal-definitions", {
+    method: "POST",
+    body: JSON.stringify(definition),
+  })
+}
+
+export async function previewSignalDefinition(
+  definition: SignalDefinitionCreate,
+): Promise<SignalDefinitionPreview> {
+  return apiFetch<SignalDefinitionPreview>("/signal-definitions/preview", {
     method: "POST",
     body: JSON.stringify(definition),
   })

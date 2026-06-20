@@ -246,8 +246,8 @@ describe("SourceConnectionsPage", () => {
     renderPage()
 
     expect(await screen.findByText("Platform Scrum")).toBeInTheDocument()
-    expect(screen.getByText("Scrum · 14 days")).toBeInTheDocument()
-    expect(screen.getByText("Active sprint: Platform Sprint 12")).toBeInTheDocument()
+    expect(await screen.findByText("Scrum · 14 days")).toBeInTheDocument()
+    expect(await screen.findByText("Active sprint: Platform Sprint 12")).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Run report" })).toBeEnabled()
   })
 })

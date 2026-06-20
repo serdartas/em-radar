@@ -58,7 +58,7 @@ The heart of the product. A signal is a **configurable rule** that inspects the 
 - Signals are authored in **YAML** (declarative, reviewable, shareable).
 - They are **imported into a local database** on install/update.
 - **Export** writes them back out in the **same YAML format**. Round-trippable, no lock-in.
-- A set of **built-in, non-negotiable default signals** ships with the tool. Sensible defaults nobody should have to argue about (e.g. "MR open > N days with no review activity").
+- A set of **built-in, non-negotiable default signals** ships with the tool. Sensible defaults nobody should have to argue about (e.g. "MR open > N days with no review activity")..
 
 ### 4. Signal Marketplace
 A public website acting as a catalog of community-contributed signal configurations.
