@@ -208,6 +208,59 @@ def test_sprint_scope_churn_template_uses_sprint_level_evidence() -> None:
     assert findings[0].evidence["churn_pct"] == 100.0
 
 
+def test_template_evidence_thresholds_use_edited_expression_values() -> None:
+    item = _workitem("RAD-1", updated_at=NOW - timedelta(days=10))
+    definition = instantiate_jira_signal_template(
+        "stale-in-progress-work-item",
+        [SignalTargetScope(connector_id="jira-1", scope_id="scope-1", scope_type="project")],
+    )
+    definition.expression["conditions"][1]["value"] = {"amount": 5, "unit": "days"}
+
+    findings = evaluate_signal_definition(
+        definition,
+        SignalData(
+            report_id=uuid4(),
+            projects=(_project(),),
+            boards=(_board(),),
+            workitems=(item,),
+            transitions=(_transition(item.id, NOW - timedelta(days=8)),),
+        ),
+        _context(None),
+        JiraConnector.describe_signal_schema(),
+        [_scope("project")],
+    )
+
+    assert len(findings) == 1
+    assert findings[0].evidence["threshold"] == 5
+
+
+def test_sprint_scope_churn_template_ignores_non_board_scopes() -> None:
+    sprint = Sprint(
+        source=Source.JIRA,
+        external_id="sprint-1",
+        board_id=BOARD_ID,
+        name="Sprint 1",
+        state=SprintState.ACTIVE,
+        start_date=NOW - timedelta(days=7),
+    )
+    original = _workitem("RAD-1", sprint_ids=[sprint.id], current_sprint_id=sprint.id)
+    added = _workitem("RAD-2", sprint_ids=[sprint.id], current_sprint_id=sprint.id)
+
+    findings = _findings(
+        "sprint-scope-churn",
+        (original, added),
+        sprints=(sprint,),
+        transitions=(
+            _transition(original.id, NOW - timedelta(days=8)),
+            _transition(added.id, NOW - timedelta(days=2)),
+        ),
+        scope_type="project",
+        capabilities=("sprint",),
+    )
+
+    assert findings == []
+
+
 def _matched_keys(
     template_key: str,
     workitems: tuple[WorkItem, ...] | list[WorkItem],
@@ -246,16 +299,21 @@ def _findings(
         ),
         _context(sprints[0].id if sprints else None),
         JiraConnector.describe_signal_schema(),
-        [
-            ScopeDescriptor(
-                connector_id="jira-1",
-                scope_id="scope-1",
-                scope_type=scope_type,
-                name="Radar",
-                external_ref={"id": "BOARD" if scope_type == "board" else "PROJECT", "key": "RAD"},
-                capabilities=("statuses", "labels", *capabilities),
-            )
-        ],
+        [_scope(scope_type, capabilities)],
+    )
+
+
+def _scope(
+    scope_type: str,
+    capabilities: tuple[str, ...] = (),
+) -> ScopeDescriptor:
+    return ScopeDescriptor(
+        connector_id="jira-1",
+        scope_id="scope-1",
+        scope_type=scope_type,
+        name="Radar",
+        external_ref={"id": "BOARD" if scope_type == "board" else "PROJECT", "key": "RAD"},
+        capabilities=("statuses", "labels", *capabilities),
     )
 
 

@@ -70,7 +70,13 @@ def evaluate_signal_definition(
             result = _evaluate_group(definition.expression, workitem, data, ctx, scope)
             if not result.matched:
                 continue
-            evidence = _template_evidence(definition.template_key, workitem, data, ctx)
+            evidence = _template_evidence(
+                definition.template_key,
+                definition.expression,
+                workitem,
+                data,
+                ctx,
+            )
             if evidence is None:
                 evidence = result.evidence
             findings.append(
@@ -436,6 +442,7 @@ def _json_value(value: object) -> object:
 
 def _template_evidence(
     template_key: str | None,
+    expression: JsonObject,
     workitem: WorkItem,
     data: SignalData,
     ctx: EvaluationContext,
@@ -445,13 +452,13 @@ def _template_evidence(
         return {
             "days_idle": _age_days(ctx.now, started_at),
             "last_updated_at": started_at.isoformat(),
-            "threshold": 7,
+            "threshold": _threshold_from_expression(expression, "age_in_current_status", 7),
         }
     if template_key == "blocked-without-update":
         return {
             "days_blocked_idle": _age_days(ctx.now, workitem.updated_at),
             "last_updated_at": workitem.updated_at.isoformat(),
-            "threshold": 3,
+            "threshold": _threshold_from_expression(expression, "age_since_updated", 3),
         }
     if template_key == "story-without-acceptance-criteria":
         return {
@@ -463,12 +470,12 @@ def _template_evidence(
     if template_key == "epic-too-broad":
         return {
             "child_count": sum(1 for item in data.workitems if item.parent_id == workitem.id),
-            "threshold": 15,
+            "threshold": _threshold_from_expression(expression, "child_count", 15),
         }
     if template_key == "epic-without-measurable-description":
         return {
             "description_length": len(workitem.description or ""),
-            "threshold": 100,
+            "threshold": _threshold_from_expression(expression, "description_length", 100),
         }
     if template_key == "repeated-carry-over":
         sprint_names = {sprint.id: sprint.name for sprint in data.sprints}
@@ -482,6 +489,31 @@ def _template_evidence(
     return None
 
 
+def _threshold_from_expression(expression: JsonObject, field_key: str, default: int) -> int:
+    for condition in _leaf_conditions(expression):
+        if condition.get("field") != field_key:
+            continue
+        try:
+            return int(_duration_days(condition.get("value")))
+        except ExpressionValidationError:
+            return default
+    return default
+
+
+def _leaf_conditions(expression: JsonObject) -> list[JsonObject]:
+    if expression.get("type") != "group":
+        return [expression]
+    conditions = expression.get("conditions")
+    if not isinstance(conditions, list):
+        return []
+    return [
+        leaf
+        for condition in conditions
+        if isinstance(condition, dict)
+        for leaf in _leaf_conditions(condition)
+    ]
+
+
 def _evaluate_sprint_scope_churn_template(
     definition: SignalDefinition,
     data: SignalData,
@@ -490,20 +522,20 @@ def _evaluate_sprint_scope_churn_template(
 ) -> list[SignalFinding]:
     findings: list[SignalFinding] = []
     for scope in scopes:
-        scoped_data = data
-        if scope.scope_type == "board":
-            external_id = scope.external_ref.get("id")
-            board_ids = {
-                board.id for board in data.boards if board.external_id == external_id
-            }
-            scoped_data = SignalData(
-                report_id=data.report_id,
-                projects=data.projects,
-                boards=tuple(board for board in data.boards if board.id in board_ids),
-                sprints=tuple(sprint for sprint in data.sprints if sprint.board_id in board_ids),
-                workitems=data.workitems,
-                transitions=data.transitions,
-            )
+        if scope.scope_type != "board":
+            continue
+        external_id = scope.external_ref.get("id")
+        board_ids = {board.id for board in data.boards if board.external_id == external_id}
+        if not board_ids:
+            continue
+        scoped_data = SignalData(
+            report_id=data.report_id,
+            projects=data.projects,
+            boards=tuple(board for board in data.boards if board.id in board_ids),
+            sprints=tuple(sprint for sprint in data.sprints if sprint.board_id in board_ids),
+            workitems=data.workitems,
+            transitions=data.transitions,
+        )
         for finding in SprintScopeChurnSignal().evaluate(scoped_data, ctx):
             findings.append(
                 finding.model_copy(
