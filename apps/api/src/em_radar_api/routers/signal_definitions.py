@@ -1,10 +1,12 @@
-from uuid import UUID
+from datetime import UTC, datetime
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from em_radar_api.db import get_session, get_write_session
+from em_radar_api.routers.reports import _scope_descriptors
 from em_radar_api.repositories.signal_definitions import (
     DuplicateSignalName,
     InvalidSignalDefinition,
@@ -19,7 +21,20 @@ from em_radar_api.signal_definitions import (
     SignalDefinitionRead,
     SignalDefinitionUpdate,
 )
+from em_radar_api.tables import BoardTable, ProjectTable, SprintTable, TransitionTable, WorkItemTable
 from em_radar_config import restore_jira_signal_template, seed_jira_signal_templates
+from em_radar_connector_jira.connector import JiraConnector
+from em_radar_core.evaluation import preview_signal_definition
+from em_radar_core.models import (
+    EvaluationContext,
+    EvaluationWindow,
+    ReportSettings,
+    SignalDefinition,
+    SignalOrigin,
+    TeamProfile,
+    WindowType,
+)
+from em_radar_core.signals import SignalData
 
 router = APIRouter()
 
@@ -33,6 +48,12 @@ class SignalTemplateRead(BaseModel):
     required_scope_capabilities: list[str]
     expression: dict[str, object]
     report_settings: dict[str, object]
+
+
+class SignalDefinitionPreview(BaseModel):
+    match_count: int
+    samples: list[dict[str, object]]
+    warnings: list[str]
 
 
 @router.get("/signal-templates", response_model=list[SignalTemplateRead])
@@ -78,6 +99,62 @@ def list_signal_definitions_route(
     session: Session = Depends(get_session),
 ) -> list[SignalDefinitionRead]:
     return list_signal_definitions(session)
+
+
+@router.post("/signal-definitions/preview", response_model=SignalDefinitionPreview)
+def preview_signal_definition_route(
+    definition: SignalDefinitionCreate,
+    session: Session = Depends(get_session),
+) -> SignalDefinitionPreview:
+    model = SignalDefinition(
+        id=uuid4(),
+        name=definition.name,
+        description=definition.description,
+        entity_type=definition.entity_type,
+        target_scopes=definition.target_scopes,
+        expression=definition.expression,
+        report_settings=ReportSettings.model_validate(definition.report_settings),
+        enabled=definition.enabled,
+        origin=SignalOrigin(definition.origin),
+        template_key=definition.template_key,
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+    )
+    connection_ids = {
+        UUID(target["connector_id"])
+        for target in definition.target_scopes
+        if "connector_id" in target
+    }
+    scopes = [
+        scope
+        for connection_id in connection_ids
+        for scope in _scope_descriptors(session, connection_id)
+    ]
+    now = datetime.now(UTC)
+    preview = preview_signal_definition(
+        model,
+        SignalData(
+            report_id=uuid4(),
+            projects=tuple(session.exec(select(ProjectTable)).all()),
+            boards=tuple(session.exec(select(BoardTable)).all()),
+            sprints=tuple(session.exec(select(SprintTable)).all()),
+            workitems=tuple(session.exec(select(WorkItemTable)).all()),
+            transitions=tuple(session.exec(select(TransitionTable)).all()),
+        ),
+        EvaluationContext(
+            now=now,
+            window=EvaluationWindow(
+                window_type=WindowType.DATE_RANGE,
+                start=now,
+                end=now,
+                team_profile_id=uuid4(),
+            ),
+            team=TeamProfile(name="Preview", created_at=now, updated_at=now),
+        ),
+        JiraConnector.describe_signal_schema(),
+        scopes,
+    )
+    return SignalDefinitionPreview.model_validate(preview)
 
 
 @router.post(

@@ -16,6 +16,7 @@ from em_radar_core.models import (
     WorkItem,
 )
 from em_radar_core.signals import SignalData
+from em_radar_core.signals.sprints import SprintScopeChurnSignal
 
 JsonObject: TypeAlias = dict[str, object]
 
@@ -60,6 +61,8 @@ def evaluate_signal_definition(
         return []
 
     validate_expression(definition.expression, schema, selected_scopes)
+    if definition.template_key == "sprint-scope-churn":
+        return _evaluate_sprint_scope_churn_template(definition, data, ctx, selected_scopes)
 
     findings: list[SignalFinding] = []
     for scope in selected_scopes:
@@ -67,6 +70,9 @@ def evaluate_signal_definition(
             result = _evaluate_group(definition.expression, workitem, data, ctx, scope)
             if not result.matched:
                 continue
+            evidence = _template_evidence(definition.template_key, workitem, data, ctx)
+            if evidence is None:
+                evidence = result.evidence
             findings.append(
                 SignalFinding(
                     report_id=data.report_id,
@@ -78,7 +84,7 @@ def evaluate_signal_definition(
                     entity_id=workitem.id,
                     title=f"{workitem.key} - {workitem.title}",
                     reason=result.reason,
-                    evidence={"scope_id": scope.scope_id, **result.evidence},
+                    evidence={"scope_id": scope.scope_id, **evidence},
                     source_link=workitem.source_url,
                     created_at=ctx.now,
                 )
@@ -226,6 +232,14 @@ def _field_value(
         return workitem.type.value
     if field_key == "assignee":
         return str(workitem.assignee_id) if workitem.assignee_id is not None else None
+    if field_key == "acceptance_criteria":
+        return workitem.acceptance_criteria
+    if field_key == "parent_id":
+        return str(workitem.parent_id) if workitem.parent_id is not None else None
+    if field_key == "description_length":
+        return len(workitem.description or "")
+    if field_key == "child_count":
+        return sum(1 for item in data.workitems if item.parent_id == workitem.id)
     if field_key == "created_at":
         return workitem.created_at
     if field_key == "updated_at":
@@ -245,6 +259,8 @@ def _field_value(
         return max((ctx.now.date() - sprint.start_date.date()).days + 1, 1)
     if field_key == "sprint_phase":
         return _sprint_phase(workitem, data, ctx)
+    if field_key == "sprint_count":
+        return len(tuple(dict.fromkeys(workitem.sprint_ids)))
     if field_key == "priority":
         return None
     raise ExpressionValidationError(f"unsupported field: {field_key}")
@@ -359,6 +375,10 @@ def _sprint_phase(workitem: WorkItem, data: SignalData, ctx: EvaluationContext) 
 def _age_days(now: datetime, then: datetime | None) -> int | None:
     if then is None:
         return None
+    if now.tzinfo is not None and then.tzinfo is None:
+        then = then.replace(tzinfo=now.tzinfo)
+    elif now.tzinfo is None and then.tzinfo is not None:
+        now = now.replace(tzinfo=then.tzinfo)
     return max((now - then).days, 0)
 
 
@@ -412,3 +432,86 @@ def _json_value(value: object) -> object:
     if isinstance(value, datetime):
         return value.isoformat()
     return value
+
+
+def _template_evidence(
+    template_key: str | None,
+    workitem: WorkItem,
+    data: SignalData,
+    ctx: EvaluationContext,
+) -> JsonObject | None:
+    if template_key == "stale-in-progress-work-item":
+        started_at = _current_status_started_at(workitem, data.transitions)
+        return {
+            "days_idle": _age_days(ctx.now, started_at),
+            "last_updated_at": started_at.isoformat(),
+            "threshold": 7,
+        }
+    if template_key == "blocked-without-update":
+        return {
+            "days_blocked_idle": _age_days(ctx.now, workitem.updated_at),
+            "last_updated_at": workitem.updated_at.isoformat(),
+            "threshold": 3,
+        }
+    if template_key == "story-without-acceptance-criteria":
+        return {
+            "workitem_type": workitem.type.value,
+            "has_description": bool(workitem.description),
+        }
+    if template_key == "story-without-parent-epic":
+        return {"workitem_type": workitem.type.value}
+    if template_key == "epic-too-broad":
+        return {
+            "child_count": sum(1 for item in data.workitems if item.parent_id == workitem.id),
+            "threshold": 15,
+        }
+    if template_key == "epic-without-measurable-description":
+        return {
+            "description_length": len(workitem.description or ""),
+            "threshold": 100,
+        }
+    if template_key == "repeated-carry-over":
+        sprint_names = {sprint.id: sprint.name for sprint in data.sprints}
+        sprint_ids = tuple(dict.fromkeys(workitem.sprint_ids))
+        return {
+            "sprint_count": len(sprint_ids),
+            "sprint_names": [
+                sprint_names[sprint_id] for sprint_id in sprint_ids if sprint_id in sprint_names
+            ],
+        }
+    return None
+
+
+def _evaluate_sprint_scope_churn_template(
+    definition: SignalDefinition,
+    data: SignalData,
+    ctx: EvaluationContext,
+    scopes: list[ScopeDescriptor],
+) -> list[SignalFinding]:
+    findings: list[SignalFinding] = []
+    for scope in scopes:
+        scoped_data = data
+        if scope.scope_type == "board":
+            external_id = scope.external_ref.get("id")
+            board_ids = {
+                board.id for board in data.boards if board.external_id == external_id
+            }
+            scoped_data = SignalData(
+                report_id=data.report_id,
+                projects=data.projects,
+                boards=tuple(board for board in data.boards if board.id in board_ids),
+                sprints=tuple(sprint for sprint in data.sprints if sprint.board_id in board_ids),
+                workitems=data.workitems,
+                transitions=data.transitions,
+            )
+        for finding in SprintScopeChurnSignal().evaluate(scoped_data, ctx):
+            findings.append(
+                finding.model_copy(
+                    update={
+                        "signal_id": str(definition.id),
+                        "signal_name": definition.name,
+                        "evidence": {"scope_id": scope.scope_id, **finding.evidence},
+                    }
+                )
+            )
+    return findings

@@ -128,6 +128,32 @@ function mockApi() {
     if (url.endsWith("/api/scopes")) {
       return Promise.resolve(jsonResponse(scopes))
     }
+    if (url.endsWith("/api/signal-definitions/preview") && method === "POST") {
+      const body = JSON.parse(String(init?.body))
+      if (body.expression.conditions[0].field === "sprint_day") {
+        return Promise.resolve(
+          jsonResponse({
+            match_count: 0,
+            samples: [],
+            warnings: ["sprint_day requires scope capability: sprint"],
+          }),
+        )
+      }
+      return Promise.resolve(
+        jsonResponse({
+          match_count: 2,
+          samples: [
+            {
+              item_key: "RAD-1",
+              title: "RAD-1 - Stale work",
+              reason: "age_in_current_status greater_than 5 (observed 8)",
+              evidence: { age_in_current_status: 8 },
+            },
+          ],
+          warnings: [],
+        }),
+      )
+    }
     if (url.endsWith("/api/signal-definitions") && method === "POST") {
       return Promise.resolve(jsonResponse({ id: "signal-1", ...JSON.parse(String(init?.body)) }))
     }
@@ -164,7 +190,8 @@ describe("SignalSettingsPage", () => {
     })
     fireEvent.change(screen.getByLabelText("Duration days"), { target: { value: "5" } })
 
-    expect(screen.getByText(/3 matching sample items/)).toBeInTheDocument()
+    expect(await screen.findByText(/2 matching sample items/)).toBeInTheDocument()
+    expect(screen.getByText(/age_in_current_status greater_than 5/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole("button", { name: "Save signal" }))
 
     await waitFor(() => {

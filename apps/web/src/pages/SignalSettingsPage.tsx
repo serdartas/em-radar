@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react"
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query"
 import { Link } from "react-router-dom"
 
 import { Badge } from "@/components/ui/badge"
@@ -15,10 +15,12 @@ import {
   deleteSignalDefinition,
   listSignalDefinitions,
   listSignalTemplates,
+  previewSignalDefinition,
   restoreSignalTemplate,
   updateSignalDefinition,
   type SignalDefinition,
   type SignalDefinitionCreate,
+  type SignalDefinitionPreview,
   type SignalTemplate,
 } from "@/lib/signalDefinitions"
 
@@ -236,33 +238,25 @@ function SignalBuilder({
   const selectedScope = scopes.find((scope) => scope.id === draft.scopeId)
   const selectedField = fields.find((field) => field.key === draft.field) ?? fields[0]
   const operators = selectedField?.operators ?? []
+  const definitionDraft = selectedScope
+    ? definitionFromDraft(template, draft, selectedField, selectedScope)
+    : null
   const warnings = useMemo(
     () => previewWarnings(selectedField, selectedScope),
     [selectedField, selectedScope],
   )
-  const previewCount = warnings.length > 0 || !selectedScope ? 0 : 3
+  const previewQuery = useQuery({
+    enabled: warnings.length === 0 && definitionDraft !== null,
+    queryKey: ["signal-definition-preview", definitionDraft],
+    queryFn: () => previewSignalDefinition(definitionDraft as SignalDefinitionCreate),
+  })
+  const previewWarningsList = [...warnings, ...(previewQuery.data?.warnings ?? [])]
 
   function save() {
-    if (!selectedScope || warnings.length > 0) {
+    if (!definitionDraft || previewWarningsList.length > 0) {
       return
     }
-    onSave({
-      name: draft.name,
-      description: template.description,
-      entity_type: template.entity_type,
-      target_scopes: [
-        {
-          connector_id: selectedScope.connection_id,
-          scope_id: selectedScope.id,
-          scope_type: selectedScope.scope_type,
-        },
-      ],
-      expression: expressionFromDraft(template.expression, draft, selectedField),
-      report_settings: template.report_settings,
-      enabled: true,
-      origin: "system_template",
-      template_key: template.key,
-    })
+    onSave(definitionDraft)
   }
 
   return (
@@ -390,24 +384,74 @@ function SignalBuilder({
           <div className="rounded-md border p-3 text-sm">
             <p className="font-medium">Preview</p>
             <p className="mt-1 text-slate-600">
-              {previewCount} matching sample items in {selectedScope?.name ?? "selected scope"}.
+              {previewText(previewQuery, selectedScope)}
             </p>
-            {warnings.length > 0 && (
+            {(previewQuery.data?.samples.length ?? 0) > 0 && (
+              <ul aria-label="Preview samples" className="mt-2 space-y-1 text-slate-700">
+                {previewQuery.data?.samples.map((sample) => (
+                  <li key={sample.item_key}>
+                    {sample.item_key}: {sample.reason}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {previewWarningsList.length > 0 && (
               <ul aria-label="Validation warnings" className="mt-2 space-y-1 text-red-700">
-                {warnings.map((warning) => (
+                {previewWarningsList.map((warning) => (
                   <li key={warning}>{warning}</li>
                 ))}
               </ul>
             )}
           </div>
 
-          <Button disabled={pending || warnings.length > 0 || !selectedScope} onClick={save}>
+          <Button disabled={pending || previewWarningsList.length > 0 || !selectedScope} onClick={save}>
             {pending ? "Saving..." : "Save signal"}
           </Button>
         </CardContent>
       </Card>
     </aside>
   )
+}
+
+function definitionFromDraft(
+  template: SignalTemplate,
+  draft: BuilderDraft,
+  field: SignalField | undefined,
+  scope: ScopeDefinition,
+): SignalDefinitionCreate {
+  return {
+    name: draft.name,
+    description: template.description,
+    entity_type: template.entity_type,
+    target_scopes: [
+      {
+        connector_id: scope.connection_id,
+        scope_id: scope.id,
+        scope_type: scope.scope_type,
+      },
+    ],
+    expression: expressionFromDraft(template.expression, draft, field),
+    report_settings: template.report_settings,
+    enabled: true,
+    origin: "system_template",
+    template_key: template.key,
+  }
+}
+
+function previewText(
+  query: UseQueryResult<SignalDefinitionPreview, Error>,
+  scope: ScopeDefinition | undefined,
+): string {
+  if (!scope) {
+    return "Select a scope to preview matches."
+  }
+  if (query.isLoading || query.isFetching) {
+    return `Loading preview for ${scope.name}.`
+  }
+  if (query.isError) {
+    return `Preview could not be loaded for ${scope.name}.`
+  }
+  return `${query.data?.match_count ?? 0} matching sample items in ${scope.name}.`
 }
 
 function firstCondition(expression: Record<string, unknown>) {

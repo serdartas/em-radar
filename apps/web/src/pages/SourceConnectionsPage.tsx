@@ -315,9 +315,9 @@ function JiraScopePanel({ connection }: JiraScopePanelProps) {
     },
   })
 
-  const projects = projectsQuery.data ?? []
-  const boards = boardsQuery.data ?? []
-  const sprints = sprintsQuery.data ?? []
+  const projects = useMemo(() => projectsQuery.data ?? [], [projectsQuery.data])
+  const boards = useMemo(() => boardsQuery.data ?? [], [boardsQuery.data])
+  const sprints = useMemo(() => sprintsQuery.data ?? [], [sprintsQuery.data])
   const selectedProject = projects.find((project) => project.external_id === projectExternalId)
   const selectedBoard = boards.find((board) => board.external_id === boardExternalId)
   const activeSprint = sprints.find((sprint) => sprint.state === "active")
