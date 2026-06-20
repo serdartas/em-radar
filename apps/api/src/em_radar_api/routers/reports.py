@@ -432,18 +432,15 @@ async def _run_jira_report(
         )
         ctx = EvaluationContext(now=started_at, window=window, team=team)
         findings = [
-            *SignalEvaluator().evaluate(data, ctx, signal_configs),
-            *[
-                finding
-                for definition in signal_definitions
-                for finding in evaluate_signal_definition(
-                    definition,
-                    data,
-                    ctx,
-                    JiraConnector.describe_signal_schema(),
-                    scope_descriptors,
-                )
-            ],
+            finding
+            for definition in signal_definitions
+            for finding in evaluate_signal_definition(
+                definition,
+                data,
+                ctx,
+                JiraConnector.describe_signal_schema(),
+                scope_descriptors,
+            )
         ]
         persisted_findings = [
             _persisted_finding(finding, identity.identity_map) for finding in findings

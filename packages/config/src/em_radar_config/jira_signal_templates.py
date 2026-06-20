@@ -68,6 +68,7 @@ JIRA_SIGNAL_TEMPLATES: tuple[JiraSignalTemplate, ...] = (
             "operator": "all",
             "conditions": [
                 {"field": "issue_type", "operator": "is", "value": "story"},
+                {"field": "acceptance_criteria", "operator": "is_empty", "value": None},
             ],
         },
         report_settings=ReportSettings(severity="warning", category="quality"),
@@ -82,6 +83,7 @@ JIRA_SIGNAL_TEMPLATES: tuple[JiraSignalTemplate, ...] = (
             "operator": "all",
             "conditions": [
                 {"field": "issue_type", "operator": "is", "value": "story"},
+                {"field": "parent_id", "operator": "is_empty", "value": None},
             ],
         },
         report_settings=ReportSettings(severity="info", category="planning"),
@@ -94,7 +96,10 @@ JIRA_SIGNAL_TEMPLATES: tuple[JiraSignalTemplate, ...] = (
         expression={
             "type": "group",
             "operator": "all",
-            "conditions": [{"field": "issue_type", "operator": "is", "value": "epic"}],
+            "conditions": [
+                {"field": "issue_type", "operator": "is", "value": "epic"},
+                {"field": "child_count", "operator": "greater_than", "value": 15},
+            ],
         },
         report_settings=ReportSettings(severity="warning", category="planning"),
         evidence_shape=("child_count", "threshold"),
@@ -106,7 +111,10 @@ JIRA_SIGNAL_TEMPLATES: tuple[JiraSignalTemplate, ...] = (
         expression={
             "type": "group",
             "operator": "all",
-            "conditions": [{"field": "issue_type", "operator": "is", "value": "epic"}],
+            "conditions": [
+                {"field": "issue_type", "operator": "is", "value": "epic"},
+                {"field": "description_length", "operator": "less_than", "value": 100},
+            ],
         },
         report_settings=ReportSettings(severity="info", category="planning"),
         evidence_shape=("description_length", "threshold"),
@@ -118,7 +126,10 @@ JIRA_SIGNAL_TEMPLATES: tuple[JiraSignalTemplate, ...] = (
         expression={
             "type": "group",
             "operator": "all",
-            "conditions": [{"field": "sprint_day", "operator": "is_after", "value": 0}],
+            "conditions": [
+                {"field": "status_category", "operator": "is_not", "value": "done"},
+                {"field": "sprint_count", "operator": "greater_than", "value": 1},
+            ],
         },
         report_settings=ReportSettings(severity="warning", category="delivery"),
         required_scope_capabilities=("sprint",),
@@ -131,7 +142,9 @@ JIRA_SIGNAL_TEMPLATES: tuple[JiraSignalTemplate, ...] = (
         expression={
             "type": "group",
             "operator": "all",
-            "conditions": [{"field": "sprint_day", "operator": "is_after", "value": 0}],
+            "conditions": [
+                {"field": "sprint_day", "operator": "is_after", "value": 0},
+            ],
         },
         report_settings=ReportSettings(severity="warning", category="delivery"),
         required_scope_capabilities=("sprint",),
