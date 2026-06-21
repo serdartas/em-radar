@@ -132,6 +132,50 @@ describe("SourceConnectionsPage", () => {
     })
   })
 
+  it("shows an explanation and suggestions for a coded test failure", async () => {
+    mockApi(() =>
+      jsonResponse({
+        ok: false,
+        detail: "Jira authentication failed",
+        user_display_name: null,
+        permissions: [],
+        code: "auth",
+      }),
+    )
+    renderPage()
+
+    fireEvent.change(await screen.findByLabelText(/Base URL/), {
+      target: { value: "https://demo.invalid" },
+    })
+    fireEvent.change(screen.getByLabelText(/Token/), { target: { value: "bad-token" } })
+    fireEvent.click(screen.getByRole("button", { name: "Test connection" }))
+
+    expect(await screen.findByText("The credentials were rejected by the source.")).toBeInTheDocument()
+    expect(
+      screen.getByText(/Check the token is correct and has not expired/),
+    ).toBeInTheDocument()
+  })
+
+  it("offers click-to-toggle help for the Jira Base URL and Token fields", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = typeof input === "string" ? input : input.toString()
+      if (url.endsWith("/api/connectors")) {
+        return Promise.resolve(jsonResponse([jiraConnector]))
+      }
+      if (url.endsWith("/api/connections") && (init?.method ?? "GET") === "GET") {
+        return Promise.resolve(jsonResponse([]))
+      }
+      throw new Error(`unexpected fetch: ${init?.method ?? "GET"} ${url}`)
+    })
+    renderPage()
+
+    expect(await screen.findByRole("button", { name: "About Base URL" })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "About Token" }))
+
+    const helpLink = screen.getByRole("link", { name: /How to generate a Jira token/ })
+    expect(helpLink).toHaveAttribute("href", "/help/jira")
+  })
+
   it("omits unchanged write-only fields when editing a connection", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
       const url = typeof input === "string" ? input : input.toString()

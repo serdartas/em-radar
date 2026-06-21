@@ -29,9 +29,15 @@ from em_radar_api.source_connections import (
     SourceConnectionUpdate,
 )
 from em_radar_core.connectors import (
+    ConnectionErrorCode,
+    ConnectorAuthError,
     ConnectorBase,
     ConnectorConfigError,
+    ConnectorDataError,
     ConnectorError,
+    ConnectorNotFoundError,
+    ConnectorRateLimitedError,
+    ConnectorTransientError,
     WorkItemProvider,
 )
 from em_radar_core.models import Board, BoardType, Project, Sprint, SprintState
@@ -44,6 +50,7 @@ class ConnectionTestResponse(BaseModel):
     detail: str
     user_display_name: str | None
     permissions: list[str]
+    code: ConnectionErrorCode | None = None
 
 
 class ProjectResponse(BaseModel):
@@ -150,7 +157,7 @@ async def test_existing_connection(
             lambda config: create_connector(connection.connector_name, config),
         )
     except ConnectorConfigError as error:
-        return _failed_test(str(error))
+        return _failed_test(str(error), _error_code(error))
     if connector is None:
         raise _connection_not_found()
     return await _test_connector_instance(connector)
@@ -215,9 +222,7 @@ async def _test_connector(
     try:
         connector = create_connector(connector_name, config)
     except ConnectorConfigError as error:
-        return ConnectionTestResponse(
-            ok=False, detail=str(error), user_display_name=None, permissions=[]
-        )
+        return _failed_test(str(error), _error_code(error))
 
     return await _test_connector_instance(connector)
 
@@ -226,7 +231,7 @@ async def _test_connector_instance(connector: ConnectorBase) -> ConnectionTestRe
     try:
         return ConnectionTestResponse.model_validate(asdict(await connector.test_connection()))
     except ConnectorError as error:
-        return _failed_test(str(error))
+        return _failed_test(str(error), _error_code(error))
     finally:
         await connector.close()
 
@@ -261,13 +266,30 @@ def _workitem_connector(session: Session, connection_id: UUID) -> WorkItemProvid
     return connector
 
 
-def _failed_test(detail: str) -> ConnectionTestResponse:
+def _failed_test(detail: str, code: ConnectionErrorCode) -> ConnectionTestResponse:
     return ConnectionTestResponse(
         ok=False,
         detail=detail,
         user_display_name=None,
         permissions=[],
+        code=code,
     )
+
+
+def _error_code(error: ConnectorError) -> ConnectionErrorCode:
+    if isinstance(error, ConnectorAuthError):
+        return "auth"
+    if isinstance(error, ConnectorNotFoundError):
+        return "not_found"
+    if isinstance(error, ConnectorRateLimitedError):
+        return "rate_limited"
+    if isinstance(error, ConnectorTransientError):
+        return "transient"
+    if isinstance(error, ConnectorConfigError):
+        return "config"
+    if isinstance(error, ConnectorDataError):
+        return "data"
+    return "unknown"
 
 
 def _connection_not_found() -> HTTPException:

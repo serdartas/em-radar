@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from "react"
+import { type ReactNode, useEffect, useMemo, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { useNavigate } from "react-router-dom"
+import { Link, useNavigate } from "react-router-dom"
 
 import { SchemaForm } from "@/components/SchemaForm"
 import { Badge } from "@/components/ui/badge"
@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
 import { Select } from "@/components/ui/select"
 import { apiErrorMessage } from "@/lib/api"
+import { connectionErrorGuidance } from "@/lib/connectionErrors"
 import { type Connector, getConnectors } from "@/lib/connectors"
 import {
   type ConnectionDraft,
@@ -200,14 +201,13 @@ export function SourceConnectionsPage() {
 
             {selectedConnector && (
               <SchemaForm
+                fieldHelp={selectedConnector.name === "jira" ? JIRA_FIELD_HELP : undefined}
                 idPrefix="connection"
                 onChange={changeField}
                 schema={selectedConnector.config_schema}
                 values={values}
               />
             )}
-
-            {selectedConnector?.name === "jira" && <JiraTokenGuidance />}
 
             <TestResult error={testMutation.error} result={testMutation.data} />
 
@@ -247,13 +247,61 @@ export function SourceConnectionsPage() {
   )
 }
 
-function JiraTokenGuidance() {
-  return (
-    <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
-      Use a read-only Jira API token for the account that can browse the projects and boards you
-      want to report on. Jira Cloud connections use the email address plus API token.
-    </div>
-  )
+const JIRA_FIELD_HELP: Record<string, ReactNode> = {
+  base_url: (
+    <p>
+      The root URL of your Jira instance. For Jira Cloud this looks like{" "}
+      <code className="rounded bg-blue-100 px-1">https://your-org.atlassian.net</code>; for Server
+      or Data Center it is your self-hosted address. Open Jira in a browser and copy the address up
+      to the domain.
+    </p>
+  ),
+  token: (
+    <p>
+      Use a read-only API token for an account that can browse the projects and boards you report
+      on. Jira Cloud uses your email plus an API token; Server/Data Center uses a Personal Access
+      Token.{" "}
+      <Link className="font-medium underline" to="/help/jira">
+        How to generate a Jira token
+      </Link>
+      .
+    </p>
+  ),
+  auth_email: (
+    <p>
+      The email address of the Atlassian account that owns the API token. Jira{" "}
+      <strong>Cloud</strong> requires this (it signs in with email + token). Leave it blank for
+      Jira <strong>Server / Data Center</strong>, which authenticates with the token alone.
+    </p>
+  ),
+  verify_tls: (
+    <p>
+      Whether EM Radar checks the server&apos;s TLS (HTTPS) certificate. Keep this on for Jira
+      Cloud and any instance with a valid certificate. Only turn it off for a self-hosted server
+      that uses a self-signed or internal certificate. Doing so is less secure.
+    </p>
+  ),
+  field_mapping: (
+    <>
+      <p>
+        Advanced. Maps EM Radar concepts to your Jira fields so signals can read story points,
+        epics, acceptance criteria, and blocked state.
+      </p>
+      <p className="mt-1.5">
+        <strong>How to use:</strong> for Story points and Epic link, enter the Jira custom-field ID
+        (like <code className="rounded bg-blue-100 px-1">customfield_10016</code>), which you can
+        find in Jira under Settings → Issues → Custom fields. For Blocked label and Blocked status,
+        enter the
+        exact label text and status name your team uses (e.g.{" "}
+        <code className="rounded bg-blue-100 px-1">blocked</code> /{" "}
+        <code className="rounded bg-blue-100 px-1">Blocked</code>). Leave a field blank to turn that
+        mapping off.
+      </p>
+      <p className="mt-1.5">
+        The defaults match a standard Jira setup. Change a value only if your instance differs.
+      </p>
+    </>
+  ),
 }
 
 interface JiraScopeSectionProps {
@@ -616,13 +664,21 @@ function TestResult({ error, result }: TestResultProps) {
     return null
   }
   if (!result.ok) {
+    const guidance = connectionErrorGuidance(result.code, result.detail)
     return (
-      <p
+      <div
         className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700"
         role="alert"
       >
-        {result.detail}
-      </p>
+        <p className="font-medium">{guidance.explanation}</p>
+        {guidance.suggestions.length > 0 && (
+          <ul className="mt-1.5 list-disc space-y-0.5 pl-5">
+            {guidance.suggestions.map((suggestion) => (
+              <li key={suggestion}>{suggestion}</li>
+            ))}
+          </ul>
+        )}
+      </div>
     )
   }
   return (
