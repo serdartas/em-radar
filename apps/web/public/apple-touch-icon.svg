@@ -1,0 +1,21 @@
+<svg width="180" height="180" viewBox="0 0 180 180" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="EM Radar">
+  <defs>
+    <linearGradient id="emr-bg" x1="90" y1="0" x2="90" y2="180" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1E293B" />
+      <stop offset="1" stop-color="#0F172A" />
+    </linearGradient>
+    <linearGradient id="emr-sweep" x1="90" y1="90" x2="142" y2="38" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#38BDF8" stop-opacity="0.55" />
+      <stop offset="1" stop-color="#38BDF8" stop-opacity="0" />
+    </linearGradient>
+  </defs>
+  <rect width="180" height="180" fill="url(#emr-bg)" />
+  <g transform="translate(90 92)">
+    <path d="M0 0 L0 -58 A58 58 0 0 1 50.2 -29 Z" fill="url(#emr-sweep)" />
+    <circle r="56" fill="none" stroke="#F8FAFC" stroke-opacity="0.9" stroke-width="8" />
+    <circle r="36" fill="none" stroke="#F8FAFC" stroke-opacity="0.45" stroke-width="6.5" />
+    <circle r="16" fill="none" stroke="#F8FAFC" stroke-opacity="0.35" stroke-width="5.5" />
+    <line x1="0" y1="0" x2="0" y2="-58" stroke="#7DD3FC" stroke-width="8" stroke-linecap="round" />
+    <circle cx="33" cy="-33" r="9.5" fill="#38BDF8" />
+  </g>
+</svg>

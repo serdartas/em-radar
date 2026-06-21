@@ -2,6 +2,7 @@ import { Route, Routes } from "react-router-dom"
 
 import { AppLayout } from "@/components/layout/AppLayout"
 import { DashboardPage } from "@/pages/DashboardPage"
+import { JiraHelpPage } from "@/pages/JiraHelpPage"
 import { NotFoundPage } from "@/pages/NotFoundPage"
 import { ReportResultsPage } from "@/pages/ReportResultsPage"
 import { ReportRunnerPage } from "@/pages/ReportRunnerPage"
@@ -20,6 +21,7 @@ export function AppRoutes() {
         <Route element={<DashboardPage />} index />
         <Route element={<SetupPage />} path="setup" />
         <Route element={<SourceConnectionsPage />} path="connections" />
+        <Route element={<JiraHelpPage />} path="help/jira" />
         <Route element={<TeamsPage />} path="teams" />
         <Route element={<SignalSettingsPage />} path="signals" />
         <Route element={<SignalPackPage />} path="signals/import-export" />

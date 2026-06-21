@@ -7,7 +7,14 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import sessionmaker
 from sqlmodel import Session, select
 
-from em_radar_core.connectors import Capabilities, ConnectionTestResult, WorkItemScope
+from em_radar_core.connectors import (
+    Capabilities,
+    ConnectionTestResult,
+    ConnectorAuthError,
+    ConnectorNotFoundError,
+    ConnectorTransientError,
+    WorkItemScope,
+)
 from em_radar_core.models import (
     Board,
     BoardType,
@@ -190,6 +197,64 @@ class JiraKanbanTestConnector(JiraTestConnector):
             yield
 
 
+class JiraAuthErrorConnector(JiraTestConnector):
+    async def test_connection(self) -> ConnectionTestResult:
+        raise ConnectorAuthError("Jira authentication failed")
+
+
+class JiraNotFoundErrorConnector(JiraTestConnector):
+    async def test_connection(self) -> ConnectionTestResult:
+        raise ConnectorNotFoundError("Jira endpoint was not found")
+
+
+class JiraTransientErrorConnector(JiraTestConnector):
+    async def test_connection(self) -> ConnectionTestResult:
+        raise ConnectorTransientError("Failed to reach Jira")
+
+
+def test_source_connection_test_maps_failures_to_error_codes(
+    api_client: TestClient, monkeypatch
+) -> None:
+    cases = [
+        (JiraAuthErrorConnector, "auth"),
+        (JiraNotFoundErrorConnector, "not_found"),
+        (JiraTransientErrorConnector, "transient"),
+    ]
+    for connector_type, expected_code in cases:
+        monkeypatch.setattr(
+            "em_radar_api.connector_registry._connector_types",
+            lambda connector_type=connector_type: [connector_type],
+        )
+        response = api_client.post(
+            "/api/connections/test",
+            json={
+                "connector_name": "jira",
+                "config": {"base_url": "https://demo.invalid", "token": "demo-token-123456789"},
+            },
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["ok"] is False
+        assert body["code"] == expected_code
+
+
+def test_source_connection_test_maps_invalid_config_to_config_code(
+    api_client: TestClient, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "em_radar_api.connector_registry._connector_types",
+        lambda: [JiraTestConnector],
+    )
+    response = api_client.post(
+        "/api/connections/test",
+        json={"connector_name": "jira", "config": {"base_url": "https://demo.invalid", "token": "short"}},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["ok"] is False
+    assert response.json()["code"] == "config"
+
+
 def test_source_connection_routes_crud_test_and_preserve_omitted_config(
     api_client: TestClient, monkeypatch
 ) -> None:
@@ -220,6 +285,7 @@ def test_source_connection_routes_crud_test_and_preserve_omitted_config(
         "detail": "Connected",
         "user_display_name": "Ada Lovelace",
         "permissions": ["read"],
+        "code": None,
     }
 
     updated_response = api_client.patch(

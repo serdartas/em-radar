@@ -69,12 +69,24 @@ class SignalCapabilitySchema:
     fields: tuple[SignalField, ...]
 
 
+ConnectionErrorCode = Literal[
+    "auth",
+    "config",
+    "data",
+    "not_found",
+    "rate_limited",
+    "transient",
+    "unknown",
+]
+
+
 @dataclass
 class ConnectionTestResult:
     ok: bool
     detail: str
     user_display_name: str | None = None
     permissions: list[str] = field(default_factory=list)
+    code: ConnectionErrorCode | None = None
 
 
 @dataclass
@@ -191,6 +203,7 @@ class ConnectorDataError(ConnectorError):
 __all__ = [
     "Capabilities",
     "CommentProvider",
+    "ConnectionErrorCode",
     "ConnectionTestResult",
     "ConnectorAuthError",
     "ConnectorBase",

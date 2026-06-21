@@ -1,5 +1,6 @@
 import { NavLink, Outlet } from "react-router-dom"
 
+import { Logo } from "@/components/Logo"
 import { navItems } from "@/lib/navigation"
 import { cn } from "@/lib/utils"
 
@@ -43,7 +44,8 @@ export function AppLayout() {
       </a>
 
       <header className="flex h-14 shrink-0 items-center border-b bg-white px-4 md:px-8">
-        <NavLink className="flex items-baseline gap-2" to="/">
+        <NavLink className="flex items-center gap-2.5" to="/">
+          <Logo className="h-7 w-7 shrink-0" />
           <span className="text-base font-semibold tracking-tight">EM Radar</span>
           <span className="hidden text-xs text-slate-500 sm:inline">
             Engineering management signals
