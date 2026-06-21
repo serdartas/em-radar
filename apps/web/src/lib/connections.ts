@@ -10,11 +10,21 @@ export interface SourceConnection {
   created_at: string
 }
 
+export type ConnectionErrorCode =
+  | "auth"
+  | "config"
+  | "data"
+  | "not_found"
+  | "rate_limited"
+  | "transient"
+  | "unknown"
+
 export interface ConnectionTestResult {
   ok: boolean
   detail: string
   user_display_name: string | null
   permissions: string[]
+  code?: ConnectionErrorCode | null
 }
 
 export interface ConnectionDraft {

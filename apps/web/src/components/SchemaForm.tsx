@@ -1,4 +1,7 @@
+import type { ReactNode } from "react"
+
 import { Input } from "@/components/ui/input"
+import { InfoTooltip } from "@/components/ui/info-tooltip"
 import { Label } from "@/components/ui/label"
 import { Select } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
@@ -15,6 +18,7 @@ interface SchemaFormProps {
   values: Record<string, unknown>
   idPrefix: string
   onChange: (key: string, value: unknown) => void
+  fieldHelp?: Record<string, ReactNode>
 }
 
 function toInputString(value: unknown): string {
@@ -27,7 +31,7 @@ function toInputString(value: unknown): string {
   return String(value)
 }
 
-export function SchemaForm({ idPrefix, onChange, schema, values }: SchemaFormProps) {
+export function SchemaForm({ fieldHelp, idPrefix, onChange, schema, values }: SchemaFormProps) {
   const properties = Object.entries(schema.properties ?? {})
   const required = new Set(schema.required ?? [])
 
@@ -42,6 +46,7 @@ export function SchemaForm({ idPrefix, onChange, schema, values }: SchemaFormPro
       {properties.map(([key, property]) => (
         <SchemaField
           fieldId={`${idPrefix}-${key}`}
+          help={fieldHelp?.[key]}
           key={key}
           name={key}
           onChange={onChange}
@@ -61,16 +66,17 @@ interface SchemaFieldProps {
   required: boolean
   value: unknown
   onChange: (key: string, value: unknown) => void
+  help?: ReactNode
 }
 
-function SchemaField({ fieldId, name, onChange, property, required, value }: SchemaFieldProps) {
+function SchemaField({ fieldId, help, name, onChange, property, required, value }: SchemaFieldProps) {
   const label = fieldLabel(name, property)
   const type = schemaType(property)
 
   if (type === "boolean") {
     return (
       <div className="flex items-center justify-between gap-4">
-        <FieldLabel htmlFor={fieldId} label={label} property={property} required={required} />
+        <FieldLabel help={help} htmlFor={fieldId} label={label} property={property} required={required} />
         <Switch
           checked={value === true}
           id={fieldId}
@@ -82,7 +88,7 @@ function SchemaField({ fieldId, name, onChange, property, required, value }: Sch
 
   return (
     <div className="space-y-1.5">
-      <FieldLabel htmlFor={fieldId} label={label} property={property} required={required} />
+      <FieldLabel help={help} htmlFor={fieldId} label={label} property={property} required={required} />
       {renderControl({ fieldId, name, onChange, property, type, value })}
       {property.description && <p className="text-xs text-slate-500">{property.description}</p>}
     </div>
@@ -94,17 +100,21 @@ interface FieldLabelProps {
   label: string
   property: JsonSchemaProperty
   required: boolean
+  help?: ReactNode
 }
 
-function FieldLabel({ htmlFor, label, property, required }: FieldLabelProps) {
+function FieldLabel({ help, htmlFor, label, property, required }: FieldLabelProps) {
   return (
-    <Label htmlFor={htmlFor}>
-      {label}
-      {required && <span className="ml-0.5 text-red-600"> *</span>}
-      {isSecret(property) && (
-        <span className="ml-2 text-xs font-normal text-slate-500">(write-only)</span>
-      )}
-    </Label>
+    <div className="flex items-center gap-1.5">
+      <Label htmlFor={htmlFor}>
+        {label}
+        {required && <span className="ml-0.5 text-red-600"> *</span>}
+        {isSecret(property) && (
+          <span className="ml-2 text-xs font-normal text-slate-500">(write-only)</span>
+        )}
+      </Label>
+      {help && <InfoTooltip label={`About ${label}`}>{help}</InfoTooltip>}
+    </div>
   )
 }
 

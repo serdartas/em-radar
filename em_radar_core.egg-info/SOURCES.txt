@@ -11,6 +11,7 @@ em_radar_core.egg-info/top_level.txt
 packages/config/defaults/default-pack.yaml
 packages/config/src/em_radar_config/__init__.py
 packages/config/src/em_radar_config/catalog.py
+packages/config/src/em_radar_config/jira_signal_templates.py
 packages/config/src/em_radar_config/models.py
 packages/config/src/em_radar_config/validation.py
 packages/connectors/demo/src/em_radar_connector_demo/__init__.py
@@ -21,6 +22,7 @@ packages/connectors/jira/src/em_radar_connector_jira/connector.py
 packages/core/src/em_radar_core/__init__.py
 packages/core/src/em_radar_core/connectors.py
 packages/core/src/em_radar_core/evaluation/__init__.py
+packages/core/src/em_radar_core/evaluation/declarative.py
 packages/core/src/em_radar_core/evaluation/evaluator.py
 packages/core/src/em_radar_core/models/__init__.py
 packages/core/src/em_radar_core/models/code.py
@@ -28,6 +30,7 @@ packages/core/src/em_radar_core/models/common.py
 packages/core/src/em_radar_core/models/enums.py
 packages/core/src/em_radar_core/models/evaluation.py
 packages/core/src/em_radar_core/models/planning.py
+packages/core/src/em_radar_core/models/signals.py
 packages/core/src/em_radar_core/signals/__init__.py
 packages/core/src/em_radar_core/signals/base.py
 packages/core/src/em_radar_core/signals/registry.py
