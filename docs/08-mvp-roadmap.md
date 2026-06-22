@@ -135,13 +135,14 @@ Reference: [requirements §10 MVP Acceptance Checklist](./02-requirements.md#10-
 **Goal.** Align the app with the post-UAT signal model before extending it to GitLab.
 
 **Scope.**
-- Rework signal persistence from built-in id + params into structured signal definitions with
-  expression trees, report settings, origin metadata, and explicit `target_scopes`.
-- Store reusable scope definitions separately from connectors and teams.
-- Add a Jira capability schema for issue fields, supported operators, scope types, value providers,
-  and sprint-only availability constraints.
+- Rework signal persistence from built-in id + params into structured, scope-agnostic signal
+  definitions with expression trees, report settings, and origin metadata.
+- Add reusable signal config groups (many-to-many with signals and teams) and attach a board scope
+  to each team; scope is resolved from the team at report time, not stored on signals.
+- Add a Jira capability schema for issue fields, supported operators, value providers, and
+  sprint-only availability constraints.
 - Update the signal settings UI into a constrained builder: create, duplicate, edit, disable, delete
-  user-created signals, assign Jira scopes, and preview results before saving.
+  user-created signals, bundle them into signal config groups, and preview results before saving.
 - Represent the 8 Jira built-in signals as templates that can be instantiated and duplicated.
 - Update YAML import/export to support private backup and public template modes.
 
@@ -196,12 +197,12 @@ evidence structure, skipping, and performance.
 **Scope.**
 - Expression evaluation per [signal spec §10](./06-signal-yaml-spec.md#10-rule-expressions) across
   Jira and GitLab entity types.
-- Explicit `target_scopes` enforced for every enabled runnable signal.
+- Each team's signals resolved as the union of its attached signal config groups; scope resolved from the team's board.
 - Connector capability validation for fields, operators, values, and sprint-only availability.
 - Evidence payloads conform to the shapes documented in [signal spec §12](./06-signal-yaml-spec.md#12-built-in-signal-template-catalog-mvp).
 - Performance: meet [REQ-NF-020](./02-requirements.md#req-nf-020-local-mvp-performance) (60s for 500 work items + 300 MRs on a modern laptop).
 
-**Deliverables.** Engine satisfies the full signal catalog as scoped declarative signal definitions. Performance budget met.
+**Deliverables.** Engine satisfies the full signal catalog as scope-agnostic declarative signal definitions, resolved per team via attached signal config groups. Performance budget met.
 
 **Acceptance.**
 - All 13 signals enabled, default pack, target data size, report completes in under 60 seconds.

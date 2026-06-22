@@ -17,9 +17,10 @@ spec, that change is called out in §12 (Model & Backlog Impact) rather than sil
 
 The four shaping decisions behind these flows:
 
-1. **Connection once, reusable scopes for teams and signals.** Source credentials are entered once
-   as a reusable *Connection*; users create/select reusable *Scopes* such as boards, projects, and
-   repositories. Teams and signals both reference scopes explicitly.
+1. **Connection once; the team owns the scope; signals live in reusable groups.** Source
+   credentials are entered once as a reusable *Connection*. A *Team* owns a single Jira board scope
+   (0..1). Signals are bundled into reusable *Signal Config Groups* that the EM attaches to teams;
+   signals are never scoped individually — a team's board scope is resolved at report time.
 2. **Latest-report landing dashboard.** After setup, the landing page shows each team's most
    recent report (severity counts + top risks) with a refresh action. It reuses the report
    view; it is not a separate analytics product.
@@ -42,8 +43,9 @@ below are written source-agnostically so adding a source does not reshape them.
 | **EM (user)** | The single local user. | — | No multi-user/auth in MVP. |
 | **Connection** | One source instance + credentials (Jira Cloud URL + token; GitLab URL + token). | `SourceConnection` ([architecture §8.1](./03-architecture-overview.md#81-stored-data), M2-03) | Reusable across teams. Created once per source instance. |
 | **Team** | A named unit of work the EM manages. Carries default report scope + working mode. | `TeamProfile` ([data model §5.12](./05-data-model.md#512-teamprofile)) | First-class; multiple per install. See §12 for fields added by this doc. |
-| **Scope** | A reusable slice of a connection: Jira project, Jira board, saved filter, GitLab repository, or equivalent. | `ScopeDefinition` ([requirements REQ-F-041A](./02-requirements.md#req-f-041a--reusable-scope-definitions)) | Signals choose target scopes explicitly; teams may use scopes as report defaults. |
-| **Signal** | A structured rule expression assigned to one or more target scopes. | `SignalDefinition` ([signal spec §9](./06-signal-yaml-spec.md#9-runnable-signal-definitions)) | Built-in signals are templates; runnable signals require target scopes. |
+| **Scope** | A slice of a connection: a Jira board (later, GitLab repositories). | `ScopeDefinition` ([requirements REQ-F-041A](./02-requirements.md#req-f-041a--reusable-scope-definitions)) | Owned by the **team** (0..1 Jira board in MVP); resolved at report time. Signals are never scoped individually. |
+| **Signal** | A structured rule expression carrying its own configuration. | `SignalDefinition` ([signal spec §9](./06-signal-yaml-spec.md#9-signal-definitions)) | Scope-agnostic. Built-in signals are templates. Belongs to one or more signal config groups. |
+| **Signal Config Group** | A reusable, named bundle of signals (e.g. "Scrum signals"). | `SignalConfigGroup` ([data model §5.12C](./05-data-model.md#512c-signalconfiggroup)) | Many-to-many with teams and with signals. Attach a group to as many teams as you like. |
 | **Working mode** | `scrum` or `kanban`, plus sprint length for scrum. | On `TeamProfile` (`working_mode`, `sprint_length_days`) | Derived from the board; user-confirmable. |
 | **Report** | Result of evaluating signals for a team over a window. | `Report` + `SignalFinding` ([data model §5.14–5.15](./05-data-model.md#514-signalfinding)) | One per run; persisted; viewable offline. |
 | **Dashboard** | Landing view: latest report per team. | Derived (reads latest `Report` per team) | Not a new stored entity. |
@@ -209,8 +211,8 @@ flowchart TD
 in turn determines **which signals can fire**: sprint-only signals
 (`repeated-carry-over`, `sprint-scope-churn`) require a sprint window and are **skipped with a
 note** for date-range/Kanban runs, mirroring connector-capability skipping
-([connector spec §6.5](./07-connector-interface.md#65-transitionprovider-optional)). Scoped signal
-definitions still decide where each signal applies — see §10.
+([connector spec §6.5](./07-connector-interface.md#65-transitionprovider-optional)). Which signals
+run is decided by the signal config groups attached to the team — see §10.
 
 ---
 
@@ -233,7 +235,8 @@ further clicks.
 3. **Normalize, persist, resolve identity.** Normalized entities are upserted by
    `(source, external_id)` to stable internal IDs, and cross-entity links (assignee, parent,
    sprint, MR↔WorkItem) are resolved ([data model §2, §7](./05-data-model.md#2-design-principles)).
-4. **Evaluate enabled signals** and persist a `Report` per team with
+4. **Evaluate the team's signals** — the union of enabled signals across the team's attached signal
+   config groups, against the team's board scope — and persist a `Report` per team with
    `findings_count_by_severity`.
 5. **Land on the dashboard.**
 
@@ -318,22 +321,29 @@ All destructive actions require confirmation and never touch the source systems 
 
 ---
 
-## 9. Flow G — Signal Builder & Import/Export
+## 9. Flow G — Signal Config Groups & Import/Export
 
-Steady-state signal configuration follows the revised post-UAT model:
+Steady-state signal configuration is organized around reusable **signal config groups**:
 
-- View built-in signal templates and existing runnable signals.
-- Create a signal from scratch, duplicate a template or existing signal, edit conditions, assign
-  one or more target scopes, preview matches, save, disable, or delete user-created signals
+- **Build signals.** View built-in signal templates and existing signals. Create a signal from
+  scratch, duplicate a template or existing signal, edit conditions, preview matches, save, disable,
+  or delete user-created signals
   ([requirements REQ-F-031/041](./02-requirements.md#req-f-031--configurable-built-in-signals)).
-- The builder is generated from connector capability schemas: selected connector and scope decide
-  available entity types, fields, operators, values, and sprint-only conditions.
-- Export YAML as either a private backup/migration file or a public template file; import with
-  mapping and validation before applying ([signal spec §15–§16](./06-signal-yaml-spec.md#15-export-behavior)).
+  Signals are **scope-agnostic** — there is no scope picker in the signal builder.
+- **Group signals.** Create a signal config group (e.g. "Scrum signals", "Kanban signals") and add
+  signals to it. A signal can belong to many groups.
+- **Attach groups to teams.** From a team, attach one or more groups. A group attached to two teams
+  is shared state: editing the group changes both teams' runs.
+- The builder is generated from connector capability schemas: the entity type decides available
+  fields, operators, values, and sprint-only conditions.
+- Export a group's YAML as either a private backup/migration file or a public template file; import
+  creates a new group, with validation before applying
+  ([signal spec §15–§16](./06-signal-yaml-spec.md#15-export-behavior)).
 
-**Signal applicability.** A signal only evaluates the scopes listed in its `target_scopes`. A Jira
-connection with boards A, B, and C does not imply that every Jira signal runs on all three boards.
-The user must choose specific scopes or an explicit "all scopes" option.
+**Signal applicability.** A team runs the union of signals across its attached groups, against the
+team's board scope. To give two teams different rules, attach different groups; to run the same
+check with different thresholds, create two signals (config is global per signal) and place each in
+the relevant group.
 
 ---
 
@@ -345,11 +355,12 @@ Working mode and scope capabilities shape which fields and signals are available
    them and records a one-line note in the report ("skipped: requires a sprint window"). This
    reuses the capability-skip pattern from
    [connector spec §6.5](./07-connector-interface.md#65-transitionprovider-optional).
-2. **Scope capabilities.** Sprint fields such as `sprint_day` and `sprint_phase` are only shown
-   when the selected scope supports sprint data. Kanban scopes can still use aging and status
-   conditions.
-3. **Target scopes.** A runnable signal stores the scopes it applies to. This is how one support
-   project can have a 3-day open-ticket rule while a Scrum board uses a different stale-work rule.
+2. **Scope capabilities.** Sprint fields such as `sprint_day` and `sprint_phase` evaluate only when
+   the team's board scope supplies sprint data (scrum boards). Kanban scopes still use aging and
+   status conditions.
+3. **Groups, not per-signal scopes.** Different teams get different rules by attaching different
+   signal config groups. This is how a support team can run a 3-day open-ticket group while a Scrum
+   team runs a stale-work group — the scope comes from each team's board, not from the signal.
 
 ---
 
@@ -376,9 +387,12 @@ for traceability; applying them is a separate step.
 
 **Data model ([05-data-model.md](./05-data-model.md)).**
 
-- Extend `TeamProfile` (§5.12) with: `board_ids: UUID[]` (scope), `working_mode: enum
-  {scrum, kanban}`, `sprint_length_days: int | null`, and explicit links to the connections it
-  uses (or derive via the contained project/repo ids).
+- Extend `TeamProfile` (§5.12) with: a single Jira board scope (0..1, via `scope_ids`),
+  `signal_config_group_ids: UUID[]` (attached groups), `working_mode: enum {scrum, kanban}`,
+  `sprint_length_days: int | null`, and explicit links to the connections it uses (or derive via
+  the contained project/repo ids).
+- Add the `SignalConfigGroup` entity (§5.12C) and remove `target_scopes` from `SignalDefinition`
+  (§5.12B): scope is resolved from the team, not stored on the signal.
 - Confirm `TeamProfile` is first-class and created during onboarding (supersedes the earlier
   "auto-seeded Default team" simplification).
 

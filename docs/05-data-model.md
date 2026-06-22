@@ -53,6 +53,9 @@ erDiagram
     TEAMPROFILE ||--o{ PROJECT : "owns"
     TEAMPROFILE ||--o{ REPOSITORY : "owns"
     TEAMPROFILE ||--o{ USER : "includes"
+    TEAMPROFILE }o--o| BOARD : "jira scope (0..1)"
+    TEAMPROFILE }o--o{ SIGNALCONFIGGROUP : "attaches"
+    SIGNALCONFIGGROUP }o--o{ SIGNALDEFINITION : "contains"
 
     EVALUATIONWINDOW ||--|| REPORT : "produces"
     REPORT ||--o{ SIGNALFINDING : "contains"
@@ -275,22 +278,23 @@ Used directly by *repeated carry-over*, *sprint scope churn*, and *blocked witho
 
 ### 5.12A ScopeDefinition
 
-A reusable subset of data inside a source connection. Scopes are selected from connector-provided
-options and then referenced by teams, reports, and runnable signal definitions.
+A subset of data inside a source connection. Scopes are selected from connector-provided options and
+attached to a team (a team owns 0..1 Jira board scope in MVP). Signals never reference scopes — scope
+is resolved from the team at report time.
 
 | Field | Type | Nullable | Description |
 |---|---|---|---|
 | `id` | UUID | no | |
 | `connection_id` | UUID | no | FK to `SourceConnection`. |
-| `name` | string | no | Human-readable name shown in signal builder and reports. |
+| `name` | string | no | Human-readable name shown in team setup and reports. |
 | `scope_type` | enum | no | `project`, `board`, `repository`, `saved_filter`, `custom`. |
 | `external_ref` | JSON | no | Source reference: type, id, key, and name where available. |
 | `capabilities` | string[] | no | Scope capabilities such as `sprint`, `kanban`, `statuses`, `labels`. |
 | `created_at` | timestamp | no | |
 | `updated_at` | timestamp | no | |
 
-Scopes do not contain credentials. A connector grants access; scopes define where inside that
-connector reports and signals apply.
+Scopes do not contain credentials. A connector grants access; a team's scope defines where inside
+that connector the team's report runs.
 
 ### 5.12B SignalDefinition
 
@@ -302,7 +306,6 @@ A persisted runnable signal or template-derived signal. It is structured data, n
 | `name` | string | no | Unique within the local workspace. |
 | `description` | text | yes | |
 | `entity_type` | string | no | Connector capability entity type, such as `issue` or `merge_request`. |
-| `target_scopes` | JSON | no | List of connector/scope references. Enabled signals must have at least one. |
 | `expression` | JSON | no | Rule expression tree from the signal YAML spec. |
 | `report_settings` | JSON | no | Severity, category, and optional message template. |
 | `enabled` | boolean | no | Disabled signals are stored but not evaluated. |
@@ -312,8 +315,36 @@ A persisted runnable signal or template-derived signal. It is structured data, n
 | `created_at` | timestamp | no | |
 | `updated_at` | timestamp | no | |
 
+A `SignalDefinition` is **scope-agnostic**: it carries the rule and its configuration (params,
+severity, enabled state) but not a target scope. Scope is resolved from the team at report time —
+see §5.12D and [09-functional-flows §10](./09-functional-flows.md#10-how-working-mode-shapes-signal-availability).
+A signal's configuration is **global**: the same signal evaluates identically wherever it is used.
+To run the same kind of check with different thresholds (e.g. Scrum vs Kanban staleness), create
+two separate signals.
+
 The signal engine evaluates `SignalDefinition` rows against canonical models only. It never reads
 raw connector payloads or executes user-provided code.
+
+### 5.12C SignalConfigGroup
+
+A reusable, named bundle of signals (e.g. "Scrum signals", "Kanban signals"). A group is defined
+once and attached to any number of teams; one signal can belong to many groups. A group carries no
+connector, scope, or credential — it is pure membership.
+
+| Field | Type | Nullable | Description |
+|---|---|---|---|
+| `id` | UUID | no | |
+| `name` | string | no | Unique within the local workspace. |
+| `description` | text | yes | |
+| `signal_ids` | UUID[] | no | Member `SignalDefinition`s. A signal may appear in many groups. Default `[]`. |
+| `created_at` | timestamp | no | |
+| `updated_at` | timestamp | no | |
+
+A manager of several teams creates one group per operating model, fills each with the relevant
+signals, and attaches groups to teams (`TeamProfile.signal_config_group_ids`). Editing a group
+propagates to every team attached to it — a group is shared state, not a per-team copy. A group is
+also the unit of YAML import/export (a "signal pack"); see
+[06-signal-yaml-spec](./06-signal-yaml-spec.md).
 
 ### 5.12 TeamProfile
 
@@ -325,16 +356,19 @@ A user-defined grouping that scopes a report. Created locally in EM Radar; not p
 | `name` | string | no | |
 | `description` | text | yes | |
 | `connection_ids` | UUID[] | no | Source connections this team draws from. Default `[]`. |
-| `scope_ids` | UUID[] | no | Default scopes this team reports against. |
+| `scope_ids` | UUID[] | no | Scopes this team reports against. In MVP a team has **0..1 Jira board** scope; the door is open for GitLab repos later. Default `[]`. |
+| `signal_config_group_ids` | UUID[] | no | Signal config groups attached to this team. A team's signals are the union of all signals in its attached groups. Default `[]`. |
 | `working_mode` | enum | no | `scrum` or `kanban`. See §6.7. Derived from the selected board, user-confirmable. Default `scrum`. |
 | `sprint_length_days` | integer | yes | Inferred sprint cadence (scrum only); null for kanban. |
 | `member_user_keys` | string[] | no | Optional list of `source:external_id` strings to identify team members across sources. |
 | `created_at` | timestamp | no | |
 | `updated_at` | timestamp | no | |
 
-A `TeamProfile` is first-class and created during onboarding (one or more per install). Its scopes
-are report-run defaults, while each runnable signal still has explicit `target_scopes`. Its
-`working_mode` sets the default evaluation window (sprint vs date range) — see
+A `TeamProfile` is first-class and created during onboarding (one or more per install). The team is
+the unit a report runs against: its scope (the team's Jira board) and its signals (the union of the
+signals in its attached `SignalConfigGroup`s) are both resolved from the team at report time —
+signals are never scoped individually. Its `working_mode` sets the default evaluation window (sprint
+vs date range) — see
 [09-functional-flows §5–§6](./09-functional-flows.md#5-flow-c--team-scope--working-mode-detection).
 
 ### 5.13 EvaluationWindow
