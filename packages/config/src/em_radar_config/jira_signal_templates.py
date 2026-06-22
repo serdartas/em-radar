@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from em_radar_core.models import ReportSettings, SignalDefinition, SignalOrigin, SignalTargetScope
+from em_radar_core.models import ReportSettings, SignalDefinition, SignalOrigin
 
 
 @dataclass(frozen=True)
@@ -171,7 +171,6 @@ def restore_jira_signal_template(key: str) -> JiraSignalTemplate:
 
 def instantiate_jira_signal_template(
     key: str,
-    target_scopes: list[SignalTargetScope],
     *,
     name: str | None = None,
 ) -> SignalDefinition:
@@ -181,7 +180,6 @@ def instantiate_jira_signal_template(
         name=name or template.name,
         description=template.description,
         entity_type=template.entity_type,
-        target_scopes=target_scopes,
         expression=deepcopy(template.expression),
         report_settings=template.report_settings.model_copy(),
         enabled=template.enabled_by_default,
