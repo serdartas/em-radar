@@ -1,9 +1,8 @@
 from datetime import datetime
 from enum import StrEnum
-from typing import Self
 from uuid import UUID, uuid4
 
-from pydantic import JsonValue, model_validator
+from pydantic import JsonValue
 from sqlalchemy import JSON
 from sqlmodel import Field, SQLModel
 
@@ -31,7 +30,6 @@ class SignalDefinition(SQLModel):
     name: str
     description: str | None = None
     entity_type: str
-    target_scopes: list[SignalTargetScope] = Field(default_factory=list, sa_type=JSON)
     expression: JsonValue = Field(sa_type=JSON)
     report_settings: ReportSettings = Field(sa_type=JSON)
     enabled: bool = True
@@ -40,9 +38,3 @@ class SignalDefinition(SQLModel):
     version: int = 1
     created_at: datetime
     updated_at: datetime
-
-    @model_validator(mode="after")
-    def validate_enabled_scope(self) -> Self:
-        if self.enabled and not self.target_scopes:
-            raise ValueError("enabled signals require at least one target scope")
-        return self
