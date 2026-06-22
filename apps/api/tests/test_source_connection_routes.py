@@ -529,16 +529,10 @@ def test_signal_definition_preview_uses_persisted_jira_samples_and_warnings(
 
     response = api_client.post(
         "/api/signal-definitions/preview",
+        params={"scope_ids": [board_scope["id"]]},
         json={
             "name": "Preview stale Jira work",
             "entity_type": "issue",
-            "target_scopes": [
-                {
-                    "connector_id": created["id"],
-                    "scope_id": board_scope["id"],
-                    "scope_type": "board",
-                }
-            ],
             "expression": {
                 "type": "group",
                 "operator": "all",
@@ -557,16 +551,10 @@ def test_signal_definition_preview_uses_persisted_jira_samples_and_warnings(
     )
     warning_response = api_client.post(
         "/api/signal-definitions/preview",
+        params={"scope_ids": [project_scope["id"]]},
         json={
             "name": "Unsupported sprint field",
             "entity_type": "issue",
-            "target_scopes": [
-                {
-                    "connector_id": created["id"],
-                    "scope_id": project_scope["id"],
-                    "scope_type": "project",
-                }
-            ],
             "expression": {
                 "type": "group",
                 "operator": "all",
