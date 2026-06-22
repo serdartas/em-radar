@@ -71,6 +71,12 @@ docker compose -f deploy/docker/docker-compose.yml up --build
 # then open http://localhost:8080
 ```
 
+### Debugging and local development
+
+For running the stack **without Docker** (backend with `--reload`, frontend with HMR, a
+debugger attached), connecting to and inspecting the SQLite database, running migrations,
+and troubleshooting, see the **[Development & Debugging Guide](docs/DEVELOPMENT.md)**.
+
 ---
 
 ## 4. Stack — do not substitute

@@ -32,9 +32,9 @@ column set of any entity, see the matching section in [05-data-model.md §5](./0
 | `}o--o{` | many ↔ many (in MVP, materialized as UUID-array fields, not join tables) |
 
 > **Note on array relationships.** Several links (`sprint_ids`, `project_ids`, `board_ids`,
-> `repository_ids`, `connection_ids`, `linked_workitem_ids`) are stored as **UUID arrays** on the
-> owning row (SQLite JSON columns), not as separate join tables. They are drawn as many-to-many
-> for clarity but carry no association entity in MVP.
+> `repository_ids`, `connection_ids`, `signal_config_group_ids`, `signal_ids`, `linked_workitem_ids`)
+> are stored as **UUID arrays** on the owning row (SQLite JSON columns), not as separate join tables.
+> They are drawn as many-to-many for clarity but carry no association entity in MVP.
 
 ---
 
@@ -51,11 +51,10 @@ flowchart LR
     subgraph Eval["Scoping, evaluation & config (§4)"]
         TEAMPROFILE --> EVALUATIONWINDOW --> REPORT --> SIGNALFINDING
         SOURCECONNECTION --> SCOPEDEFINITION
-        SCOPEDEFINITION --> SIGNALDEFINITION
+        TEAMPROFILE --> SIGNALCONFIGGROUP --> SIGNALDEFINITION
         SIGNALPACKHISTORY
     end
-    TEAMPROFILE -. default scopes .-> SCOPEDEFINITION
-    SIGNALDEFINITION -. target scopes .-> SCOPEDEFINITION
+    TEAMPROFILE -. board scope 0..1 .-> SCOPEDEFINITION
     TEAMPROFILE -. uses .-> SOURCECONNECTION
     WORKITEM -. evaluated by .-> REPORT
     MERGEREQUEST -. evaluated by .-> REPORT
@@ -221,11 +220,12 @@ erDiagram
 
 ## 4. Scoping, Evaluation & Configuration Domain
 
-Teams define default report scopes; each signal defines explicit target scopes. A report is the
-result of evaluating signals over an evaluation window. `SourceConnection`, `ScopeDefinition`,
-`SignalDefinition`, and `SignalPackHistory` are local
-application tables ([backlog M2-03/M2-18/M2-19](./backlog/M2-storage-config-ui.md)), not pulled
-from a source.
+A team owns a single Jira board scope (0..1) and attaches reusable signal config groups; a group
+bundles signals, and one signal may belong to many groups. A report is the result of evaluating a
+team's signals (the union across its attached groups) over an evaluation window, against the team's
+board scope. `SourceConnection`, `ScopeDefinition`, `SignalConfigGroup`, `SignalDefinition`, and
+`SignalPackHistory` are local application tables
+([backlog M2-03/M2-18/M2-19](./backlog/M2-storage-config-ui.md)), not pulled from a source.
 
 ```mermaid
 erDiagram
@@ -243,6 +243,8 @@ erDiagram
         string name
         text description
         array connection_ids
+        array scope_ids "0..1 jira board in MVP"
+        array signal_config_group_ids
         array project_ids
         array board_ids
         array repository_ids
@@ -302,13 +304,20 @@ erDiagram
         string name
         text description
         string entity_type
-        json target_scopes
         json expression
         json report_settings
         bool enabled
         enum origin "system_template|user_created|imported"
         string template_key
         int version
+        datetime created_at
+        datetime updated_at
+    }
+    SIGNALCONFIGGROUP {
+        uuid id PK
+        string name
+        text description
+        array signal_ids
         datetime created_at
         datetime updated_at
     }
@@ -321,8 +330,9 @@ erDiagram
 
     TEAMPROFILE }o--o{ SOURCECONNECTION : "uses (connection_ids)"
     SOURCECONNECTION ||--o{ SCOPEDEFINITION : "offers scopes"
-    TEAMPROFILE }o--o{ SCOPEDEFINITION : "default report scopes"
-    SIGNALDEFINITION }o--o{ SCOPEDEFINITION : "target_scopes"
+    TEAMPROFILE }o--o| SCOPEDEFINITION : "board scope (0..1)"
+    TEAMPROFILE }o--o{ SIGNALCONFIGGROUP : "attaches (signal_config_group_ids)"
+    SIGNALCONFIGGROUP }o--o{ SIGNALDEFINITION : "contains (signal_ids)"
     TEAMPROFILE ||--o{ EVALUATIONWINDOW : "scopes"
     EVALUATIONWINDOW }o--o| SPRINT      : "sprint window"
     EVALUATIONWINDOW ||--|| REPORT      : "produces"

@@ -398,8 +398,9 @@ For enterprise or multi-user deployment
 The storage layer stores:
 
 * source connection metadata
-* reusable scope definitions for projects/boards/repositories/saved filters
-* signal templates and runnable signal definitions
+* team profiles, including each team's board scope and attached signal config groups
+* scope definitions for selected boards/repositories
+* signal definitions and signal config groups
 * field mappings
 * normalized source data cache
 * generated reports
@@ -456,12 +457,12 @@ This allows non-coding EMs to configure the system through the UI.
 
 Configuration includes:
 
-* reusable scope definitions
-* signal templates and runnable signal definitions
-* signal expressions, target scopes, and report settings
+* scope definitions (a team's board scope)
+* signal definitions and signal config groups
+* signal expressions and report settings
 * Jira field mappings
 * GitLab key extraction pattern
-* team profiles
+* team profiles (board scope + attached signal config groups)
 * report preferences
 
 ---
@@ -470,7 +471,7 @@ Configuration includes:
 
 On first startup:
 
-1. EM Radar loads bundled default signal packs.
+1. EM Radar loads the bundled default signal pack into a default signal config group.
 2. The defaults are seeded into the local database.
 3. The user can modify settings through the UI.
 4. Changes persist locally.
@@ -486,7 +487,7 @@ Rules:
 
 * credentials must never be exported
 * imported config must be schema-validated
-* public template imports must be mapped to local connectors and scopes before being enabled
+* importing a pack creates a new signal config group; the user attaches it to teams afterward
 * invalid config must be rejected with clear errors
 * community configs must be declarative only
 * config import must not execute arbitrary code
@@ -505,8 +506,8 @@ It is the core of EM Radar.
 
 The signal engine is responsible for:
 
-* loading enabled signals
-* enforcing explicit target scopes
+* loading a team's enabled signals (the union across its attached signal config groups)
+* evaluating them against the team's board scope
 * evaluating structured rule expressions
 * validating field/operator availability against connector capability schemas
 * evaluating signals against canonical models
@@ -539,13 +540,14 @@ sequenceDiagram
     participant Engine as Signal Engine
     participant Report as Report Generator
 
-    User->>UI: Select sprint or date range
+    User->>UI: Select team(s) and window
     UI->>Runner: Start report
-    Runner->>Connector: Fetch source data
+    Runner->>Store: Resolve team's board scope + attached signal config groups
+    Runner->>Connector: Fetch source data (team's scope)
     Connector->>Normalizer: Return raw/semi-normalized data
     Normalizer->>Store: Save normalized data
     Runner->>Store: Load normalized data
-    Runner->>Engine: Evaluate enabled signals
+    Runner->>Engine: Evaluate the team's signals (union of groups)
     Engine->>Store: Persist findings
     Engine->>Report: Send findings
     Report->>UI: Render report
@@ -660,11 +662,14 @@ Onboarding / Setup wizard
 Dashboard
 Source Connections
 Teams
-Signal Settings
+Signals & Config Groups
 Report Runner
 Report Results
 Settings / Privacy
 ```
+
+The Teams page is where a team's board scope is set and signal config groups are attached. The
+Signals & Config Groups page is where signals are built and bundled into reusable groups.
 
 The Setup page is an onboarding wizard that guides connection setup and team creation; the
 Dashboard is the post-setup landing showing the latest report per team. See
@@ -679,8 +684,8 @@ The UI is responsible for:
 * guiding first-time setup
 * collecting Jira/GitLab connection settings
 * testing source connections
-* selecting reusable scopes
-* creating, editing, previewing, importing, and exporting scoped signal definitions
+* setting a team's board scope and attaching signal config groups
+* creating, editing, previewing, importing, and exporting signals and signal config groups
 * running reports
 * displaying findings
 * exporting reports
@@ -990,8 +995,8 @@ sequenceDiagram
     UI->>GitLab: Test GitLab connection
     GitLab-->>UI: Success
     UI->>Config: Save GitLab settings
-    User->>UI: Select signal pack
-    UI->>Config: Save signal settings
+    User->>UI: Create team, set board scope, attach signal config groups
+    UI->>Config: Save team profile
 ```
 
 ---
@@ -1010,15 +1015,16 @@ sequenceDiagram
     participant Engine as Signal Engine
     participant Report as Report Generator
 
-    User->>UI: Select sprint/date range
+    User->>UI: Select team(s) and window
     UI->>Runner: Run report
-    Runner->>JiraConnector: Fetch work items
+    Runner->>Store: Resolve team's board scope + attached signal config groups
+    Runner->>JiraConnector: Fetch work items (team's scope)
     Runner->>GitLabConnector: Fetch merge requests
     JiraConnector-->>Normalizer: Jira data
     GitLabConnector-->>Normalizer: GitLab data
     Normalizer->>Store: Save normalized data
     Runner->>Store: Load normalized data
-    Runner->>Engine: Evaluate signals
+    Runner->>Engine: Evaluate the team's signals (union of groups)
     Engine-->>Runner: Findings
     Runner->>Store: Save report
     Runner->>Report: Build report view

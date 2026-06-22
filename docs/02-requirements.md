@@ -125,8 +125,9 @@ The system shall store local application data in SQLite by default.
 Stored data includes:
 
 * connector configuration
-* reusable scope definitions for selected projects/boards/repositories/saved filters
-* signal definitions, including target scope assignments
+* team profiles, including each team's board scope and attached signal config groups
+* scope definitions for selected boards/repositories
+* signal definitions and signal config groups
 * report history
 * cached normalized source data
 * local user preferences
@@ -466,7 +467,7 @@ definitions.
 
 Users shall be able to:
 
-* instantiate built-in templates for selected scopes
+* add built-in templates to signal config groups
 * enable signals
 * disable signals
 * duplicate signals
@@ -474,9 +475,10 @@ Users shall be able to:
 * delete user-created or imported signals
 * reset signal settings to defaults
 
-Every runnable signal shall target one or more explicit scopes. A signal must not automatically
-apply to every project, board, repository, or source available through a connector unless the user
-explicitly chooses an "all scopes" option.
+Signals are **scope-agnostic**: a signal carries its rule and configuration but no target scope.
+Scope is resolved from the team at report time — a team owns a single Jira board scope, and a team
+runs the signals from its attached signal config groups (see REQ-F-041C). Signal configuration is
+global per signal; to run the same check with different thresholds, create two signals.
 
 Acceptance criteria:
 
@@ -544,7 +546,7 @@ Custom signals must be structured data, not executable code. The MVP builder sha
 * AND/OR logical groups
 * one level of nested grouping
 * date and duration comparisons
-* sprint-aware conditions only when the selected scope supports sprint data
+* sprint-aware conditions, evaluated only when the team's board scope supplies sprint data
 
 Acceptance criteria:
 
@@ -552,8 +554,6 @@ Acceptance criteria:
 * custom signal definitions are persisted and evaluated deterministically
 * custom signal definitions can be exported and imported
 * arbitrary scripting or expression-language execution is rejected
-
-Reference: [12-revised-signal-requirements](./12-revised-signal-requirements.md).
 
 ---
 
@@ -577,16 +577,16 @@ This is not required for MVP.
 
 ## 4.5 Signal Configuration
 
-### REQ-F-040 — Default Signal Pack
+### REQ-F-040 — Default Signal Config Group
 
 **MVP**
 
-The system shall include a default signal pack.
+The system shall include a default signal config group.
 
 Acceptance criteria:
 
-* default pack is loaded on first startup
-* default pack enables enough signals to produce useful reports
+* the default group is loaded on first startup
+* the default group contains enough enabled signals to produce useful reports
 * default thresholds are documented
 
 ---
@@ -595,37 +595,56 @@ Acceptance criteria:
 
 **MVP**
 
-The system shall allow users to configure signal templates, scopes, and signal definitions through
-the UI.
+The system shall allow users to configure signals and signal config groups through the UI.
 
 Acceptance criteria:
 
 * user can see available signals
 * user can enable or disable signals
 * user can create, duplicate, edit, and delete user-created signals
-* user can select a connector and explicit target scopes for each runnable signal
 * user can edit conditions with field/operator/value controls
 * user can preview a signal before saving it
 * user can reset to defaults
+* the signal builder has no scope picker — signals are scope-agnostic
 
 ---
 
-### REQ-F-041A — Reusable Scope Definitions
+### REQ-F-041A — Team-owned Scope
 
 **MVP**
 
-The system shall store scopes separately from connectors and signals.
+The system shall store scopes separately from connectors and signals, and attach a scope to a team.
 
-A scope represents a subset of data inside a connector, such as a Jira project, Jira board, Jira
-saved filter, GitLab repository, or GitLab group/project selection. Multiple signals may target the
-same scope.
+A scope represents a subset of data inside a connector, such as a Jira board (later, GitLab
+repositories). In MVP a team owns a single Jira board scope (0..1). Scope is resolved from the team
+at report time; signals never reference scopes.
 
 Acceptance criteria:
 
 * connectors represent access to external systems, not signal applicability
-* users can create or select reusable scopes from connector-provided options
-* signal definitions reference scopes by id
+* users can select a team's board scope from connector-provided options
+* a team's report runs against the team's board scope
 * reports include the scope name for each finding
+
+---
+
+### REQ-F-041C — Reusable Signal Config Groups
+
+**MVP**
+
+The system shall provide reusable signal config groups: named bundles of signals that the user
+attaches to teams.
+
+A signal config group is many-to-many with both teams (one group may be attached to many teams) and
+signals (one signal may belong to many groups). A group carries no connector, scope, or credential.
+
+Acceptance criteria:
+
+* users can create, rename, and delete signal config groups
+* users can add and remove signals from a group; a signal may live in several groups
+* users can attach and detach groups from a team
+* a team's evaluated signals are the union of enabled signals across its attached groups
+* editing a group propagates to every team it is attached to
 
 ---
 
@@ -648,8 +667,8 @@ Acceptance criteria:
 
 * the signal builder is generated from connector capabilities instead of hardcoding Jira-specific
   behavior
-* invalid field/operator/scope combinations are blocked before save
-* imported public templates are validated against the selected connector and scope capabilities
+* invalid field/operator combinations are blocked before save
+* imported public templates are validated against the selected connector capabilities
 
 ---
 
@@ -657,19 +676,16 @@ Acceptance criteria:
 
 **MVP**
 
-The system shall allow users to export signal configuration as YAML in two modes:
+The system shall allow users to export a signal config group as YAML in two modes:
 
 * private backup or migration export
 * public template export
 
 Acceptance criteria:
 
-* private backup export may include connector references, scope references, and organization-specific
-  project/board/repository identifiers
-* public template export removes connector-specific, project-specific, board-specific,
-  repository-specific, and user-specific details
-* public template export replaces target scopes with required connector type and scope capabilities
-* exported YAML contains signal definitions and report settings
+* a YAML export contains the group's signals and their report settings — no connectors, scopes, or teams
+* private backup export keeps organization-specific condition values (e.g. concrete label or status names)
+* public template export prompts the user to review and scrub organization-specific condition values
 * exported YAML contains no credentials
 * public template exports can be stored in version control if the user chooses
 
@@ -683,10 +699,9 @@ The system shall allow users to import private backup YAML and public template Y
 
 Acceptance criteria:
 
-* imported private backups try to map connectors and scopes by type, URL, external id, key, or name
-* imported public templates require the user to choose local connectors and target scopes
+* importing a YAML pack creates a new signal config group (name suffixed on collision)
+* the user attaches the new group to teams after import; no connector or scope mapping step is required
 * imports validate field/operator/value compatibility against connector capability schemas
-* unresolved mappings keep affected signals disabled until resolved
 * invalid YAML is rejected with a clear error
 * credentials cannot be imported through signal config
 * user can review or confirm import before applying, if feasible
@@ -717,15 +732,16 @@ This is not required for MVP.
 
 **MVP**
 
-The system shall allow users to run a report for a selected sprint.
+The system shall allow users to run a sprint report for one or more selected teams.
 
 Acceptance criteria:
 
-* user can select a configured Jira board/project
-* user can select a sprint
+* user can select one or more teams
+* for each team, the system uses the team's board scope (no separate board picker)
+* user can select a sprint (scrum teams default to the active sprint)
 * system fetches relevant Jira and GitLab data
-* system evaluates enabled signals
-* system displays report results
+* system evaluates each team's signals (the union across its attached signal config groups)
+* system displays report results per team
 
 ---
 
@@ -733,14 +749,15 @@ Acceptance criteria:
 
 **MVP**
 
-The system shall allow users to run a report for a custom date range.
+The system shall allow users to run a date-range report for one or more selected teams.
 
 Acceptance criteria:
 
-* user can select start and end date
+* user can select one or more teams and a start and end date
+* for each team, the system uses the team's board scope
 * system fetches relevant Jira and GitLab data for that range
-* system evaluates enabled signals
-* system displays report results
+* system evaluates each team's signals (the union across its attached signal config groups)
+* system displays report results per team
 
 ---
 

@@ -201,7 +201,8 @@ EM Radar is not:
 
 ### 6.1 Sprint Health Report
 
-An EM selects a Jira sprint and generates a report showing:
+An EM selects a team and a sprint — the team's Jira board scope and its signals (from its attached
+signal config groups) are already configured — and generates a report showing:
 
 * stale in-progress work
 * blocked items without recent updates
@@ -298,6 +299,7 @@ Phase 1 includes:
 * source connector framework
 * deterministic signal engine
 * configurable built-in signals
+* reusable signal config groups attached to teams
 * sprint report
 * date-range report
 * Markdown export
@@ -377,11 +379,12 @@ Store signal configuration in the local database and allow users to edit it thro
 
 Scope:
 
-* default signal pack seeding
+* default signal config group seeding
 * enable/disable signals
 * threshold editing
 * severity configuration
-* YAML import/export
+* reusable signal config groups (add signals to groups; attach groups to teams)
+* YAML import/export (a pack is an exported group; carries no scopes or teams)
 * reset to defaults
 * credentials excluded from exports
 
@@ -630,9 +633,9 @@ This allows configuration through the UI and avoids forcing users to edit files 
 
 ### Import/Export
 
-Users can export and import configuration as YAML.
-
-Credentials must never be included in exported configuration.
+Users can export and import signal config groups as YAML packs. A pack carries the group's signals
+and their configuration only — never credentials, source connections, scopes, or teams. Importing a
+pack creates a new group the user can attach to teams.
 
 ---
 
