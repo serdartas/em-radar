@@ -4,6 +4,7 @@ from uuid import UUID
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
+from em_radar_api.repositories.signal_config_groups import remove_signal_id_from_all_groups
 from em_radar_api.signal_definitions import (
     SignalDefinitionCreate,
     SignalDefinitionRead,
@@ -67,6 +68,7 @@ def delete_signal_definition(session: Session, definition_id: UUID) -> bool:
     row = session.get(SignalDefinitionTable, definition_id)
     if row is None:
         return False
+    remove_signal_id_from_all_groups(session, definition_id)
     session.delete(row)
     session.commit()
     return True
