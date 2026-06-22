@@ -5,6 +5,7 @@ from sqlmodel import Field
 
 from em_radar_api.models.signal_pack_history import SignalPackHistory  # noqa: F401
 from em_radar_api.scope_definitions import ScopeDefinitionTable  # noqa: F401
+from em_radar_api.signal_config_groups import SignalConfigGroupTable  # noqa: F401
 from em_radar_api.signal_configs import SignalConfigTable  # noqa: F401
 from em_radar_api.signal_definitions import SignalDefinitionTable  # noqa: F401
 from em_radar_api.source_connections import SourceConnectionTable, UUIDListJSON  # noqa: F401
