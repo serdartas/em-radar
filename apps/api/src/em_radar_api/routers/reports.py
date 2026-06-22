@@ -16,10 +16,12 @@ from em_radar_core.connectors import (
 from em_radar_core.evaluation import SignalConfig, SignalEvaluator
 from em_radar_core.evaluation import ScopeDescriptor, evaluate_signal_definition
 from em_radar_core.models import (
+    Board,
     Confidence,
     EntityType,
     EvaluationContext,
     EvaluationWindow,
+    Project,
     ReportStatus,
     Severity,
     SignalFinding,
@@ -38,7 +40,7 @@ from em_radar_core.models import (
 from em_radar_core.signals import SignalData, default_registry
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, JsonValue, model_validator
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from em_radar_api.db import get_session, get_write_session
 from em_radar_api.connector_registry import create_connector
@@ -52,12 +54,13 @@ from em_radar_api.repositories.reports import (
     save_report,
 )
 from em_radar_api.repositories.signal_configs import list_signal_configs
-from em_radar_api.repositories.signal_definitions import list_signal_definitions
-from em_radar_api.repositories.scope_definitions import list_scope_definitions
 from em_radar_api.repositories.source_connections import (
     get_source_connection,
     instantiate_connector,
 )
+from em_radar_api.scope_definitions import ScopeDefinitionTable, ScopeType
+from em_radar_api.signal_config_groups import SignalConfigGroupTable
+from em_radar_api.signal_definitions import SignalDefinitionTable
 from em_radar_api.source_connections import ConnectorName
 from em_radar_api.tables import (
     EvaluationWindowTable,
@@ -86,31 +89,17 @@ class ReportWindowRequest(BaseModel):
         return self
 
 
-class JiraReportRequest(BaseModel):
-    connection_id: UUID
-    project_external_id: str
-    board_external_id: str
-    working_mode: WorkingMode
-    sprint_length_days: int | None = None
-
-    @model_validator(mode="after")
-    def validate_working_mode(self) -> Self:
-        if self.working_mode is WorkingMode.KANBAN and self.sprint_length_days is not None:
-            raise ValueError("sprint_length_days must be null for kanban reports")
-        return self
-
-
 class ReportRunRequest(BaseModel):
     connector: Literal["demo", "jira"]
+    team_profile_id: UUID | None = None
     window: ReportWindowRequest | None = None
-    jira: JiraReportRequest | None = None
 
     @model_validator(mode="after")
     def validate_connector_scope(self) -> Self:
-        if self.connector == "jira" and self.jira is None:
-            raise ValueError("jira reports require jira scope")
-        if self.connector == "demo" and self.jira is not None:
-            raise ValueError("demo reports do not accept jira scope")
+        if self.connector == "jira" and self.team_profile_id is None:
+            raise ValueError("jira reports require a team_profile_id")
+        if self.connector == "demo" and self.team_profile_id is not None:
+            raise ValueError("demo reports do not accept a team_profile_id")
         return self
 
 
@@ -168,9 +157,9 @@ async def run_report(
     session: Session = Depends(get_write_session),
 ) -> ReportDetailResponse:
     if request.connector == "jira":
-        if request.jira is None:
-            raise HTTPException(status_code=422, detail="jira reports require jira scope")
-        return await _run_jira_report(request.jira, session)
+        if request.team_profile_id is None:
+            raise HTTPException(status_code=422, detail="jira reports require a team_profile_id")
+        return await _run_jira_report(request.team_profile_id, session)
     return await _run_demo_report(request.window, session)
 
 
@@ -315,20 +304,26 @@ async def _run_demo_report(
 
 
 async def _run_jira_report(
-    request: JiraReportRequest,
+    team_profile_id: UUID,
     session: Session,
 ) -> ReportDetailResponse:
     started_at = datetime.now(timezone.utc)
-    connection = get_source_connection(session, request.connection_id)
+    team_row = session.get(TeamProfileTable, team_profile_id)
+    if team_row is None:
+        raise HTTPException(status_code=404, detail="team not found")
+    board_scope = _team_board_scope(session, team_row)
+    if board_scope is None:
+        raise HTTPException(status_code=422, detail="team has no board scope")
+    connection = get_source_connection(session, board_scope.connection_id)
     if connection is None:
         raise HTTPException(status_code=404, detail="connection not found")
     if connection.connector_name != ConnectorName.JIRA:
-        raise HTTPException(status_code=400, detail="connection is not a Jira connection")
+        raise HTTPException(status_code=400, detail="team board scope is not a Jira connection")
 
     try:
         connector = instantiate_connector(
             session,
-            request.connection_id,
+            board_scope.connection_id,
             lambda config: create_connector("jira", config),
         )
     except ConnectorConfigError as error:
@@ -338,40 +333,19 @@ async def _run_jira_report(
     if not isinstance(connector, WorkItemProvider):
         raise HTTPException(status_code=400, detail="connection does not support Jira reports")
 
+    board_external_id = str(board_scope.external_ref.get("id"))
+    team = TeamProfile.model_validate(team_row, from_attributes=True)
     try:
-        projects = [
-            project
-            for project in await connector.list_projects()
-            if project.external_id == request.project_external_id
-        ]
-        if not projects:
-            raise HTTPException(status_code=404, detail="Jira project not found")
-        boards = [
-            board
-            for board in await connector.list_boards(request.project_external_id)
-            if board.external_id == request.board_external_id
-        ]
-        if not boards:
+        project, board = await _find_jira_board(connector, board_external_id)
+        if project is None or board is None:
             raise HTTPException(status_code=404, detail="Jira board not found")
-        sprints = await connector.list_sprints(request.board_external_id)
-
-        team = TeamProfile(
-            name=f"{projects[0].key} Jira {request.working_mode.value}",
-            connection_ids=[request.connection_id],
-            project_ids=[projects[0].id],
-            board_ids=[boards[0].id],
-            repository_ids=[],
-            working_mode=request.working_mode,
-            sprint_length_days=request.sprint_length_days,
-            created_at=started_at,
-            updated_at=started_at,
-        )
-        window = _jira_evaluation_window(request, sprints, team.id, started_at)
+        sprints = await connector.list_sprints(board_external_id)
+        window = _jira_evaluation_window(team, sprints, team.id, started_at)
         workitems = await _collect(
             connector.fetch_workitems(
                 WorkItemScope(
-                    project_external_ids=[request.project_external_id],
-                    board_external_ids=[request.board_external_id],
+                    project_external_ids=[project.external_id],
+                    board_external_ids=[board_external_id],
                 ),
                 window,
             )
@@ -394,26 +368,23 @@ async def _run_jira_report(
     identity = persist_fetch(
         session,
         users=_placeholder_jira_users(workitems, transitions),
-        projects=projects,
-        boards=boards,
+        projects=[project],
+        boards=[board],
         sprints=sprints,
         workitems=workitems,
         transitions=transitions,
     )
-    session.add(_team_row(team))
-    session.commit()
     persisted_window = _persisted_window(window, identity.identity_map)
     session.add(EvaluationWindowTable(**persisted_window.model_dump()))
     session.commit()
-    signal_configs = _signal_configs(session)
-    signal_definitions = _signal_definitions(session)
-    scope_descriptors = _scope_descriptors(session, request.connection_id)
+    signal_definitions = _signal_definitions_for_team(session, team_row)
+    scope_descriptor = _scope_descriptor(board_scope)
 
     report = create_report(
         session,
         ReportTable(
             evaluation_window_id=window.id,
-            signal_pack_snapshot=_signal_pack_snapshot(signal_configs, signal_definitions),
+            signal_pack_snapshot=_team_signal_pack_snapshot(team_row, signal_definitions),
             status=ReportStatus.PENDING,
             started_at=started_at,
         ),
@@ -424,8 +395,8 @@ async def _run_jira_report(
     try:
         data = SignalData(
             report_id=report.id,
-            projects=tuple(projects),
-            boards=tuple(boards),
+            projects=(project,),
+            boards=(board,),
             sprints=tuple(sprints),
             workitems=tuple(workitems),
             transitions=tuple(transitions),
@@ -439,7 +410,7 @@ async def _run_jira_report(
                 data,
                 ctx,
                 JiraConnector.describe_signal_schema(),
-                scope_descriptors,
+                [scope_descriptor],
             )
         ]
         persisted_findings = [
@@ -496,12 +467,12 @@ def _evaluation_window(
 
 
 def _jira_evaluation_window(
-    request: JiraReportRequest,
+    team: TeamProfile,
     sprints: list[Sprint],
     team_id: UUID,
     now: datetime,
 ) -> EvaluationWindow:
-    if request.working_mode is WorkingMode.KANBAN:
+    if team.working_mode is WorkingMode.KANBAN:
         return EvaluationWindow(
             window_type=WindowType.DATE_RANGE,
             start=now - timedelta(days=DEFAULT_KANBAN_REPORT_DAYS),
@@ -544,10 +515,7 @@ def _persisted_finding(
     return SignalFindingTable(**data)
 
 
-def _signal_pack_snapshot(
-    configs: Sequence[SignalConfig],
-    definitions: Sequence[SignalDefinition] | None = None,
-) -> dict[str, object]:
+def _signal_pack_snapshot(configs: Sequence[SignalConfig]) -> dict[str, object]:
     configs_by_id = {config.signal_id: config for config in configs}
     return {
         "schema_id": "emradar.dev/v1",
@@ -563,20 +531,27 @@ def _signal_pack_snapshot(
             for signal in (default_registry.get(signal_id) for signal_id in default_registry.ids())
             for config in [configs_by_id[signal.id]]
         ],
+    }
+
+
+def _team_signal_pack_snapshot(
+    team_row: TeamProfileTable,
+    definitions: Sequence[SignalDefinition],
+) -> dict[str, object]:
+    return {
+        "schema_id": "emradar.dev/v1",
+        "signal_config_group_ids": [str(group_id) for group_id in team_row.signal_config_group_ids],
         "signal_definitions": [
             {
                 "id": str(definition.id),
                 "name": definition.name,
                 "entity_type": definition.entity_type,
-                "target_scopes": [
-                    target.model_dump(mode="json") for target in definition.target_scopes
-                ],
                 "enabled": definition.enabled,
                 "origin": definition.origin.value,
                 "template_key": definition.template_key,
                 "version": definition.version,
             }
-            for definition in (definitions or [])
+            for definition in definitions
         ],
     }
 
@@ -600,41 +575,76 @@ def _signal_configs(session: Session) -> list[SignalConfig]:
     return configs
 
 
-def _signal_definitions(session: Session) -> list[SignalDefinition]:
-    definitions: list[SignalDefinition] = []
-    for row in list_signal_definitions(session):
-        definitions.append(
-            SignalDefinition(
-                id=row.id,
-                name=row.name,
-                description=row.description,
-                entity_type=row.entity_type,
-                target_scopes=row.target_scopes,
-                expression=row.expression,
-                report_settings=row.report_settings,
-                enabled=row.enabled,
-                origin=SignalOrigin(row.origin),
-                template_key=row.template_key,
-                version=row.version,
-                created_at=row.created_at,
-                updated_at=row.updated_at,
-            )
+def _team_board_scope(session: Session, team_row: TeamProfileTable) -> ScopeDefinitionTable | None:
+    scopes = session.exec(
+        select(ScopeDefinitionTable).where(ScopeDefinitionTable.id.in_(team_row.scope_ids))
+    ).all()
+    return next((scope for scope in scopes if scope.scope_type is ScopeType.BOARD), None)
+
+
+async def _find_jira_board(
+    connector: WorkItemProvider, board_external_id: str
+) -> tuple[Project, Board] | tuple[None, None]:
+    for project in await connector.list_projects():
+        for board in await connector.list_boards(project.external_id):
+            if board.external_id == board_external_id:
+                return project, board
+    return None, None
+
+
+def _signal_definitions_for_team(
+    session: Session, team_row: TeamProfileTable
+) -> list[SignalDefinition]:
+    groups = session.exec(
+        select(SignalConfigGroupTable).where(
+            SignalConfigGroupTable.id.in_(team_row.signal_config_group_ids)
         )
-    return definitions
+    ).all()
+    ordered_ids: list[UUID] = []
+    seen: set[UUID] = set()
+    for group in groups:
+        for signal_id in group.signal_ids:
+            if signal_id not in seen:
+                seen.add(signal_id)
+                ordered_ids.append(signal_id)
 
-
-def _scope_descriptors(session: Session, connection_id: UUID) -> list[ScopeDescriptor]:
+    rows = session.exec(
+        select(SignalDefinitionTable).where(SignalDefinitionTable.id.in_(ordered_ids))
+    ).all()
+    rows_by_id = {row.id: row for row in rows}
     return [
-        ScopeDescriptor(
-            connector_id=str(scope.connection_id),
-            scope_id=str(scope.id),
-            scope_type=scope.scope_type.value,
-            name=scope.name,
-            external_ref=dict(scope.external_ref),
-            capabilities=tuple(scope.capabilities),
-        )
-        for scope in list_scope_definitions(session, connection_id)
+        _definition_from_row(rows_by_id[signal_id])
+        for signal_id in ordered_ids
+        if signal_id in rows_by_id and rows_by_id[signal_id].enabled
     ]
+
+
+def _definition_from_row(row: SignalDefinitionTable) -> SignalDefinition:
+    return SignalDefinition(
+        id=row.id,
+        name=row.name,
+        description=row.description,
+        entity_type=row.entity_type,
+        expression=row.expression,
+        report_settings=row.report_settings,
+        enabled=row.enabled,
+        origin=SignalOrigin(row.origin),
+        template_key=row.template_key,
+        version=row.version,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+def _scope_descriptor(scope: ScopeDefinitionTable) -> ScopeDescriptor:
+    return ScopeDescriptor(
+        connector_id=str(scope.connection_id),
+        scope_id=str(scope.id),
+        scope_type=scope.scope_type.value,
+        name=scope.name,
+        external_ref=dict(scope.external_ref),
+        capabilities=tuple(scope.capabilities),
+    )
 
 
 def _placeholder_jira_users(
