@@ -16,6 +16,7 @@ class TeamProfileCreate(SQLModel):
     project_ids: list[UUID] = Field(default_factory=list)
     board_ids: list[UUID] = Field(default_factory=list)
     repository_ids: list[UUID] = Field(default_factory=list)
+    signal_config_group_ids: list[UUID] = Field(default_factory=list)
     working_mode: WorkingMode = WorkingMode.SCRUM
     sprint_length_days: int | None = None
     member_user_keys: list[str] = Field(default_factory=list)
@@ -35,6 +36,7 @@ class TeamProfileUpdate(SQLModel):
     project_ids: list[UUID] | None = None
     board_ids: list[UUID] | None = None
     repository_ids: list[UUID] | None = None
+    signal_config_group_ids: list[UUID] | None = None
     working_mode: WorkingMode | None = None
     sprint_length_days: int | None = None
     member_user_keys: list[str] | None = None

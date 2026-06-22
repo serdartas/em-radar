@@ -11,6 +11,7 @@ from em_radar_api.signal_config_groups import (
     SignalConfigGroupUpdate,
 )
 from em_radar_api.signal_definitions import SignalDefinitionTable
+from em_radar_api.tables import TeamProfileTable
 
 
 class DuplicateGroupName(ValueError):
@@ -18,6 +19,10 @@ class DuplicateGroupName(ValueError):
 
 
 class InvalidSignalConfigGroup(ValueError):
+    pass
+
+
+class SignalConfigGroupInUse(ValueError):
     pass
 
 
@@ -82,9 +87,19 @@ def delete_signal_config_group(session: Session, group_id: UUID) -> bool:
     row = session.get(SignalConfigGroupTable, group_id)
     if row is None:
         return False
+    if _referencing_teams(session, group_id):
+        raise SignalConfigGroupInUse("signal config group is referenced by a team")
     session.delete(row)
     session.commit()
     return True
+
+
+def _referencing_teams(session: Session, group_id: UUID) -> list[TeamProfileTable]:
+    return [
+        team
+        for team in session.exec(select(TeamProfileTable)).all()
+        if group_id in team.signal_config_group_ids
+    ]
 
 
 def _validate_signal_ids(session: Session, signal_ids: list[UUID]) -> None:

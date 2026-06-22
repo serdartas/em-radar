@@ -4,7 +4,8 @@ from uuid import UUID
 from pydantic import ValidationError
 from sqlmodel import Session, select
 
-from em_radar_api.scope_definitions import ScopeDefinitionTable
+from em_radar_api.scope_definitions import ScopeDefinitionTable, ScopeType
+from em_radar_api.signal_config_groups import SignalConfigGroupTable
 from em_radar_api.source_connections import SourceConnectionTable
 from em_radar_api.tables import EvaluationWindowTable, TeamProfileTable
 from em_radar_api.team_profiles import TeamProfileCreate, TeamProfileRead, TeamProfileUpdate
@@ -96,6 +97,21 @@ def _validate_team_profile(session: Session, team: TeamProfileCreate) -> None:
     connection_ids = {connection.id for connection in connections}
     if any(scope.connection_id not in connection_ids for scope in scopes):
         raise InvalidTeamProfile("scope_ids must reference the selected connections")
+    board_scope_ids = {scope.id for scope in scopes if scope.scope_type is ScopeType.BOARD}
+    if sum(scope_id in board_scope_ids for scope_id in team.scope_ids) > 1:
+        raise InvalidTeamProfile("scope_ids may contain at most one board scope")
+
+    if len(set(team.signal_config_group_ids)) != len(team.signal_config_group_ids):
+        raise InvalidTeamProfile("signal_config_group_ids must not contain duplicates")
+    groups = session.exec(
+        select(SignalConfigGroupTable).where(
+            SignalConfigGroupTable.id.in_(team.signal_config_group_ids)
+        )
+    ).all()
+    if len(groups) != len(set(team.signal_config_group_ids)):
+        raise InvalidTeamProfile(
+            "signal_config_group_ids must reference existing signal config groups"
+        )
 
     scoped_ids = (
         ("project_ids", team.project_ids, "selected_project_ids"),
