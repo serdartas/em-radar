@@ -208,6 +208,94 @@ class TestSignalConfigGroupCRUD:
         assert response.status_code == 404
 
 
+class TestSignalDeletionCleansGroupMembership:
+    def test_deleting_signal_removes_it_from_one_group(
+        self, api_client: TestClient, session_factory: sessionmaker[Session]
+    ) -> None:
+        sig_id = _create_signal(session_factory)
+        group = api_client.post(
+            "/api/signal-config-groups", json=_group_payload(signal_ids=[sig_id])
+        ).json()
+
+        assert api_client.delete(f"/api/signal-definitions/{sig_id}").status_code == 204
+
+        updated = api_client.get(f"/api/signal-config-groups/{group['id']}").json()
+        assert updated["signal_ids"] == []
+
+    def test_deleting_signal_removes_it_from_multiple_groups(
+        self, api_client: TestClient, session_factory: sessionmaker[Session]
+    ) -> None:
+        sig_a = _create_signal(session_factory, "Signal A")
+        sig_b = _create_signal(session_factory, "Signal B")
+        group1 = api_client.post(
+            "/api/signal-config-groups",
+            json=_group_payload(name="Group 1", signal_ids=[sig_a, sig_b]),
+        ).json()
+        group2 = api_client.post(
+            "/api/signal-config-groups",
+            json=_group_payload(name="Group 2", signal_ids=[sig_a]),
+        ).json()
+
+        assert api_client.delete(f"/api/signal-definitions/{sig_a}").status_code == 204
+
+        assert api_client.get(f"/api/signal-config-groups/{group1['id']}").json()["signal_ids"] == [
+            sig_b
+        ]
+        assert (
+            api_client.get(f"/api/signal-config-groups/{group2['id']}").json()["signal_ids"] == []
+        )
+
+    def test_deleting_signal_preserves_order_of_remaining_ids(
+        self, api_client: TestClient, session_factory: sessionmaker[Session]
+    ) -> None:
+        sig_a = _create_signal(session_factory, "Signal A")
+        sig_b = _create_signal(session_factory, "Signal B")
+        sig_c = _create_signal(session_factory, "Signal C")
+        group = api_client.post(
+            "/api/signal-config-groups",
+            json=_group_payload(signal_ids=[sig_a, sig_b, sig_c]),
+        ).json()
+
+        assert api_client.delete(f"/api/signal-definitions/{sig_b}").status_code == 204
+
+        updated = api_client.get(f"/api/signal-config-groups/{group['id']}").json()
+        assert updated["signal_ids"] == [sig_a, sig_c]
+
+    def test_deleting_signal_leaves_unrelated_group_untouched(
+        self, api_client: TestClient, session_factory: sessionmaker[Session]
+    ) -> None:
+        sig_a = _create_signal(session_factory, "Signal A")
+        sig_b = _create_signal(session_factory, "Signal B")
+        api_client.post(
+            "/api/signal-config-groups",
+            json=_group_payload(name="Group with A", signal_ids=[sig_a]),
+        )
+        unrelated = api_client.post(
+            "/api/signal-config-groups",
+            json=_group_payload(name="Group with B", signal_ids=[sig_b]),
+        ).json()
+
+        assert api_client.delete(f"/api/signal-definitions/{sig_a}").status_code == 204
+
+        after = api_client.get(f"/api/signal-config-groups/{unrelated['id']}").json()
+        assert after["signal_ids"] == [sig_b]
+        assert after["updated_at"] == unrelated["updated_at"]
+
+    def test_deleting_signal_not_in_any_group_succeeds(
+        self, api_client: TestClient, session_factory: sessionmaker[Session]
+    ) -> None:
+        sig_id = _create_signal(session_factory)
+        assert api_client.delete(f"/api/signal-definitions/{sig_id}").status_code == 204
+
+    def test_deleted_signal_is_gone(
+        self, api_client: TestClient, session_factory: sessionmaker[Session]
+    ) -> None:
+        sig_id = _create_signal(session_factory)
+        api_client.post("/api/signal-config-groups", json=_group_payload(signal_ids=[sig_id]))
+        assert api_client.delete(f"/api/signal-definitions/{sig_id}").status_code == 204
+        assert api_client.get(f"/api/signal-definitions/{sig_id}").status_code == 404
+
+
 def test_alembic_revision_applies_on_in_memory_sqlite(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -69,6 +69,15 @@ def update_signal_config_group(
     return SignalConfigGroupRead.model_validate(row)
 
 
+def remove_signal_id_from_all_groups(session: Session, signal_id: UUID) -> None:
+    rows = session.exec(select(SignalConfigGroupTable)).all()
+    for row in rows:
+        if signal_id in row.signal_ids:
+            row.signal_ids = [sid for sid in row.signal_ids if sid != signal_id]
+            row.updated_at = datetime.now(UTC)
+            session.add(row)
+
+
 def delete_signal_config_group(session: Session, group_id: UUID) -> bool:
     row = session.get(SignalConfigGroupTable, group_id)
     if row is None:
