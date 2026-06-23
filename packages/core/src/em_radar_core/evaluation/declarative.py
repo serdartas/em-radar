@@ -10,7 +10,6 @@ from em_radar_core.models import (
     Severity,
     SignalDefinition,
     SignalFinding,
-    SignalTargetScope,
     Sprint,
     Transition,
     WorkItem,
@@ -49,23 +48,15 @@ def evaluate_signal_definition(
     schema: SignalCapabilitySchema,
     scopes: list[ScopeDescriptor],
 ) -> list[SignalFinding]:
-    if not definition.enabled:
+    if not definition.enabled or not scopes:
         return []
 
-    scope_by_id = {scope.scope_id: scope for scope in scopes}
-    target_scopes = [_scope_key(target) for target in definition.target_scopes]
-    selected_scopes = [
-        scope_by_id[scope_id] for scope_id in target_scopes if scope_id in scope_by_id
-    ]
-    if not selected_scopes:
-        return []
-
-    validate_expression(definition.expression, schema, selected_scopes)
+    validate_expression(definition.expression, schema, scopes)
     if definition.template_key == "sprint-scope-churn":
-        return _evaluate_sprint_scope_churn_template(definition, data, ctx, selected_scopes)
+        return _evaluate_sprint_scope_churn_template(definition, data, ctx, scopes)
 
     findings: list[SignalFinding] = []
-    for scope in selected_scopes:
+    for scope in scopes:
         for workitem in _workitems_for_scope(data, scope):
             result = _evaluate_group(definition.expression, workitem, data, ctx, scope)
             if not result.matched:
@@ -342,10 +333,6 @@ def _workitems_for_scope(data: SignalData, scope: ScopeDescriptor) -> list[WorkI
             return [item for item in data.workitems if item.project_id in project_ids]
         return [item for item in data.workitems if item.current_sprint_id in sprint_ids]
     return list(data.workitems)
-
-
-def _scope_key(target: SignalTargetScope) -> str:
-    return str(target.scope_id)
 
 
 def _current_status_started_at(workitem: WorkItem, transitions: tuple[Transition, ...]) -> datetime:

@@ -13,10 +13,6 @@ from em_radar_api.signal_definitions import (
 )
 
 
-class InvalidSignalDefinition(ValueError):
-    pass
-
-
 class DuplicateSignalName(ValueError):
     pass
 
@@ -25,7 +21,6 @@ def create_signal_definition(
     session: Session,
     definition: SignalDefinitionCreate,
 ) -> SignalDefinitionRead:
-    _validate(definition.enabled, definition.target_scopes)
     row = SignalDefinitionTable.model_validate(definition.model_dump(mode="json"))
     _write(session, row)
     return SignalDefinitionRead.model_validate(row)
@@ -54,9 +49,6 @@ def update_signal_definition(
         return None
 
     values = update.model_dump(mode="json", exclude_unset=True)
-    enabled = values.get("enabled", row.enabled)
-    target_scopes = values.get("target_scopes", row.target_scopes)
-    _validate(enabled, target_scopes)
     row.sqlmodel_update(values)
     row.version += 1
     row.updated_at = datetime.now(UTC)
@@ -72,11 +64,6 @@ def delete_signal_definition(session: Session, definition_id: UUID) -> bool:
     session.delete(row)
     session.commit()
     return True
-
-
-def _validate(enabled: bool, target_scopes: list[dict[str, str]]) -> None:
-    if enabled and not target_scopes:
-        raise InvalidSignalDefinition("enabled signals require at least one target scope")
 
 
 def _write(session: Session, row: SignalDefinitionTable) -> None:

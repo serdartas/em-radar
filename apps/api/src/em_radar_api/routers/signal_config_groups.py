@@ -7,6 +7,7 @@ from em_radar_api.db import get_session, get_write_session
 from em_radar_api.repositories.signal_config_groups import (
     DuplicateGroupName,
     InvalidSignalConfigGroup,
+    SignalConfigGroupInUse,
     create_signal_config_group,
     delete_signal_config_group,
     get_signal_config_group,
@@ -79,8 +80,11 @@ def delete_signal_config_group_route(
     group_id: UUID,
     session: Session = Depends(get_write_session),
 ) -> None:
-    if not delete_signal_config_group(session, group_id):
-        raise _not_found(group_id)
+    try:
+        if not delete_signal_config_group(session, group_id):
+            raise _not_found(group_id)
+    except SignalConfigGroupInUse as error:
+        raise _conflict(error) from error
 
 
 def _not_found(group_id: UUID) -> HTTPException:

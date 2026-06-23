@@ -23,7 +23,6 @@ export interface SignalDefinition {
   name: string
   description: string | null
   entity_type: string
-  target_scopes: Array<{ connector_id: string; scope_id: string; scope_type: string }>
   expression: Record<string, unknown>
   report_settings: ReportSettings
   enabled: boolean
@@ -38,7 +37,6 @@ export interface SignalDefinitionCreate {
   name: string
   description?: string | null
   entity_type: string
-  target_scopes: Array<{ connector_id: string; scope_id: string; scope_type: string }>
   expression: Record<string, unknown>
   report_settings: ReportSettings
   enabled: boolean

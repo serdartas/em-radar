@@ -28,29 +28,6 @@ const templates = [
   },
 ]
 
-const scopes = [
-  {
-    id: "scrum-scope",
-    connection_id: "jira-1",
-    name: "Scrum Board",
-    scope_type: "board",
-    external_ref: { id: "1" },
-    capabilities: ["sprint", "statuses", "labels"],
-    created_at: "2026-01-01T00:00:00Z",
-    updated_at: "2026-01-01T00:00:00Z",
-  },
-  {
-    id: "project-scope",
-    connection_id: "jira-1",
-    name: "Support Project",
-    scope_type: "project",
-    external_ref: { key: "SUP" },
-    capabilities: ["statuses", "labels"],
-    created_at: "2026-01-01T00:00:00Z",
-    updated_at: "2026-01-01T00:00:00Z",
-  },
-]
-
 const connectors = [
   {
     name: "jira",
@@ -81,15 +58,6 @@ const connectors = [
           values: [],
           value_provider: null,
           availability: null,
-        },
-        {
-          key: "sprint_day",
-          label: "Sprint day",
-          type: "sprint_relative_day",
-          operators: ["is_after"],
-          values: [],
-          value_provider: null,
-          availability: { requires_scope_capability: ["sprint"] },
         },
         {
           key: "status_category",
@@ -125,35 +93,6 @@ function mockApi() {
     if (url.endsWith("/api/connectors")) {
       return Promise.resolve(jsonResponse(connectors))
     }
-    if (url.endsWith("/api/scopes")) {
-      return Promise.resolve(jsonResponse(scopes))
-    }
-    if (url.endsWith("/api/signal-definitions/preview") && method === "POST") {
-      const body = JSON.parse(String(init?.body))
-      if (body.expression.conditions[0].field === "sprint_day") {
-        return Promise.resolve(
-          jsonResponse({
-            match_count: 0,
-            samples: [],
-            warnings: ["sprint_day requires scope capability: sprint"],
-          }),
-        )
-      }
-      return Promise.resolve(
-        jsonResponse({
-          match_count: 2,
-          samples: [
-            {
-              item_key: "RAD-1",
-              title: "RAD-1 - Stale work",
-              reason: "age_in_current_status greater_than 5 (observed 8)",
-              evidence: { age_in_current_status: 8 },
-            },
-          ],
-          warnings: [],
-        }),
-      )
-    }
     if (url.endsWith("/api/signal-definitions") && method === "POST") {
       return Promise.resolve(jsonResponse({ id: "signal-1", ...JSON.parse(String(init?.body)) }))
     }
@@ -180,18 +119,21 @@ afterEach(() => {
 })
 
 describe("SignalSettingsPage", () => {
-  it("duplicates a Jira template, previews, edits duration, and saves", async () => {
+  it("renders the builder with no scope control", async () => {
+    mockApi()
+    renderPage()
+
+    await screen.findByRole("button", { name: "Duplicate" })
+
+    expect(screen.queryByLabelText("Jira target scope")).not.toBeInTheDocument()
+  })
+
+  it("duplicates a template, edits duration, and saves without target scopes", async () => {
     const fetchMock = mockApi()
     renderPage()
 
     fireEvent.click(await screen.findByRole("button", { name: "Duplicate" }))
-    fireEvent.change(screen.getByLabelText("Jira target scope"), {
-      target: { value: "scrum-scope" },
-    })
     fireEvent.change(screen.getByLabelText("Duration days"), { target: { value: "5" } })
-
-    expect(await screen.findByText(/2 matching sample items/)).toBeInTheDocument()
-    expect(screen.getByText(/age_in_current_status greater_than 5/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole("button", { name: "Save signal" }))
 
     await waitFor(() => {
@@ -200,23 +142,9 @@ describe("SignalSettingsPage", () => {
       )
       expect(call).toBeTruthy()
       const body = JSON.parse(String((call?.[1] as RequestInit).body))
-      expect(body.target_scopes[0].scope_id).toBe("scrum-scope")
+      expect(body.target_scopes).toBeUndefined()
       expect(body.expression.conditions[0].value.amount).toBe(5)
     })
-  })
-
-  it("blocks an unsupported sprint field for a non-sprint scope", async () => {
-    mockApi()
-    renderPage()
-
-    await screen.findByRole("button", { name: "Duplicate" })
-    fireEvent.change(screen.getByLabelText("Jira target scope"), {
-      target: { value: "project-scope" },
-    })
-    fireEvent.change(screen.getByLabelText("Field"), { target: { value: "sprint_day" } })
-
-    expect(screen.getByText(/Sprint day requires sprint scope capability/)).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "Save signal" })).toBeDisabled()
   })
 
   it("preserves enum values when saving a non-duration condition", async () => {

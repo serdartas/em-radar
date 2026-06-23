@@ -67,6 +67,13 @@ export async function runJiraSprintReport(
   })
 }
 
+export async function runTeamReport(teamProfileId: string): Promise<ReportDetail> {
+  return apiFetch<ReportDetail>("/reports/run", {
+    method: "POST",
+    body: JSON.stringify({ connector: "jira", team_profile_id: teamProfileId }),
+  })
+}
+
 export async function listReports(): Promise<ReportSummary[]> {
   return apiFetch<ReportSummary[]>("/reports")
 }

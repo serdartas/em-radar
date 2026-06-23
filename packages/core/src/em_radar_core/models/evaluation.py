@@ -25,6 +25,7 @@ class TeamProfile(SQLModel):
     project_ids: list[UUID] = Field(default_factory=list, sa_type=JSON)
     board_ids: list[UUID] = Field(default_factory=list, sa_type=JSON)
     repository_ids: list[UUID] = Field(default_factory=list, sa_type=JSON)
+    signal_config_group_ids: list[UUID] = Field(default_factory=list, sa_type=JSON)
     working_mode: WorkingMode = WorkingMode.SCRUM
     sprint_length_days: int | None = None
     member_user_keys: list[str] = Field(default_factory=list, sa_type=JSON)
