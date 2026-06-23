@@ -21,7 +21,7 @@ from em_radar_api.routers.signal_definitions import router as signal_definitions
 from em_radar_api.routers.signal_pack import router as signal_pack_router
 from em_radar_api.routers.source_connections import router as source_connections_router
 from em_radar_api.routers.teams import router as teams_router
-from em_radar_api.startup import seed_default_signal_configs
+from em_radar_api.startup import seed_default_signal_configs, seed_default_signal_group
 
 
 class SPAStaticFiles(StaticFiles):
@@ -50,6 +50,7 @@ def create_app(
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         del app
         seed_default_signal_configs(app_session_factory)
+        seed_default_signal_group(app_session_factory)
         yield
 
     app = FastAPI(title="EM Radar", lifespan=lifespan)

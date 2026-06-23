@@ -32,6 +32,23 @@ const report = {
   ],
 }
 
+const team = {
+  id: "team-1",
+  name: "Platform",
+  description: null,
+  connection_ids: ["conn-1"],
+  scope_ids: ["board-1"],
+  project_ids: [],
+  board_ids: [],
+  repository_ids: [],
+  signal_config_group_ids: ["group-1"],
+  working_mode: "scrum",
+  sprint_length_days: 14,
+  member_user_keys: [],
+  created_at: "2026-01-01T00:00:00Z",
+  updated_at: "2026-01-01T00:00:00Z",
+}
+
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), {
     status: 200,
@@ -64,6 +81,9 @@ describe("ReportRunnerPage", () => {
   it("runs the demo report and navigates to the persisted results", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const url = typeof input === "string" ? input : input.toString()
+      if (url.endsWith("/api/teams")) {
+        return Promise.resolve(jsonResponse([]))
+      }
       if (url.endsWith("/api/reports/run")) {
         return Promise.resolve(jsonResponse(report))
       }
@@ -75,11 +95,9 @@ describe("ReportRunnerPage", () => {
 
     renderApp()
 
-    fireEvent.click(screen.getByRole("button", { name: "Run demo report" }))
+    fireEvent.click(await screen.findByRole("button", { name: "Run demo report" }))
 
     expect(await screen.findByText("PLAT-2 stale for 12 days")).toBeInTheDocument()
-    expect(screen.getByText("Check whether the item is blocked.")).toBeInTheDocument()
-
     expect(
       fetchMock.mock.calls.some(
         ([url, requestInit]) =>
@@ -90,13 +108,51 @@ describe("ReportRunnerPage", () => {
     ).toBe(true)
   })
 
-  it("shows an error when the run fails", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({ detail: "Demo data unavailable." }), { status: 500 }),
-    )
+  it("runs a report for a selected team", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = typeof input === "string" ? input : input.toString()
+      if (url.endsWith("/api/teams")) {
+        return Promise.resolve(jsonResponse([team]))
+      }
+      if (url.endsWith("/api/reports/run")) {
+        return Promise.resolve(jsonResponse(report))
+      }
+      if (url.endsWith("/api/reports/report-1")) {
+        return Promise.resolve(jsonResponse(report))
+      }
+      throw new Error(`unexpected fetch: ${url}`)
+    })
 
     renderApp()
-    fireEvent.click(screen.getByRole("button", { name: "Run demo report" }))
+
+    fireEvent.click(await screen.findByLabelText("Platform"))
+    fireEvent.click(screen.getByRole("button", { name: "Run team reports" }))
+
+    expect(await screen.findByText("PLAT-2 stale for 12 days")).toBeInTheDocument()
+    expect(
+      fetchMock.mock.calls.some(
+        ([url, requestInit]) =>
+          String(url).endsWith("/api/reports/run") &&
+          requestInit?.method === "POST" &&
+          String(requestInit?.body) ===
+            JSON.stringify({ connector: "jira", team_profile_id: "team-1" }),
+      ),
+    ).toBe(true)
+  })
+
+  it("shows an error when the run fails", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = typeof input === "string" ? input : input.toString()
+      if (url.endsWith("/api/teams")) {
+        return Promise.resolve(jsonResponse([]))
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify({ detail: "Demo data unavailable." }), { status: 500 }),
+      )
+    })
+
+    renderApp()
+    fireEvent.click(await screen.findByRole("button", { name: "Run demo report" }))
 
     await waitFor(() => {
       expect(screen.getByText("Demo data unavailable.")).toBeInTheDocument()

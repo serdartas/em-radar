@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react"
-import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query"
+import { useState } from "react"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link } from "react-router-dom"
 
 import { Badge } from "@/components/ui/badge"
@@ -9,25 +9,21 @@ import { Label } from "@/components/ui/label"
 import { Select } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import { getConnectors, type SignalField } from "@/lib/connectors"
-import { listScopes, type ScopeDefinition } from "@/lib/scopes"
 import {
   createSignalDefinition,
   deleteSignalDefinition,
   listSignalDefinitions,
   listSignalTemplates,
-  previewSignalDefinition,
   restoreSignalTemplate,
   updateSignalDefinition,
   type SignalDefinition,
   type SignalDefinitionCreate,
-  type SignalDefinitionPreview,
   type SignalTemplate,
 } from "@/lib/signalDefinitions"
 
 interface BuilderDraft {
   templateKey: string
   name: string
-  scopeId: string
   field: string
   operator: string
   amount: number
@@ -42,9 +38,7 @@ export function SignalSettingsPage() {
     queryFn: listSignalDefinitions,
   })
   const connectorsQuery = useQuery({ queryKey: ["connectors"], queryFn: getConnectors })
-  const scopesQuery = useQuery({ queryKey: ["scopes"], queryFn: listScopes })
   const templates = templatesQuery.data ?? []
-  const scopes = scopesQuery.data ?? []
   const schema = connectorsQuery.data?.find((connector) => connector.name === "jira")?.signal_schema
   const defaultTemplate = templates[0]
   const [draft, setDraft] = useState<BuilderDraft | null>(null)
@@ -62,15 +56,10 @@ export function SignalSettingsPage() {
   })
 
   function duplicate(template: SignalTemplate) {
-    const condition = firstCondition(template.expression)
     setDraft({
       templateKey: template.key,
       name: `${template.name} copy`,
-      scopeId: scopes[0]?.id ?? "",
-      field: condition.field,
-      operator: condition.operator,
-      amount: condition.amount,
-      value: condition.value,
+      ...firstCondition(template.expression),
     })
   }
 
@@ -85,7 +74,6 @@ export function SignalSettingsPage() {
   const activeDraft = draft ?? {
     templateKey: defaultTemplate.key,
     name: `${defaultTemplate.name} copy`,
-    scopeId: scopes[0]?.id ?? "",
     ...firstCondition(defaultTemplate.expression),
   }
 
@@ -97,12 +85,18 @@ export function SignalSettingsPage() {
             Signal Settings
           </h1>
           <p className="mt-2 max-w-2xl text-slate-600">
-            Manage Jira templates and scoped runnable signal definitions.
+            Manage Jira templates and runnable signal definitions. Bundle signals into groups, then
+            attach groups to teams.
           </p>
         </div>
-        <Button asChild variant="outline">
-          <Link to="/signals/import-export">Import / export pack</Link>
-        </Button>
+        <div className="flex gap-2">
+          <Button asChild variant="outline">
+            <Link to="/signals/groups">Signal config groups</Link>
+          </Button>
+          <Button asChild variant="outline">
+            <Link to="/signals/import-export">Import / export pack</Link>
+          </Button>
+        </div>
       </header>
 
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
@@ -151,7 +145,6 @@ export function SignalSettingsPage() {
           onChange={(next) => setDraft(next)}
           onSave={(definition) => createMutation.mutate(definition)}
           pending={createMutation.isPending}
-          scopes={scopes}
           templates={templates}
         />
       </div>
@@ -183,11 +176,7 @@ function RunnableSignals({ definitions }: { definitions: SignalDefinition[] }) {
               <CardContent className="flex flex-wrap items-center justify-between gap-4 p-4">
                 <div>
                   <h3 className="font-semibold">{definition.name}</h3>
-                  <p className="mt-1 text-sm text-slate-600">
-                    {definition.target_scopes.length} target scope
-                    {definition.target_scopes.length === 1 ? "" : "s"} · version{" "}
-                    {definition.version}
-                  </p>
+                  <p className="mt-1 text-sm text-slate-600">version {definition.version}</p>
                 </div>
                 <div className="flex items-center gap-3">
                   <Switch
@@ -195,7 +184,11 @@ function RunnableSignals({ definitions }: { definitions: SignalDefinition[] }) {
                     checked={definition.enabled}
                     onCheckedChange={() => disableMutation.mutate(definition)}
                   />
-                  <Button onClick={() => disableMutation.mutate(definition)} size="sm" variant="outline">
+                  <Button
+                    onClick={() => disableMutation.mutate(definition)}
+                    size="sm"
+                    variant="outline"
+                  >
                     {definition.enabled ? "Disable" : "Enable"}
                   </Button>
                   <Button
@@ -221,42 +214,19 @@ interface SignalBuilderProps {
   onChange: (draft: BuilderDraft) => void
   onSave: (definition: SignalDefinitionCreate) => void
   pending: boolean
-  scopes: ScopeDefinition[]
   templates: SignalTemplate[]
 }
 
-function SignalBuilder({
-  draft,
-  fields,
-  onChange,
-  onSave,
-  pending,
-  scopes,
-  templates,
-}: SignalBuilderProps) {
+function SignalBuilder({ draft, fields, onChange, onSave, pending, templates }: SignalBuilderProps) {
   const template = templates.find((item) => item.key === draft.templateKey) ?? templates[0]
-  const selectedScope = scopes.find((scope) => scope.id === draft.scopeId)
   const selectedField = fields.find((field) => field.key === draft.field) ?? fields[0]
   const operators = selectedField?.operators ?? []
-  const definitionDraft = selectedScope
-    ? definitionFromDraft(template, draft, selectedField, selectedScope)
-    : null
-  const warnings = useMemo(
-    () => previewWarnings(selectedField, selectedScope),
-    [selectedField, selectedScope],
-  )
-  const previewQuery = useQuery({
-    enabled: warnings.length === 0 && definitionDraft !== null,
-    queryKey: ["signal-definition-preview", definitionDraft],
-    queryFn: () => previewSignalDefinition(definitionDraft as SignalDefinitionCreate),
-  })
-  const previewWarningsList = [...warnings, ...(previewQuery.data?.warnings ?? [])]
 
   function save() {
-    if (!definitionDraft || previewWarningsList.length > 0) {
+    if (!draft.name) {
       return
     }
-    onSave(definitionDraft)
+    onSave(definitionFromDraft(template, draft, selectedField))
   }
 
   return (
@@ -303,22 +273,6 @@ function SignalBuilder({
               onChange={(event) => onChange({ ...draft, name: event.target.value })}
               value={draft.name}
             />
-          </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor="builder-scope">Jira target scope</Label>
-            <Select
-              id="builder-scope"
-              onChange={(event) => onChange({ ...draft, scopeId: event.target.value })}
-              value={draft.scopeId}
-            >
-              <option value="">Select a scope</option>
-              {scopes.map((scope) => (
-                <option key={scope.id} value={scope.id}>
-                  {scope.name}
-                </option>
-              ))}
-            </Select>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
@@ -381,30 +335,7 @@ function SignalBuilder({
             />
           )}
 
-          <div className="rounded-md border p-3 text-sm">
-            <p className="font-medium">Preview</p>
-            <p className="mt-1 text-slate-600">
-              {previewText(previewQuery, selectedScope)}
-            </p>
-            {(previewQuery.data?.samples.length ?? 0) > 0 && (
-              <ul aria-label="Preview samples" className="mt-2 space-y-1 text-slate-700">
-                {previewQuery.data?.samples.map((sample) => (
-                  <li key={sample.item_key}>
-                    {sample.item_key}: {sample.reason}
-                  </li>
-                ))}
-              </ul>
-            )}
-            {previewWarningsList.length > 0 && (
-              <ul aria-label="Validation warnings" className="mt-2 space-y-1 text-red-700">
-                {previewWarningsList.map((warning) => (
-                  <li key={warning}>{warning}</li>
-                ))}
-              </ul>
-            )}
-          </div>
-
-          <Button disabled={pending || previewWarningsList.length > 0 || !selectedScope} onClick={save}>
+          <Button disabled={pending || !draft.name} onClick={save}>
             {pending ? "Saving..." : "Save signal"}
           </Button>
         </CardContent>
@@ -417,41 +348,17 @@ function definitionFromDraft(
   template: SignalTemplate,
   draft: BuilderDraft,
   field: SignalField | undefined,
-  scope: ScopeDefinition,
 ): SignalDefinitionCreate {
   return {
     name: draft.name,
     description: template.description,
     entity_type: template.entity_type,
-    target_scopes: [
-      {
-        connector_id: scope.connection_id,
-        scope_id: scope.id,
-        scope_type: scope.scope_type,
-      },
-    ],
     expression: expressionFromDraft(template.expression, draft, field),
     report_settings: template.report_settings,
     enabled: true,
     origin: "system_template",
     template_key: template.key,
   }
-}
-
-function previewText(
-  query: UseQueryResult<SignalDefinitionPreview, Error>,
-  scope: ScopeDefinition | undefined,
-): string {
-  if (!scope) {
-    return "Select a scope to preview matches."
-  }
-  if (query.isLoading || query.isFetching) {
-    return `Loading preview for ${scope.name}.`
-  }
-  if (query.isError) {
-    return `Preview could not be loaded for ${scope.name}.`
-  }
-  return `${query.data?.match_count ?? 0} matching sample items in ${scope.name}.`
 }
 
 function firstCondition(expression: Record<string, unknown>) {
@@ -585,16 +492,4 @@ function defaultValueForField(field: SignalField | undefined): unknown {
 
 function jsonClone(value: Record<string, unknown>): Record<string, unknown> {
   return JSON.parse(JSON.stringify(value)) as Record<string, unknown>
-}
-
-function previewWarnings(field: SignalField | undefined, scope: ScopeDefinition | undefined) {
-  if (!field || !scope || !field.availability) {
-    return []
-  }
-  const missing = field.availability.requires_scope_capability.filter(
-    (capability) => !scope.capabilities.includes(capability),
-  )
-  return missing.length === 0
-    ? []
-    : [`${field.label} requires ${missing.join(", ")} scope capability.`]
 }

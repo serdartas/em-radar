@@ -296,6 +296,25 @@ class TestSignalDeletionCleansGroupMembership:
         assert api_client.get(f"/api/signal-definitions/{sig_id}").status_code == 404
 
 
+def test_deleting_group_referenced_by_team_is_rejected(api_client: TestClient) -> None:
+    group = api_client.post("/api/signal-config-groups", json=_group_payload()).json()
+    api_client.post(
+        "/api/teams",
+        json={"name": "Platform", "signal_config_group_ids": [group["id"]]},
+    )
+
+    response = api_client.delete(f"/api/signal-config-groups/{group['id']}")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "signal config group is referenced by a team"
+
+
+def test_unreferenced_group_can_be_deleted(api_client: TestClient) -> None:
+    group = api_client.post("/api/signal-config-groups", json=_group_payload()).json()
+
+    assert api_client.delete(f"/api/signal-config-groups/{group['id']}").status_code == 204
+
+
 def test_alembic_revision_applies_on_in_memory_sqlite(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

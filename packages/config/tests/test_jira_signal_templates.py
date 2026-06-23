@@ -17,7 +17,6 @@ from em_radar_core.models import (
     EvaluationWindow,
     Project,
     SignalOrigin,
-    SignalTargetScope,
     Source,
     Sprint,
     SprintState,
@@ -43,28 +42,17 @@ def test_templates_seed_once() -> None:
     assert len(first) == 8
 
 
-def test_template_duplicates_into_runnable_scoped_definition() -> None:
-    definition = instantiate_jira_signal_template(
-        "stale-in-progress-work-item",
-        [
-            SignalTargetScope(
-                connector_id="jira-1",
-                scope_id="scope-1",
-                scope_type="board",
-            )
-        ],
-    )
+def test_template_duplicates_into_runnable_definition() -> None:
+    definition = instantiate_jira_signal_template("stale-in-progress-work-item")
 
     assert definition.enabled is True
     assert definition.origin is SignalOrigin.SYSTEM_TEMPLATE
     assert definition.template_key == "stale-in-progress-work-item"
-    assert definition.target_scopes[0].scope_id == "scope-1"
 
 
 def test_restore_built_in_defaults_without_deleting_user_copies() -> None:
     copied = instantiate_jira_signal_template(
         "blocked-without-update",
-        [SignalTargetScope(connector_id="jira-1", scope_id="scope-1", scope_type="project")],
         name="Team-specific blocked work",
     )
     restored = restore_jira_signal_template("blocked-without-update")
@@ -98,10 +86,7 @@ def test_all_eight_jira_templates_preserve_evidence_contracts() -> None:
 
 def test_jira_template_expressions_match_positive_and_negative_fixtures() -> None:
     epic = _workitem("RAD-1", item_type=WorkItemType.EPIC, description="short")
-    stories = [
-        _workitem(f"RAD-{index}", parent_id=epic.id)
-        for index in range(2, 18)
-    ]
+    stories = [_workitem(f"RAD-{index}", parent_id=epic.id) for index in range(2, 18)]
     no_ac = _workitem("RAD-18", acceptance_criteria=None, parent_id=epic.id)
     with_ac = _workitem("RAD-19", acceptance_criteria="Given When Then", parent_id=epic.id)
     no_parent = _workitem("RAD-20", parent_id=None)
@@ -130,9 +115,11 @@ def test_jira_template_expressions_match_positive_and_negative_fixtures() -> Non
     assert _matched_keys("epic-too-broad", workitems) == {"RAD-1"}
     assert _matched_keys("epic-without-measurable-description", workitems) == {"RAD-1"}
     assert _matched_keys("repeated-carry-over", workitems, capabilities=("sprint",)) == {"RAD-23"}
-    assert set(
-        _findings("story-without-acceptance-criteria", tuple(workitems))[0].evidence
-    ) >= {"scope_id", "workitem_type", "has_description"}
+    assert set(_findings("story-without-acceptance-criteria", tuple(workitems))[0].evidence) >= {
+        "scope_id",
+        "workitem_type",
+        "has_description",
+    }
     assert set(_findings("story-without-parent-epic", tuple(workitems))[0].evidence) >= {
         "scope_id",
         "workitem_type",
@@ -210,10 +197,7 @@ def test_sprint_scope_churn_template_uses_sprint_level_evidence() -> None:
 
 def test_template_evidence_thresholds_use_edited_expression_values() -> None:
     item = _workitem("RAD-1", updated_at=NOW - timedelta(days=10))
-    definition = instantiate_jira_signal_template(
-        "stale-in-progress-work-item",
-        [SignalTargetScope(connector_id="jira-1", scope_id="scope-1", scope_type="project")],
-    )
+    definition = instantiate_jira_signal_template("stale-in-progress-work-item")
     definition.expression["conditions"][1]["value"] = {"amount": 5, "unit": "days"}
 
     findings = evaluate_signal_definition(
@@ -282,13 +266,8 @@ def _findings(
     scope_type: str = "project",
     capabilities: tuple[str, ...] = (),
 ):
-    target_scope = SignalTargetScope(
-        connector_id="jira-1",
-        scope_id="scope-1",
-        scope_type=scope_type,
-    )
     return evaluate_signal_definition(
-        instantiate_jira_signal_template(template_key, [target_scope]),
+        instantiate_jira_signal_template(template_key),
         SignalData(
             report_id=uuid4(),
             projects=(_project(),),

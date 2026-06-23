@@ -13,7 +13,6 @@ class SignalDefinitionBase(SQLModel):
     name: str
     description: str | None = None
     entity_type: str
-    target_scopes: list[dict[str, str]] = Field(default_factory=list, sa_type=JSON)
     expression: dict[str, object] = Field(sa_type=JSON)
     report_settings: dict[str, object] = Field(sa_type=JSON)
     enabled: bool = True
@@ -29,7 +28,6 @@ class SignalDefinitionUpdate(SQLModel):
     name: str | None = None
     description: str | None = None
     entity_type: str | None = None
-    target_scopes: list[dict[str, str]] | None = None
     expression: dict[str, object] | None = None
     report_settings: dict[str, object] | None = None
     enabled: bool | None = None

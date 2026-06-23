@@ -1,30 +1,35 @@
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from em_radar_api.db import get_session, get_write_session
-from em_radar_api.routers.reports import _scope_descriptors
 from em_radar_api.repositories.signal_definitions import (
     DuplicateSignalName,
-    InvalidSignalDefinition,
     create_signal_definition,
     delete_signal_definition,
     get_signal_definition,
     list_signal_definitions,
     update_signal_definition,
 )
+from em_radar_api.scope_definitions import ScopeDefinitionTable
 from em_radar_api.signal_definitions import (
     SignalDefinitionCreate,
     SignalDefinitionRead,
     SignalDefinitionUpdate,
 )
-from em_radar_api.tables import BoardTable, ProjectTable, SprintTable, TransitionTable, WorkItemTable
+from em_radar_api.tables import (
+    BoardTable,
+    ProjectTable,
+    SprintTable,
+    TransitionTable,
+    WorkItemTable,
+)
 from em_radar_config import restore_jira_signal_template, seed_jira_signal_templates
 from em_radar_connector_jira.connector import JiraConnector
-from em_radar_core.evaluation import preview_signal_definition
+from em_radar_core.evaluation import ScopeDescriptor, preview_signal_definition
 from em_radar_core.models import (
     EvaluationContext,
     EvaluationWindow,
@@ -104,6 +109,7 @@ def list_signal_definitions_route(
 @router.post("/signal-definitions/preview", response_model=SignalDefinitionPreview)
 def preview_signal_definition_route(
     definition: SignalDefinitionCreate,
+    scope_ids: list[UUID] = Query(default=[]),
     session: Session = Depends(get_session),
 ) -> SignalDefinitionPreview:
     model = SignalDefinition(
@@ -111,7 +117,6 @@ def preview_signal_definition_route(
         name=definition.name,
         description=definition.description,
         entity_type=definition.entity_type,
-        target_scopes=definition.target_scopes,
         expression=definition.expression,
         report_settings=ReportSettings.model_validate(definition.report_settings),
         enabled=definition.enabled,
@@ -120,16 +125,7 @@ def preview_signal_definition_route(
         created_at=datetime.now(UTC),
         updated_at=datetime.now(UTC),
     )
-    connection_ids = {
-        UUID(target["connector_id"])
-        for target in definition.target_scopes
-        if "connector_id" in target
-    }
-    scopes = [
-        scope
-        for connection_id in connection_ids
-        for scope in _scope_descriptors(session, connection_id)
-    ]
+    scopes = _scope_descriptors_by_ids(session, scope_ids)
     now = datetime.now(UTC)
     preview = preview_signal_definition(
         model,
@@ -170,8 +166,6 @@ def create_signal_definition_route(
         return create_signal_definition(session, definition)
     except DuplicateSignalName as error:
         raise _conflict(error) from error
-    except InvalidSignalDefinition as error:
-        raise _invalid(error) from error
 
 
 @router.get("/signal-definitions/{definition_id}", response_model=SignalDefinitionRead)
@@ -195,8 +189,6 @@ def update_signal_definition_route(
         definition = update_signal_definition(session, definition_id, update)
     except DuplicateSignalName as error:
         raise _conflict(error) from error
-    except InvalidSignalDefinition as error:
-        raise _invalid(error) from error
     if definition is None:
         raise _not_found(definition_id)
     return definition
@@ -211,15 +203,30 @@ def delete_signal_definition_route(
         raise _not_found(definition_id)
 
 
+def _scope_descriptors_by_ids(session: Session, scope_ids: list[UUID]) -> list[ScopeDescriptor]:
+    if not scope_ids:
+        return []
+    rows = session.exec(
+        select(ScopeDefinitionTable).where(ScopeDefinitionTable.id.in_(scope_ids))
+    ).all()
+    return [
+        ScopeDescriptor(
+            connector_id=str(scope.connection_id),
+            scope_id=str(scope.id),
+            scope_type=scope.scope_type.value,
+            name=scope.name,
+            external_ref=dict(scope.external_ref),
+            capabilities=tuple(scope.capabilities),
+        )
+        for scope in rows
+    ]
+
+
 def _not_found(definition_id: UUID) -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_404_NOT_FOUND,
         detail=f"signal definition not found: {definition_id}",
     )
-
-
-def _invalid(error: Exception) -> HTTPException:
-    return HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error))
 
 
 def _conflict(error: Exception) -> HTTPException:

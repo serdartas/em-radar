@@ -212,6 +212,49 @@ class JiraTransientErrorConnector(JiraTestConnector):
         raise ConnectorTransientError("Failed to reach Jira")
 
 
+def _create_jira_connection(api_client: TestClient) -> str:
+    return api_client.post(
+        "/api/connections",
+        json={
+            "connector_name": "jira",
+            "config": {"base_url": "https://demo.invalid", "token": "demo-token-123456789"},
+        },
+    ).json()["id"]
+
+
+def _create_board_scope(api_client: TestClient, connection_id: str, capabilities: list[str]) -> str:
+    return api_client.post(
+        "/api/scopes",
+        json={
+            "connection_id": connection_id,
+            "name": "Platform Scrum",
+            "scope_type": "board",
+            "external_ref": {"type": "jira_board", "id": "20000", "key": None},
+            "capabilities": capabilities,
+        },
+    ).json()["id"]
+
+
+def _create_jira_team(
+    api_client: TestClient,
+    connection_id: str,
+    scope_id: str,
+    working_mode: str,
+    sprint_length_days: int | None = None,
+    group_ids: list[str] | None = None,
+) -> str:
+    payload: dict[str, object] = {
+        "name": f"Team {working_mode} {scope_id[:8]}",
+        "connection_ids": [connection_id],
+        "scope_ids": [scope_id],
+        "working_mode": working_mode,
+        "signal_config_group_ids": group_ids or [],
+    }
+    if sprint_length_days is not None:
+        payload["sprint_length_days"] = sprint_length_days
+    return api_client.post("/api/teams", json=payload).json()["id"]
+
+
 def test_source_connection_test_maps_failures_to_error_codes(
     api_client: TestClient, monkeypatch
 ) -> None:
@@ -247,7 +290,10 @@ def test_source_connection_test_maps_invalid_config_to_config_code(
     )
     response = api_client.post(
         "/api/connections/test",
-        json={"connector_name": "jira", "config": {"base_url": "https://demo.invalid", "token": "short"}},
+        json={
+            "connector_name": "jira",
+            "config": {"base_url": "https://demo.invalid", "token": "short"},
+        },
     )
 
     assert response.status_code == 200
@@ -348,26 +394,13 @@ def test_jira_active_sprint_report_run_persists_user_references(
         lambda: [JiraTestConnector],
     )
     monkeypatch.setattr("em_radar_api.routers.reports.datetime", FrozenReportDateTime)
-    created = api_client.post(
-        "/api/connections",
-        json={
-            "connector_name": "jira",
-            "config": {"base_url": "https://demo.invalid", "token": "demo-token-123456789"},
-        },
-    ).json()
+    connection_id = _create_jira_connection(api_client)
+    scope_id = _create_board_scope(api_client, connection_id, ["sprint", "statuses", "labels"])
+    team_id = _create_jira_team(api_client, connection_id, scope_id, "scrum", sprint_length_days=14)
 
     response = api_client.post(
         "/api/reports/run",
-        json={
-            "connector": "jira",
-            "jira": {
-                "connection_id": created["id"],
-                "project_external_id": "10000",
-                "board_external_id": "20000",
-                "working_mode": "scrum",
-                "sprint_length_days": 14,
-            },
-        },
+        json={"connector": "jira", "team_profile_id": team_id},
     )
 
     assert response.status_code == 200
@@ -394,40 +427,13 @@ def test_jira_report_run_evaluates_saved_signal_definitions(
         lambda: [JiraTestConnector],
     )
     monkeypatch.setattr("em_radar_api.routers.reports.datetime", FrozenReportDateTime)
-    created = api_client.post(
-        "/api/connections",
-        json={
-            "connector_name": "jira",
-            "config": {"base_url": "https://demo.invalid", "token": "demo-token-123456789"},
-        },
-    ).json()
-    scope = api_client.post(
-        "/api/scopes",
-        json={
-            "connection_id": created["id"],
-            "name": "Platform Scrum",
-            "scope_type": "board",
-            "external_ref": {
-                "type": "jira_board",
-                "id": "20000",
-                "key": None,
-                "name": "Platform Scrum",
-            },
-            "capabilities": ["sprint", "statuses", "labels"],
-        },
-    ).json()
+    connection_id = _create_jira_connection(api_client)
+    scope_id = _create_board_scope(api_client, connection_id, ["sprint", "statuses", "labels"])
     definition = api_client.post(
         "/api/signal-definitions",
         json={
             "name": "Scoped stale Jira work",
             "entity_type": "issue",
-            "target_scopes": [
-                {
-                    "connector_id": created["id"],
-                    "scope_id": scope["id"],
-                    "scope_type": "board",
-                }
-            ],
             "expression": {
                 "type": "group",
                 "operator": "all",
@@ -444,6 +450,18 @@ def test_jira_report_run_evaluates_saved_signal_definitions(
             "origin": "user_created",
         },
     ).json()
+    group = api_client.post(
+        "/api/signal-config-groups",
+        json={"name": "Jira signals", "signal_ids": [definition["id"]]},
+    ).json()
+    team_id = _create_jira_team(
+        api_client,
+        connection_id,
+        scope_id,
+        "scrum",
+        sprint_length_days=14,
+        group_ids=[group["id"]],
+    )
     with session_factory() as session:
         upsert_signal_config(
             session,
@@ -456,16 +474,7 @@ def test_jira_report_run_evaluates_saved_signal_definitions(
 
     response = api_client.post(
         "/api/reports/run",
-        json={
-            "connector": "jira",
-            "jira": {
-                "connection_id": created["id"],
-                "project_external_id": "10000",
-                "board_external_id": "20000",
-                "working_mode": "scrum",
-                "sprint_length_days": 14,
-            },
-        },
+        json={"connector": "jira", "team_profile_id": team_id},
     )
 
     assert response.status_code == 200
@@ -513,32 +522,17 @@ def test_signal_definition_preview_uses_persisted_jira_samples_and_warnings(
             "capabilities": ["statuses", "labels"],
         },
     ).json()
-    api_client.post(
-        "/api/reports/run",
-        json={
-            "connector": "jira",
-            "jira": {
-                "connection_id": created["id"],
-                "project_external_id": "10000",
-                "board_external_id": "20000",
-                "working_mode": "scrum",
-                "sprint_length_days": 14,
-            },
-        },
+    team_id = _create_jira_team(
+        api_client, created["id"], board_scope["id"], "scrum", sprint_length_days=14
     )
+    api_client.post("/api/reports/run", json={"connector": "jira", "team_profile_id": team_id})
 
     response = api_client.post(
         "/api/signal-definitions/preview",
+        params={"scope_ids": [board_scope["id"]]},
         json={
             "name": "Preview stale Jira work",
             "entity_type": "issue",
-            "target_scopes": [
-                {
-                    "connector_id": created["id"],
-                    "scope_id": board_scope["id"],
-                    "scope_type": "board",
-                }
-            ],
             "expression": {
                 "type": "group",
                 "operator": "all",
@@ -557,16 +551,10 @@ def test_signal_definition_preview_uses_persisted_jira_samples_and_warnings(
     )
     warning_response = api_client.post(
         "/api/signal-definitions/preview",
+        params={"scope_ids": [project_scope["id"]]},
         json={
             "name": "Unsupported sprint field",
             "entity_type": "issue",
-            "target_scopes": [
-                {
-                    "connector_id": created["id"],
-                    "scope_id": project_scope["id"],
-                    "scope_type": "project",
-                }
-            ],
             "expression": {
                 "type": "group",
                 "operator": "all",
@@ -596,25 +584,13 @@ def test_jira_kanban_report_uses_date_range_without_active_sprint(
         lambda: [JiraKanbanTestConnector],
     )
     monkeypatch.setattr("em_radar_api.routers.reports.datetime", FrozenReportDateTime)
-    created = api_client.post(
-        "/api/connections",
-        json={
-            "connector_name": "jira",
-            "config": {"base_url": "https://demo.invalid", "token": "demo-token-123456789"},
-        },
-    ).json()
+    connection_id = _create_jira_connection(api_client)
+    scope_id = _create_board_scope(api_client, connection_id, ["statuses", "labels"])
+    team_id = _create_jira_team(api_client, connection_id, scope_id, "kanban")
 
     response = api_client.post(
         "/api/reports/run",
-        json={
-            "connector": "jira",
-            "jira": {
-                "connection_id": created["id"],
-                "project_external_id": "10000",
-                "board_external_id": "20000",
-                "working_mode": "kanban",
-            },
-        },
+        json={"connector": "jira", "team_profile_id": team_id},
     )
 
     assert response.status_code == 200

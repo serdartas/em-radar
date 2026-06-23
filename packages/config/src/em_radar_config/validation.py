@@ -187,10 +187,6 @@ def _validate_pack(pack: SignalPack, em_radar_version: str) -> None:
     if pack.spec.export_type not in {"private_backup", "public_template"}:
         raise PackValidationError("spec.export_type must be private_backup or public_template")
     for index, signal in enumerate(pack.spec.signals):
-        if signal.enabled and signal.target_scopes == []:
-            raise PackValidationError(
-                f"spec.signals.{index}.target_scopes is required when enabled"
-            )
         if signal.id is not None and signal.id in SIGNAL_CATALOG:
             catalog_entry = SIGNAL_CATALOG[signal.id]
             try:

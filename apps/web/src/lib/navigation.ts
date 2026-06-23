@@ -1,5 +1,6 @@
 import {
   FileText,
+  Layers,
   LayoutDashboard,
   type LucideIcon,
   Play,
@@ -23,6 +24,7 @@ export const navItems: NavItem[] = [
   { to: "/connections", label: "Source Connections", icon: Plug },
   { to: "/teams", label: "Teams", icon: Users },
   { to: "/signals", label: "Signal Settings", icon: SlidersHorizontal },
+  { to: "/signals/groups", label: "Signal Config Groups", icon: Layers },
   { to: "/reports/run", label: "Report Runner", icon: Play },
   { to: "/reports/results", label: "Report Results", icon: FileText },
   { to: "/settings", label: "Settings & Privacy", icon: Settings },

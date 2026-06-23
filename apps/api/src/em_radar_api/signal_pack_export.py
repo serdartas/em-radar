@@ -1,22 +1,18 @@
+import re
 from datetime import UTC, datetime
 
 import yaml
 
 from em_radar_api.signal_configs import SignalConfigRead
-from em_radar_api.scope_definitions import ScopeDefinitionRead
 from em_radar_api.signal_definitions import SignalDefinitionRead
-from em_radar_api.source_connections import SourceConnectionRead
 from em_radar_config import (
     SIGNAL_CATALOG,
-    ConnectorReference,
     FieldMappings,
     PackMetadata,
-    ScopeReference,
     SignalEntry,
     SignalPack,
     SignalPackSpec,
     SignalScope,
-    TemplateEntry,
 )
 
 PACK_VERSION = "0.1.0"
@@ -50,10 +46,9 @@ def export_signal_pack(
     )
 
 
-def export_signal_definition_pack(
+def export_signal_group_pack(
+    group_name: str,
     definitions: list[SignalDefinitionRead],
-    scopes: list[ScopeDefinitionRead],
-    connections: list[SourceConnectionRead],
     *,
     export_type: str,
     name: str | None = None,
@@ -63,18 +58,13 @@ def export_signal_definition_pack(
         apiVersion="emradar.dev/v1",
         kind="SignalPack",
         metadata=PackMetadata(
-            name=name or _default_name(now or datetime.now(UTC)),
+            name=name or _slugify(group_name) or _default_name(now or datetime.now(UTC)),
             version=PACK_VERSION,
-            description=PACK_DESCRIPTION,
+            description=f"Signal config group: {group_name}",
         ),
         spec=SignalPackSpec(
             export_type=export_type,
-            connectors=_connector_refs(connections) if export_type == "private_backup" else None,
-            scopes=_scope_refs(scopes) if export_type == "private_backup" else None,
-            signals=_definition_entries(definitions) if export_type == "private_backup" else [],
-            templates=_template_entries(definitions, scopes)
-            if export_type == "public_template"
-            else None,
+            signals=_group_signal_entries(definitions, export_type=export_type),
         ),
     )
     return yaml.safe_dump(
@@ -124,47 +114,18 @@ def _default_name(now: datetime) -> str:
     return f"local-overrides-{now.astimezone(UTC):%Y%m%d-%H%M%S}"
 
 
-def _connector_refs(connections: list[SourceConnectionRead]) -> list[ConnectorReference]:
-    refs: list[ConnectorReference] = []
-    for connection in connections:
-        config = _public_connection_config(connection.config)
-        refs.append(
-            ConnectorReference(
-                local_ref=str(connection.id),
-                connector_type=connection.connector_name.value,
-                name=f"{connection.connector_name.value.title()} connection",
-                base_url=str(config.get("base_url"))
-                if config.get("base_url") is not None
-                else None,
-                auth="omitted",
-            )
-        )
-    return refs
-
-
-def _scope_refs(scopes: list[ScopeDefinitionRead]) -> list[ScopeReference]:
-    return [
-        ScopeReference(
-            local_ref=str(scope.id),
-            connector_ref=str(scope.connection_id),
-            name=scope.name,
-            scope_type=scope.scope_type.value,
-            external_ref=scope.external_ref,
-            capabilities=scope.capabilities,
-        )
-        for scope in scopes
-    ]
-
-
-def _definition_entries(definitions: list[SignalDefinitionRead]) -> list[SignalEntry]:
+def _group_signal_entries(
+    definitions: list[SignalDefinitionRead],
+    *,
+    export_type: str,
+) -> list[SignalEntry]:
+    scrub = export_type == "public_template"
     return [
         SignalEntry(
-            id=str(definition.id),
             name=definition.name,
             description=definition.description,
             entity_type=definition.entity_type,
-            target_scopes=definition.target_scopes,
-            expression=definition.expression,
+            expression=_scrub_expression(definition.expression) if scrub else definition.expression,
             report_settings=definition.report_settings,
             enabled=definition.enabled,
             origin=definition.origin.value,
@@ -174,38 +135,27 @@ def _definition_entries(definitions: list[SignalDefinitionRead]) -> list[SignalE
     ]
 
 
-def _template_entries(
-    definitions: list[SignalDefinitionRead],
-    scopes: list[ScopeDefinitionRead],
-) -> list[TemplateEntry]:
-    scopes_by_id = {str(scope.id): scope for scope in scopes}
-    templates: list[TemplateEntry] = []
-    for definition in definitions:
-        capabilities = {
-            capability
-            for target in definition.target_scopes
-            if (scope := scopes_by_id.get(target["scope_id"])) is not None
-            for capability in scope.capabilities
+def _scrub_expression(expression: dict[str, object]) -> dict[str, object]:
+    """Strip org-specific condition values, keeping the field/operator structure so a
+    public template documents what to configure without leaking tuned thresholds."""
+    if expression.get("type") == "group":
+        conditions = expression.get("conditions")
+        return {
+            **expression,
+            "conditions": [
+                _scrub_expression(condition)
+                for condition in conditions
+                if isinstance(condition, dict)
+            ]
+            if isinstance(conditions, list)
+            else conditions,
         }
-        templates.append(
-            TemplateEntry(
-                key=definition.template_key or str(definition.id),
-                name=definition.name,
-                description=definition.description,
-                required_connector_type="jira",
-                entity_type=definition.entity_type,
-                required_scope_capabilities=sorted(capabilities),
-                expression=definition.expression,
-                report_settings=definition.report_settings,
-                enabled_by_default=definition.enabled,
-            )
-        )
-    return templates
+    return {key: value for key, value in expression.items() if key != "value"}
 
 
-def _public_connection_config(config: dict[str, object]) -> dict[str, object]:
-    return {
-        key: value
-        for key, value in config.items()
-        if key.lower() not in {"token", "password", "api_key", "secret", "authorization"}
-    }
+def _slugify(text: str) -> str | None:
+    slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+    slug = re.sub(r"-{2,}", "-", slug)
+    if re.fullmatch(r"[a-z][a-z0-9-]{1,62}[a-z0-9]", slug):
+        return slug
+    return None

@@ -7,7 +7,7 @@ from em_radar_core.evaluation import (
     evaluate_signal_definition,
     validate_expression,
 )
-from em_radar_core.models import ReportSettings, SignalDefinition, SignalOrigin, SignalTargetScope
+from em_radar_core.models import ReportSettings, SignalDefinition, SignalOrigin
 from em_radar_core.signals import SignalData
 from em_radar_connector_jira.connector import JiraConnector
 
@@ -18,9 +18,6 @@ def _definition(expression: dict[str, object]) -> SignalDefinition:
     return SignalDefinition(
         name="Scoped stale work",
         entity_type="issue",
-        target_scopes=[
-            SignalTargetScope(connector_id="jira-1", scope_id="scope-1", scope_type="project")
-        ],
         expression=expression,
         report_settings=ReportSettings(severity="warning", category="flow"),
         enabled=True,
@@ -148,7 +145,7 @@ def test_sprint_field_availability_is_validated() -> None:
         raise AssertionError("sprint field should reject non-sprint scope")
 
 
-def test_target_scope_filtering_uses_selected_scope_only() -> None:
+def test_evaluation_restricted_to_supplied_scope() -> None:
     selected = workitem(key="RAD-1")
     sibling = workitem(key="OTHER-1")
     sibling.project_id = uuid4()
@@ -171,6 +168,49 @@ def test_target_scope_filtering_uses_selected_scope_only() -> None:
     )
 
     assert [finding.title for finding in findings] == ["RAD-1 - RAD-1 title"]
+
+
+def test_no_scope_yields_no_findings() -> None:
+    expression = {
+        "type": "group",
+        "operator": "all",
+        "conditions": [{"field": "status_category", "operator": "is", "value": "in_progress"}],
+    }
+
+    findings = evaluate_signal_definition(
+        _definition(expression),
+        SignalData(report_id=uuid4(), projects=(project(),), workitems=(workitem(),)),
+        context(),
+        JiraConnector.describe_signal_schema(),
+        [],
+    )
+
+    assert findings == []
+
+
+def test_repeated_runs_with_fixed_now_are_identical() -> None:
+    item = workitem(created_at=NOW - timedelta(days=5), updated_at=NOW - timedelta(days=4))
+    expression = {
+        "type": "group",
+        "operator": "all",
+        "conditions": [
+            {
+                "field": "age_since_created",
+                "operator": "greater_than",
+                "value": {"amount": 3, "unit": "days"},
+            }
+        ],
+    }
+    data = SignalData(report_id=uuid4(), projects=(project(),), workitems=(item,))
+    definition = _definition(expression)
+    schema = JiraConnector.describe_signal_schema()
+
+    first = evaluate_signal_definition(definition, data, context(), schema, [_scope()])
+    second = evaluate_signal_definition(definition, data, context(), schema, [_scope()])
+
+    assert [finding.model_dump(exclude={"id"}) for finding in first] == [
+        finding.model_dump(exclude={"id"}) for finding in second
+    ]
 
 
 def test_sprint_relative_fields_match_sprint_scope() -> None:

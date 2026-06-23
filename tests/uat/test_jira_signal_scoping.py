@@ -14,7 +14,6 @@ from em_radar_core.models import (
     ReportSettings,
     SignalDefinition,
     SignalOrigin,
-    SignalTargetScope,
     Source,
     Sprint,
     SprintState,
@@ -38,116 +37,61 @@ SUPPORT_PROJECT_ID = uuid4()
 SPRINT_ID = uuid4()
 
 
-def test_scoped_jira_rules_do_not_leak_to_sibling_scopes() -> None:
-    scrum = _signal(
-        "Stale Scrum work",
-        "scrum-scope",
-        "board",
-        "age_in_current_status",
-        {"amount": 3, "unit": "days"},
-    )
-    kanban = _signal(
-        "Kanban aging",
-        "kanban-scope",
-        "board",
-        "age_since_created",
-        {"amount": 10, "unit": "days"},
-    )
-    support = _signal(
-        "Support open longer than 3 days",
-        "support-scope",
-        "project",
-        "age_since_created",
-        {"amount": 3, "unit": "days"},
-    )
+def test_signal_evaluates_only_the_scope_supplied_by_the_team() -> None:
+    """Scope is resolved from the team at report time: the same signal sees only the
+    entities of the scope it is handed, so a team's board scope never leaks into another."""
+    scrum = _signal("Stale Scrum work", "age_in_current_status", {"amount": 3, "unit": "days"})
+    kanban = _signal("Kanban aging", "age_since_created", {"amount": 10, "unit": "days"})
+    support = _signal("Support open longer than 3 days", "age_since_created", {"amount": 3})
     data = _data()
-    scopes = _scopes()
+    scrum_scope, kanban_scope, support_scope = _scopes()
 
-    scrum_findings = evaluate_signal_definition(
-        scrum,
-        data,
-        _context(),
-        JiraConnector.describe_signal_schema(),
-        scopes,
-    )
-    kanban_findings = evaluate_signal_definition(
-        kanban,
-        data,
-        _context(),
-        JiraConnector.describe_signal_schema(),
-        scopes,
-    )
-    support_findings = evaluate_signal_definition(
-        support,
-        data,
-        _context(),
-        JiraConnector.describe_signal_schema(),
-        scopes,
-    )
+    scrum_findings = _evaluate(scrum, data, [scrum_scope])
+    kanban_findings = _evaluate(kanban, data, [kanban_scope])
+    support_findings = _evaluate(support, data, [support_scope])
 
     assert [finding.title for finding in scrum_findings] == ["SCRUM-1 - Stale sprint work"]
     assert [finding.title for finding in kanban_findings] == ["KAN-1 - Aging kanban work"]
     assert [finding.title for finding in support_findings] == ["SUP-1 - Open support ticket"]
 
 
-def test_preview_reasons_match_report_reasons() -> None:
-    signal = _signal(
-        "Support open longer than 3 days",
-        "support-scope",
-        "project",
-        "age_since_created",
-        {"amount": 3, "unit": "days"},
-    )
+def test_a_signal_handed_a_sibling_scope_does_not_report_the_other_scope() -> None:
+    scrum = _signal("Stale Scrum work", "age_in_current_status", {"amount": 3, "unit": "days"})
     data = _data()
-    report_findings = evaluate_signal_definition(
-        signal,
-        data,
-        _context(),
-        JiraConnector.describe_signal_schema(),
-        _scopes(),
-    )
+    _, kanban_scope, _ = _scopes()
+
+    findings = _evaluate(scrum, data, [kanban_scope])
+
+    assert all(finding.title != "SCRUM-1 - Stale sprint work" for finding in findings)
+
+
+def test_preview_reasons_match_report_reasons() -> None:
+    signal = _signal("Support open longer than 3 days", "age_since_created", {"amount": 3})
+    data = _data()
+    _, _, support_scope = _scopes()
+
+    report_findings = _evaluate(signal, data, [support_scope])
     preview = preview_signal_definition(
         signal,
         data,
         _context(),
         JiraConnector.describe_signal_schema(),
-        _scopes(),
+        [support_scope],
     )
 
     assert preview["samples"][0]["reason"] == report_findings[0].reason
 
 
-def test_template_import_mapping_expectations_are_represented() -> None:
-    public_template_needs_mapping = {
-        "export_type": "public_template",
-        "templates": [{"key": "support-open", "required_scope_capabilities": ["statuses"]}],
-    }
-    private_backup_restores_mapping = {
-        "export_type": "private_backup",
-        "signals": [{"target_scopes": [{"scope_id": "support-scope"}]}],
-    }
-
-    assert public_template_needs_mapping["templates"][0]["required_scope_capabilities"] == [
-        "statuses"
-    ]
-    assert private_backup_restores_mapping["signals"][0]["target_scopes"][0]["scope_id"] in {
-        scope.scope_id for scope in _scopes()
-    }
+def _evaluate(signal: SignalDefinition, data: SignalData, scopes: list[ScopeDescriptor]) -> list:
+    return evaluate_signal_definition(
+        signal, data, _context(), JiraConnector.describe_signal_schema(), scopes
+    )
 
 
-def _signal(
-    name: str,
-    scope_id: str,
-    scope_type: str,
-    field: str,
-    value: dict[str, object],
-) -> SignalDefinition:
+def _signal(name: str, field: str, value: dict[str, object]) -> SignalDefinition:
     return SignalDefinition(
         name=name,
         entity_type="issue",
-        target_scopes=[
-            SignalTargetScope(connector_id="jira-main", scope_id=scope_id, scope_type=scope_type)
-        ],
         expression={
             "type": "group",
             "operator": "all",
