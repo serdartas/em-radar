@@ -2,79 +2,44 @@ import { useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link } from "react-router-dom"
 
-import { Badge } from "@/components/ui/badge"
+import { SignalCreateForm } from "@/components/signals/SignalCreateForm"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
-import { Label } from "@/components/ui/label"
-import { Select } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
-import { getConnectors, type SignalField } from "@/lib/connectors"
+import { apiErrorMessage } from "@/lib/api"
+import { getConnectors } from "@/lib/connectors"
 import {
   createSignalDefinition,
   deleteSignalDefinition,
   listSignalDefinitions,
-  listSignalTemplates,
-  restoreSignalTemplate,
   updateSignalDefinition,
   type SignalDefinition,
-  type SignalDefinitionCreate,
-  type SignalTemplate,
 } from "@/lib/signalDefinitions"
-
-interface BuilderDraft {
-  templateKey: string
-  name: string
-  field: string
-  operator: string
-  amount: number
-  value: unknown
-}
 
 export function SignalSettingsPage() {
   const queryClient = useQueryClient()
-  const templatesQuery = useQuery({ queryKey: ["signal-templates"], queryFn: listSignalTemplates })
   const definitionsQuery = useQuery({
     queryKey: ["signal-definitions"],
     queryFn: listSignalDefinitions,
   })
   const connectorsQuery = useQuery({ queryKey: ["connectors"], queryFn: getConnectors })
-  const templates = templatesQuery.data ?? []
   const schema = connectorsQuery.data?.find((connector) => connector.name === "jira")?.signal_schema
-  const defaultTemplate = templates[0]
-  const [draft, setDraft] = useState<BuilderDraft | null>(null)
+  const [creating, setCreating] = useState(false)
 
   const createMutation = useMutation({
     mutationFn: createSignalDefinition,
     onSuccess: () => {
-      setDraft(null)
+      setCreating(false)
       void queryClient.invalidateQueries({ queryKey: ["signal-definitions"] })
     },
   })
-  const restoreMutation = useMutation({
-    mutationFn: restoreSignalTemplate,
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["signal-templates"] }),
-  })
 
-  function duplicate(template: SignalTemplate) {
-    setDraft({
-      templateKey: template.key,
-      name: `${template.name} copy`,
-      ...firstCondition(template.expression),
-    })
-  }
-
-  if (templatesQuery.isLoading || definitionsQuery.isLoading || connectorsQuery.isLoading) {
+  if (definitionsQuery.isLoading || connectorsQuery.isLoading) {
     return <p className="text-sm text-slate-500">Loading signals...</p>
   }
 
-  if (!defaultTemplate || !schema) {
+  if (!schema) {
     return <p className="text-sm text-red-700">Signals could not be loaded.</p>
-  }
-
-  const activeDraft = draft ?? {
-    templateKey: defaultTemplate.key,
-    name: `${defaultTemplate.name} copy`,
-    ...firstCondition(defaultTemplate.expression),
   }
 
   return (
@@ -85,8 +50,8 @@ export function SignalSettingsPage() {
             Signal Settings
           </h1>
           <p className="mt-2 max-w-2xl text-slate-600">
-            Manage Jira templates and runnable signal definitions. Bundle signals into groups, then
-            attach groups to teams.
+            Build custom signals from your own rules, then bundle them into groups to attach to
+            teams.
           </p>
         </div>
         <div className="flex gap-2">
@@ -96,65 +61,41 @@ export function SignalSettingsPage() {
           <Button asChild variant="outline">
             <Link to="/signals/import-export">Import / export pack</Link>
           </Button>
+          {!creating && (
+            <Button
+              onClick={() => {
+                createMutation.reset()
+                setCreating(true)
+              }}
+            >
+              Create new
+            </Button>
+          )}
         </div>
       </header>
 
-      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
-        <div className="space-y-5">
-          <section aria-labelledby="templates-title" className="space-y-3">
-            <h2 className="text-lg font-semibold" id="templates-title">
-              Templates
-            </h2>
-            <ul className="grid gap-3 md:grid-cols-2">
-              {templates.map((template) => (
-                <li key={template.key}>
-                  <Card>
-                    <CardContent className="space-y-3 p-4">
-                      <div>
-                        <h3 className="font-semibold">{template.name}</h3>
-                        <p className="mt-1 text-sm text-slate-600">{template.description}</p>
-                      </div>
-                      <div className="flex items-center justify-between gap-3">
-                        <Badge>{template.entity_type}</Badge>
-                        <div className="flex gap-2">
-                          <Button onClick={() => duplicate(template)} size="sm" variant="outline">
-                            Duplicate
-                          </Button>
-                          <Button
-                            onClick={() => restoreMutation.mutate(template.key)}
-                            size="sm"
-                            variant="outline"
-                          >
-                            Restore default
-                          </Button>
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                </li>
-              ))}
-            </ul>
-          </section>
-
-          <RunnableSignals definitions={definitionsQuery.data ?? []} />
-        </div>
-
-        <SignalBuilder
-          draft={activeDraft}
+      {creating ? (
+        <SignalCreateForm
+          errorMessage={
+            createMutation.isError
+              ? apiErrorMessage(createMutation.error, "Could not save the signal.")
+              : null
+          }
           fields={schema.fields}
-          onChange={(next) => setDraft(next)}
+          onCancel={() => setCreating(false)}
           onSave={(definition) => createMutation.mutate(definition)}
           pending={createMutation.isPending}
-          templates={templates}
         />
-      </div>
+      ) : (
+        <SignalList definitions={definitionsQuery.data ?? []} />
+      )}
     </section>
   )
 }
 
-function RunnableSignals({ definitions }: { definitions: SignalDefinition[] }) {
+function SignalList({ definitions }: { definitions: SignalDefinition[] }) {
   const queryClient = useQueryClient()
-  const disableMutation = useMutation({
+  const toggleMutation = useMutation({
     mutationFn: (definition: SignalDefinition) =>
       updateSignalDefinition(definition.id, { enabled: !definition.enabled }),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["signal-definitions"] }),
@@ -164,10 +105,18 @@ function RunnableSignals({ definitions }: { definitions: SignalDefinition[] }) {
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["signal-definitions"] }),
   })
 
+  if (definitions.length === 0) {
+    return (
+      <p className="text-sm text-slate-500">
+        No signals yet. Use “Create new” to build your first signal.
+      </p>
+    )
+  }
+
   return (
-    <section aria-labelledby="runnable-title" className="space-y-3">
-      <h2 className="text-lg font-semibold" id="runnable-title">
-        Runnable Signals
+    <section aria-labelledby="signals-title" className="space-y-3">
+      <h2 className="text-lg font-semibold" id="signals-title">
+        Signals
       </h2>
       <ul className="space-y-3">
         {definitions.map((definition) => (
@@ -182,10 +131,10 @@ function RunnableSignals({ definitions }: { definitions: SignalDefinition[] }) {
                   <Switch
                     aria-label={`Enable ${definition.name}`}
                     checked={definition.enabled}
-                    onCheckedChange={() => disableMutation.mutate(definition)}
+                    onCheckedChange={() => toggleMutation.mutate(definition)}
                   />
                   <Button
-                    onClick={() => disableMutation.mutate(definition)}
+                    onClick={() => toggleMutation.mutate(definition)}
                     size="sm"
                     variant="outline"
                   >
@@ -206,290 +155,4 @@ function RunnableSignals({ definitions }: { definitions: SignalDefinition[] }) {
       </ul>
     </section>
   )
-}
-
-interface SignalBuilderProps {
-  draft: BuilderDraft
-  fields: SignalField[]
-  onChange: (draft: BuilderDraft) => void
-  onSave: (definition: SignalDefinitionCreate) => void
-  pending: boolean
-  templates: SignalTemplate[]
-}
-
-function SignalBuilder({ draft, fields, onChange, onSave, pending, templates }: SignalBuilderProps) {
-  const template = templates.find((item) => item.key === draft.templateKey) ?? templates[0]
-  const selectedField = fields.find((field) => field.key === draft.field) ?? fields[0]
-  const operators = selectedField?.operators ?? []
-
-  function save() {
-    if (!draft.name) {
-      return
-    }
-    onSave(definitionFromDraft(template, draft, selectedField))
-  }
-
-  return (
-    <aside className="space-y-4">
-      <Card>
-        <CardContent className="space-y-4 p-4">
-          <h2 className="text-lg font-semibold">Builder</h2>
-
-          <div className="space-y-1.5">
-            <Label htmlFor="builder-template">Template</Label>
-            <Select
-              id="builder-template"
-              onChange={(event) => {
-                const nextTemplate = templates.find((item) => item.key === event.target.value)
-                if (!nextTemplate) {
-                  return
-                }
-                const condition = firstCondition(nextTemplate.expression)
-                onChange({
-                  ...draft,
-                  templateKey: nextTemplate.key,
-                  name: `${nextTemplate.name} copy`,
-                  field: condition.field,
-                  operator: condition.operator,
-                  amount: condition.amount,
-                  value: condition.value,
-                })
-              }}
-              value={draft.templateKey}
-            >
-              {templates.map((item) => (
-                <option key={item.key} value={item.key}>
-                  {item.name}
-                </option>
-              ))}
-            </Select>
-          </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor="builder-name">Name</Label>
-            <input
-              className="w-full rounded-md border px-3 py-2 text-sm"
-              id="builder-name"
-              onChange={(event) => onChange({ ...draft, name: event.target.value })}
-              value={draft.name}
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="builder-field">Field</Label>
-              <Select
-                id="builder-field"
-                onChange={(event) => {
-                  const nextField = fields.find((field) => field.key === event.target.value)
-                  onChange({
-                    ...draft,
-                    field: event.target.value,
-                    operator: nextField?.operators[0] ?? "is",
-                    value: defaultValueForField(nextField),
-                    amount: nextField?.type === "duration" ? draft.amount : 0,
-                  })
-                }}
-                value={draft.field}
-              >
-                {fields.map((field) => (
-                  <option key={field.key} value={field.key}>
-                    {field.label}
-                  </option>
-                ))}
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="builder-operator">Operator</Label>
-              <Select
-                id="builder-operator"
-                onChange={(event) => onChange({ ...draft, operator: event.target.value })}
-                value={draft.operator}
-              >
-                {operators.map((operator) => (
-                  <option key={operator} value={operator}>
-                    {operator}
-                  </option>
-                ))}
-              </Select>
-            </div>
-          </div>
-
-          {selectedField?.type === "duration" ? (
-            <div className="space-y-1.5">
-              <Label htmlFor="builder-duration">Duration days</Label>
-              <input
-                className="w-full rounded-md border px-3 py-2 text-sm"
-                id="builder-duration"
-                min={0}
-                onChange={(event) => onChange({ ...draft, amount: Number(event.target.value) })}
-                type="number"
-                value={draft.amount}
-              />
-            </div>
-          ) : (
-            <SignalValueControl
-              field={selectedField}
-              onChange={(value) => onChange({ ...draft, value })}
-              value={draft.value}
-            />
-          )}
-
-          <Button disabled={pending || !draft.name} onClick={save}>
-            {pending ? "Saving..." : "Save signal"}
-          </Button>
-        </CardContent>
-      </Card>
-    </aside>
-  )
-}
-
-function definitionFromDraft(
-  template: SignalTemplate,
-  draft: BuilderDraft,
-  field: SignalField | undefined,
-): SignalDefinitionCreate {
-  return {
-    name: draft.name,
-    description: template.description,
-    entity_type: template.entity_type,
-    expression: expressionFromDraft(template.expression, draft, field),
-    report_settings: template.report_settings,
-    enabled: true,
-    origin: "system_template",
-    template_key: template.key,
-  }
-}
-
-function firstCondition(expression: Record<string, unknown>) {
-  const condition = firstLeafCondition(expression)
-  const value = condition && typeof condition.value === "object" ? condition.value : null
-  const amount =
-    value !== null && "amount" in value && typeof value.amount === "number" ? value.amount : 3
-  return {
-    field: typeof condition?.field === "string" ? condition.field : "age_in_current_status",
-    operator: typeof condition?.operator === "string" ? condition.operator : "greater_than",
-    amount,
-    value: condition?.value ?? "",
-  }
-}
-
-function SignalValueControl({
-  field,
-  onChange,
-  value,
-}: {
-  field: SignalField | undefined
-  onChange: (value: unknown) => void
-  value: unknown
-}) {
-  const stringValue = typeof value === "string" ? value : String(value ?? "")
-  if (field && field.values.length > 0) {
-    return (
-      <div className="space-y-1.5">
-        <Label htmlFor="builder-value">Value</Label>
-        <Select
-          id="builder-value"
-          onChange={(event) => onChange(event.target.value)}
-          value={stringValue}
-        >
-          {field.values.map((item) => (
-            <option key={String(item)} value={String(item)}>
-              {String(item)}
-            </option>
-          ))}
-        </Select>
-      </div>
-    )
-  }
-  return (
-    <div className="space-y-1.5">
-      <Label htmlFor="builder-value">Value</Label>
-      <input
-        className="w-full rounded-md border px-3 py-2 text-sm"
-        id="builder-value"
-        onChange={(event) => onChange(event.target.value)}
-        value={stringValue}
-      />
-    </div>
-  )
-}
-
-function expressionFromDraft(
-  expression: Record<string, unknown>,
-  draft: BuilderDraft,
-  field: SignalField | undefined,
-) {
-  const condition = {
-    field: draft.field,
-    operator: draft.operator,
-    value: field?.type === "duration" ? { amount: draft.amount, unit: "days" } : draft.value,
-  }
-  const clone = jsonClone(expression)
-  if (replaceFirstLeafCondition(clone, condition)) {
-    return clone
-  }
-  return {
-    ...clone,
-    type: "group",
-    operator: clone.operator === "any" ? "any" : "all",
-    conditions: [...(Array.isArray(clone.conditions) ? clone.conditions : []), condition],
-  }
-}
-
-function firstLeafCondition(expression: Record<string, unknown>): Record<string, unknown> | null {
-  const conditions = Array.isArray(expression.conditions) ? expression.conditions : []
-  for (const item of conditions) {
-    if (typeof item !== "object" || item === null) {
-      continue
-    }
-    const condition = item as Record<string, unknown>
-    if (condition.type === "group") {
-      const nested = firstLeafCondition(condition)
-      if (nested) {
-        return nested
-      }
-    } else {
-      return condition
-    }
-  }
-  return null
-}
-
-function replaceFirstLeafCondition(
-  expression: Record<string, unknown>,
-  replacement: Record<string, unknown>,
-): boolean {
-  const conditions = Array.isArray(expression.conditions) ? expression.conditions : []
-  for (let index = 0; index < conditions.length; index += 1) {
-    const item = conditions[index]
-    if (typeof item !== "object" || item === null) {
-      continue
-    }
-    const condition = item as Record<string, unknown>
-    if (condition.type === "group") {
-      if (replaceFirstLeafCondition(condition, replacement)) {
-        return true
-      }
-    } else {
-      conditions[index] = replacement
-      expression.conditions = conditions
-      return true
-    }
-  }
-  return false
-}
-
-function defaultValueForField(field: SignalField | undefined): unknown {
-  if (!field) {
-    return ""
-  }
-  if (field.type === "duration") {
-    return { amount: 3, unit: "days" }
-  }
-  return field.values[0] ?? ""
-}
-
-function jsonClone(value: Record<string, unknown>): Record<string, unknown> {
-  return JSON.parse(JSON.stringify(value)) as Record<string, unknown>
 }

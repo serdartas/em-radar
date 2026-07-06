@@ -23,7 +23,7 @@ export const navItems: NavItem[] = [
   { to: "/setup", label: "Setup", icon: Rocket },
   { to: "/connections", label: "Source Connections", icon: Plug },
   { to: "/teams", label: "Teams", icon: Users },
-  { to: "/signals", label: "Signal Settings", icon: SlidersHorizontal },
+  { to: "/signals", label: "Signal Settings", icon: SlidersHorizontal, end: true },
   { to: "/signals/groups", label: "Signal Config Groups", icon: Layers },
   { to: "/reports/run", label: "Report Runner", icon: Play },
   { to: "/reports/results", label: "Report Results", icon: FileText },

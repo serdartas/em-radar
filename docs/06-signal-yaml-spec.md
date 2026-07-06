@@ -1,8 +1,8 @@
 # EM Radar — Signal Pack YAML Specification
 
-- **Status:** Draft v0.2
+- **Status:** Draft v0.3
 - **Schema version:** `emradar.dev/v1`
-- **Date:** 2026-06-01
+- **Date:** 2026-06-26
 - **Owner:** Serdar Tas
 - **Related:** [05-data-model.md](./05-data-model.md), [02-requirements.md](./02-requirements.md) §4.5
 
@@ -10,13 +10,16 @@
 
 This document specifies the YAML format used to describe **Signal Packs** in EM Radar.
 
-A Signal Pack is the import/export representation of a **Signal Config Group**
-([data model §5.12C](./05-data-model.md#512c-signalconfiggroup)): a named, reusable bundle of
-signals plus their configuration. The same format is used for:
+A Signal Pack is the import/export representation of one or more **Signal Config Groups**
+([data model §5.12C](./05-data-model.md#512c-signalconfiggroup)): named, reusable bundles of
+signals plus their configuration. A pack serializes every referenced signal **once** under
+`spec.signals` and lists the groups under `spec.groups`, where each group references its member
+signals **by name**. This lets several groups that share a signal export to a single file without
+duplicating the signal definition. The same format is used for:
 
 - The default pack bundled with the application (seeds the default signal config group).
-- A group exported from the UI.
-- Community packs imported into the UI (each import creates a new group).
+- One or more groups exported together from the UI.
+- Community packs imported into the UI (each import may create several groups).
 - (Later) marketplace listings.
 
 The contract is: **what is imported in YAML can be exported in equivalent YAML**, modulo credentials
@@ -119,10 +122,23 @@ Holds the actual configuration.
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `export_type` | enum | yes | `private_backup` or `public_template`. Controls how aggressively org-specific condition values are scrubbed on export. See §15. |
-| `signals` | array | yes | The signals in the group. Each is a scope-agnostic signal definition. See §9. |
+| `signals` | array | yes | The signal definitions referenced by the pack, each serialized once. Each is a scope-agnostic signal definition. See §9. |
+| `groups` | array | no | The signal config groups in the pack. Each entry references its member signals by name. See §7. When omitted, the pack is read as a single legacy group (back-compat). |
 | `field_mappings` | object | no | Optional Jira/GitLab field-mapping hints. See §11. |
 
 A pack does not carry `connectors`, `scopes`, or `teams` — see §6 and §7.
+
+### 5.5 `spec.groups[]` (optional, array)
+
+Each entry describes one Signal Config Group:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `name` | string | yes | Group name, unique in the local workspace (suffixed on collision when keeping both). |
+| `description` | string | no | Group description. |
+| `signals` | string[] | yes | Names of member signals, each of which must appear in `spec.signals`. |
+
+A signal may be referenced by several groups; it is still serialized only once in `spec.signals`.
 
 ## 6. What a Pack Does Not Contain
 
@@ -143,17 +159,22 @@ to a team, only signals whose entity type the team's scope can supply are evalua
 
 ## 7. Signal Config Group Mapping
 
-Import and export map a pack to a Signal Config Group:
+Import and export map a pack to one or more Signal Config Groups:
 
-- **Export.** A group named `growth-team` with three signals exports to a pack whose
-  `metadata.name` is `growth-team` and whose `spec.signals` are those three signals (with their
-  configuration, minus any scrubbed org-specific values for public exports).
-- **Import.** A pack creates a **new** Signal Config Group named from `metadata.name` (suffixed if
-  the name already exists), containing one `SignalDefinition` per `spec.signals` entry. The user
-  then attaches the new group to teams; no scope or connector mapping step is required.
+- **Export.** The user selects one or more groups. Every signal across the selection is written
+  once to `spec.signals` (minus any scrubbed org-specific values for public exports), and each
+  group is written to `spec.groups` referencing its signals by name.
+- **Import.** A pack with `spec.groups` creates one Signal Config Group per entry, each containing
+  the `SignalDefinition`s named in its `signals` list. Name collisions (for signals and groups) are
+  resolved by the import conflict choice (§16). The user then attaches the new groups to teams; no
+  scope or connector mapping step is required.
 
-Because a signal can belong to many groups, importing the same signal in two packs yields two
-distinct signal definitions unless the user later deduplicates; packs do not share signal identity
+**Back-compat.** A pack with no `spec.groups` is read as a single legacy group named from
+`metadata.name` containing every entry in `spec.signals` — the pre-v0.3 shape. Such packs still
+import unchanged.
+
+Because a signal can belong to many groups, importing the same signal name in two separate imports
+yields distinct signal definitions (suffixed under "keep both"); packs do not share signal identity
 across installs.
 
 ## 8. Signal Templates
@@ -351,12 +372,15 @@ A pack is **rejected** at import time if any of the following are true:
 8. `min_emradar_version`, if set, is greater than the running EM Radar version.
 9. The YAML contains any field or section starting with `!`, `&`, `*`, or `<<` outside of standard YAML anchors and merge keys used safely.
 10. The YAML contains tagged constructors (`!!python/object` and similar). Only safe-load is permitted.
+11. A `spec.groups[]` entry references a signal name that does not appear in `spec.signals`.
 
 Soft validation **warnings** (import succeeds, UI shows a banner):
 
 - A signal's `report_settings.severity` differs significantly from the template default (e.g. demoting a default-`critical` template to `info`).
-- An imported group name collides with an existing group (import proceeds with a suffixed name).
 - A `field_mappings` block is present and differs from the user's existing mapping.
+
+Name collisions are not warnings: they are surfaced in the import preview and resolved by the
+import conflict choice (§16).
 
 ## 14. Forbidden Content
 
@@ -384,10 +408,19 @@ When the user exports a Signal Config Group:
 When the user imports a pack:
 
 - The pack is validated per §13 before any state changes.
-- A preview is shown: the resulting group name, its signals, and any validation warnings.
-- The user explicitly confirms.
-- Import creates a **new Signal Config Group** named from `metadata.name` (suffixed on collision), containing one signal per `spec.signals` entry. There is no connector or scope mapping step.
-- The user attaches the new group to teams afterward; each team supplies the board scope at report time.
+- A preview is shown: the resulting groups, their signals, any validation warnings, and the names
+  of signals and groups that **already exist** in the local workspace (clashes).
+- If there are clashes, the user picks **one** resolution applied to the whole import:
+  - **skip** — clashing signals and groups are not imported; a kept group that references an
+    already-present signal name wires to the existing signal.
+  - **overwrite** — clashing signals and groups are updated in place from the pack.
+  - **keep both** — clashing signals and groups are imported under a suffixed name (e.g. `name (2)`);
+    a kept group's references are rewired to the freshly suffixed signals.
+  - **cancel** — nothing is written.
+- With no clashes the import applies directly (equivalent to "keep both").
+- Import creates the groups from `spec.groups` (or a single legacy group when `spec.groups` is
+  absent — see §7). There is no connector or scope mapping step.
+- The user attaches the new groups to teams afterward; each team supplies the board scope at report time.
 - The original imported YAML is stored in the pack history table for round-trip export.
 
 ## 17. Examples
@@ -501,6 +534,45 @@ spec:
       enabled: false
       origin: imported
 ```
+
+### 17.4 Multiple groups sharing a signal
+
+```yaml
+apiVersion: emradar.dev/v1
+kind: SignalPack
+metadata:
+  name: team-health-bundle
+  version: 1.0.0
+  description: Two groups that reuse one shared signal.
+spec:
+  export_type: private_backup
+  signals:
+    - name: Stale in-progress work
+      entity_type: issue
+      expression:
+        type: group
+        operator: all
+        conditions:
+          - field: status_category
+            operator: is
+            value: in_progress
+          - field: age_in_current_status
+            operator: greater_than
+            value: {amount: 5, unit: days}
+      report_settings:
+        severity: warning
+        category: flow
+      enabled: true
+      origin: user_created
+  groups:
+    - name: scrum-health
+      signals: [Stale in-progress work]
+    - name: flow-health
+      signals: [Stale in-progress work]
+```
+
+On import this creates two groups, `scrum-health` and `flow-health`, both wired to a single
+imported `Stale in-progress work` signal.
 
 ## 18. Forward Compatibility (Later)
 

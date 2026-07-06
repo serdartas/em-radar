@@ -196,6 +196,14 @@ def _validate_pack(pack: SignalPack, em_radar_version: str) -> None:
         elif signal.expression is None:
             raise PackValidationError(f"spec.signals.{index}.expression is required")
 
+    signal_names = {signal.name for signal in pack.spec.signals if signal.name is not None}
+    for group_index, group in enumerate(pack.spec.groups):
+        for signal_name in group.signals:
+            if signal_name not in signal_names:
+                raise PackValidationError(
+                    f"spec.groups.{group_index} references unknown signal {signal_name!r}"
+                )
+
 
 def _parse_semver(version: str, field_name: str) -> tuple[int, int, int, tuple[str, ...] | None]:
     match = _SEMVER_PATTERN.fullmatch(version)
