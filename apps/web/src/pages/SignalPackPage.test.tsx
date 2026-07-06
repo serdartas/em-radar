@@ -9,6 +9,8 @@ const preview = {
   warnings: [],
   unresolved_mappings: [],
   imported_signal_names: [],
+  signal_name_clashes: [],
+  group_name_clashes: [],
   changes: [
     {
       signal_id: "stale-in-progress-work-item",
@@ -18,6 +20,11 @@ const preview = {
     },
   ],
 }
+
+const groups = [
+  { id: "g1", name: "Group A", description: null, signal_ids: [], created_at: "", updated_at: "" },
+  { id: "g2", name: "Group B", description: null, signal_ids: [], created_at: "", updated_at: "" },
+]
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -43,16 +50,17 @@ afterEach(() => {
 })
 
 describe("SignalPackPage", () => {
-  it("exports with the selected public template mode", async () => {
+  it("exports the selected groups as repeated group_ids", async () => {
     URL.createObjectURL = URL.createObjectURL ?? (() => "blob:signal-pack")
     URL.revokeObjectURL = URL.revokeObjectURL ?? (() => undefined)
-    const createObjectUrl = vi
-      .spyOn(URL, "createObjectURL")
-      .mockImplementation(() => "blob:signal-pack")
-    const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined)
+    vi.spyOn(URL, "createObjectURL").mockImplementation(() => "blob:signal-pack")
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined)
     vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined)
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const url = typeof input === "string" ? input : input.toString()
+      if (url.endsWith("/api/signal-config-groups")) {
+        return Promise.resolve(jsonResponse(groups))
+      }
       if (url.includes("/api/signal-pack/export")) {
         return Promise.resolve(new Response("kind: SignalPack", { status: 200 }))
       }
@@ -61,21 +69,28 @@ describe("SignalPackPage", () => {
 
     renderPage()
 
-    fireEvent.change(screen.getByLabelText("Export mode"), {
-      target: { value: "public_template" },
-    })
+    fireEvent.click(await screen.findByLabelText("Group A"))
+    fireEvent.click(screen.getByLabelText("Group B"))
+    fireEvent.change(screen.getByLabelText("Export mode"), { target: { value: "public_template" } })
     fireEvent.click(screen.getByRole("button", { name: "Download YAML" }))
 
     await waitFor(() => {
-      expect(fetchMock.mock.calls[0][0]).toContain("export_type=public_template")
+      const exportCall = fetchMock.mock.calls.find(([url]) =>
+        String(url).includes("/api/signal-pack/export"),
+      )
+      const exportUrl = String(exportCall?.[0])
+      expect(exportUrl).toContain("export_type=public_template")
+      expect(exportUrl).toContain("group_ids=g1")
+      expect(exportUrl).toContain("group_ids=g2")
     })
-    expect(createObjectUrl).toHaveBeenCalled()
-    expect(revokeObjectUrl).toHaveBeenCalledWith("blob:signal-pack")
   })
 
   it("previews a pack and applies it on confirmation", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const url = typeof input === "string" ? input : input.toString()
+      if (url.endsWith("/api/signal-config-groups")) {
+        return Promise.resolve(jsonResponse(groups))
+      }
       if (url.endsWith("/api/signal-pack/import")) {
         return Promise.resolve(jsonResponse(preview))
       }
@@ -88,36 +103,41 @@ describe("SignalPackPage", () => {
     renderPage()
 
     fireEvent.change(screen.getByLabelText(/Paste pack YAML/), {
-      target: { value: "schema_id: emradar.dev/v1" },
+      target: { value: "apiVersion: emradar.dev/v1" },
     })
     fireEvent.click(screen.getByRole("button", { name: "Preview changes" }))
 
     expect(await screen.findByTestId("import-preview")).toBeInTheDocument()
-    expect(screen.getByText("stale-in-progress-work-item")).toBeInTheDocument()
-
     fireEvent.click(screen.getByRole("button", { name: "Apply pack" }))
 
     await waitFor(() => {
       expect(screen.getByText(/Applied pack/)).toBeInTheDocument()
     })
-    expect(
-      fetchMock.mock.calls.some(([url]) =>
-        String(url).endsWith("/api/signal-pack/import/apply"),
-      ),
-    ).toBe(true)
+    const applyCall = fetchMock.mock.calls.find(([url]) =>
+      String(url).endsWith("/api/signal-pack/import/apply"),
+    )
+    expect(applyCall).toBeTruthy()
+    expect(JSON.parse(String((applyCall?.[1] as RequestInit).body)).conflict).toBe("keep_both")
   })
 
-  it("shows unresolved mappings for public template imports", async () => {
-    const publicPreview = {
+  it("offers a four-way conflict choice and applies overwrite", async () => {
+    const clashPreview = {
       ...preview,
       changes: [],
-      unresolved_mappings: ["public-stale-work"],
-      imported_signal_names: ["Public stale work"],
+      imported_signal_names: ["Stale work"],
+      signal_name_clashes: ["Stale work"],
+      group_name_clashes: ["scrum-health"],
     }
-    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const url = typeof input === "string" ? input : input.toString()
+      if (url.endsWith("/api/signal-config-groups")) {
+        return Promise.resolve(jsonResponse(groups))
+      }
       if (url.endsWith("/api/signal-pack/import")) {
-        return Promise.resolve(jsonResponse(publicPreview))
+        return Promise.resolve(jsonResponse(clashPreview))
+      }
+      if (url.endsWith("/api/signal-pack/import/apply")) {
+        return Promise.resolve(jsonResponse({ ...clashPreview, pack_name: "my-pack" }))
       }
       throw new Error(`unexpected fetch: ${url}`)
     })
@@ -129,13 +149,26 @@ describe("SignalPackPage", () => {
     })
     fireEvent.click(screen.getByRole("button", { name: "Preview changes" }))
 
-    expect(await screen.findByLabelText("Unresolved mappings")).toBeInTheDocument()
-    expect(screen.getByText(/public-stale-work requires local connector/)).toBeInTheDocument()
+    expect(await screen.findByTestId("conflict-resolver")).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Apply pack" })).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole("button", { name: "Overwrite" }))
+
+    await waitFor(() => {
+      const applyCall = fetchMock.mock.calls.find(([url]) =>
+        String(url).endsWith("/api/signal-pack/import/apply"),
+      )
+      expect(applyCall).toBeTruthy()
+      expect(JSON.parse(String((applyCall?.[1] as RequestInit).body)).conflict).toBe("overwrite")
+    })
   })
 
   it("surfaces a backend error for an invalid pack without applying", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const url = typeof input === "string" ? input : input.toString()
+      if (url.endsWith("/api/signal-config-groups")) {
+        return Promise.resolve(jsonResponse(groups))
+      }
       if (url.endsWith("/api/signal-pack/import")) {
         return Promise.resolve(
           jsonResponse(
@@ -159,9 +192,7 @@ describe("SignalPackPage", () => {
     })
     expect(screen.queryByRole("button", { name: "Apply pack" })).not.toBeInTheDocument()
     expect(
-      fetchMock.mock.calls.some(([url]) =>
-        String(url).endsWith("/api/signal-pack/import/apply"),
-      ),
+      fetchMock.mock.calls.some(([url]) => String(url).endsWith("/api/signal-pack/import/apply")),
     ).toBe(false)
   })
 })

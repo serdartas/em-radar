@@ -1,3 +1,4 @@
+import yaml
 from fastapi.testclient import TestClient
 
 _ORG_SPECIFIC_LABEL = "fraud-internal-2024"
@@ -38,7 +39,7 @@ def test_private_export_contains_no_connectors_scopes_or_credentials(
     group_id = _create_group(api_client, "fraud-signals", [signal_id])
 
     text = api_client.get(
-        f"/api/signal-pack/export?export_type=private_backup&group_id={group_id}"
+        f"/api/signal-pack/export?export_type=private_backup&group_ids={group_id}"
     ).text
 
     assert "connectors:" not in text
@@ -49,7 +50,7 @@ def test_private_export_contains_no_connectors_scopes_or_credentials(
     assert _ORG_SPECIFIC_LABEL in text
 
 
-def test_export_requires_group_id(api_client: TestClient) -> None:
+def test_export_requires_group_ids(api_client: TestClient) -> None:
     response = api_client.get("/api/signal-pack/export?export_type=private_backup")
 
     assert response.status_code == 422
@@ -60,12 +61,12 @@ def test_export_then_import_reproduces_equivalent_group(api_client: TestClient) 
     group_id = _create_group(api_client, "fraud-signals", [signal_id])
 
     exported = api_client.get(
-        f"/api/signal-pack/export?export_type=private_backup&group_id={group_id}"
+        f"/api/signal-pack/export?export_type=private_backup&group_ids={group_id}"
     ).text
 
     apply = api_client.post(
         "/api/signal-pack/import/apply",
-        json={"raw_yaml": exported, "mode": "additive"},
+        json={"raw_yaml": exported, "mode": "additive", "conflict": "keep_both"},
     )
     assert apply.status_code == 200
 
@@ -80,6 +81,55 @@ def test_export_then_import_reproduces_equivalent_group(api_client: TestClient) 
     assert imported_signal["report_settings"] == original_signal["report_settings"]
 
 
+def test_multi_group_export_dedupes_shared_signal_and_references_by_name(
+    api_client: TestClient,
+) -> None:
+    signal_id = _create_signal(api_client, "Stale fraud work")
+    group_a = _create_group(api_client, "scrum-health", [signal_id])
+    group_b = _create_group(api_client, "flow-health", [signal_id])
+
+    text = api_client.get(
+        f"/api/signal-pack/export?export_type=private_backup"
+        f"&group_ids={group_a}&group_ids={group_b}"
+    ).text
+    pack = yaml.safe_load(text)
+
+    signals = pack["spec"]["signals"]
+    assert len(signals) == 1
+    assert signals[0]["name"] == "Stale fraud work"
+
+    groups = {group["name"]: group for group in pack["spec"]["groups"]}
+    assert groups["scrum-health"]["signals"] == ["Stale fraud work"]
+    assert groups["flow-health"]["signals"] == ["Stale fraud work"]
+
+
+def test_multi_group_import_recreates_both_groups_with_one_signal(
+    api_client: TestClient,
+) -> None:
+    signal_id = _create_signal(api_client, "Stale fraud work")
+    group_a = _create_group(api_client, "scrum-health", [signal_id])
+    group_b = _create_group(api_client, "flow-health", [signal_id])
+
+    exported = api_client.get(
+        f"/api/signal-pack/export?export_type=private_backup"
+        f"&group_ids={group_a}&group_ids={group_b}"
+    ).text
+
+    apply = api_client.post(
+        "/api/signal-pack/import/apply",
+        json={"raw_yaml": exported, "mode": "additive", "conflict": "keep_both"},
+    )
+    assert apply.status_code == 200
+
+    groups = api_client.get("/api/signal-config-groups").json()
+    imported = [group for group in groups if group["id"] not in {group_a, group_b}]
+    assert len(imported) == 2
+
+    # Both imported groups reference the same single re-created signal.
+    referenced = {signal_id for group in imported for signal_id in group["signal_ids"]}
+    assert len(referenced) == 1
+
+
 def test_public_template_export_scrubs_org_specific_condition_values(
     api_client: TestClient,
 ) -> None:
@@ -87,10 +137,10 @@ def test_public_template_export_scrubs_org_specific_condition_values(
     group_id = _create_group(api_client, "fraud-signals", [signal_id])
 
     private_text = api_client.get(
-        f"/api/signal-pack/export?export_type=private_backup&group_id={group_id}"
+        f"/api/signal-pack/export?export_type=private_backup&group_ids={group_id}"
     ).text
     public_text = api_client.get(
-        f"/api/signal-pack/export?export_type=public_template&group_id={group_id}"
+        f"/api/signal-pack/export?export_type=public_template&group_ids={group_id}"
     ).text
 
     assert "public_template" in public_text

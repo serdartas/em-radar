@@ -5,29 +5,6 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { SignalSettingsPage } from "@/pages/SignalSettingsPage"
 
-const templates = [
-  {
-    key: "stale-in-progress-work-item",
-    name: "Stale in-progress work item",
-    description: "Finds stale Jira issues.",
-    required_connector_type: "jira",
-    entity_type: "issue",
-    required_scope_capabilities: ["statuses"],
-    expression: {
-      type: "group",
-      operator: "all",
-      conditions: [
-        {
-          field: "age_in_current_status",
-          operator: "greater_than",
-          value: { amount: 7, unit: "days" },
-        },
-      ],
-    },
-    report_settings: { severity: "warning", category: "flow" },
-  },
-]
-
 const connectors = [
   {
     name: "jira",
@@ -73,20 +50,17 @@ const connectors = [
   },
 ]
 
-function jsonResponse(body: unknown): Response {
+function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
-    status: 200,
+    status,
     headers: { "Content-Type": "application/json" },
   })
 }
 
-function mockApi() {
+function mockApi(options: { duplicateName?: boolean } = {}) {
   return vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
     const url = typeof input === "string" ? input : input.toString()
     const method = init?.method ?? "GET"
-    if (url.endsWith("/api/signal-templates")) {
-      return Promise.resolve(jsonResponse(templates))
-    }
     if (url.endsWith("/api/signal-definitions") && method === "GET") {
       return Promise.resolve(jsonResponse([]))
     }
@@ -94,6 +68,11 @@ function mockApi() {
       return Promise.resolve(jsonResponse(connectors))
     }
     if (url.endsWith("/api/signal-definitions") && method === "POST") {
+      if (options.duplicateName) {
+        return Promise.resolve(
+          jsonResponse({ detail: { code: "conflict", message: "signal name must be unique" } }, 409),
+        )
+      }
       return Promise.resolve(jsonResponse({ id: "signal-1", ...JSON.parse(String(init?.body)) }))
     }
     throw new Error(`unexpected fetch: ${method} ${url}`)
@@ -113,27 +92,47 @@ function renderPage() {
   )
 }
 
+async function openForm() {
+  fireEvent.click(await screen.findByRole("button", { name: "Create new" }))
+  await screen.findByRole("button", { name: "Save signal" })
+}
+
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
 })
 
 describe("SignalSettingsPage", () => {
-  it("renders the builder with no scope control", async () => {
+  it("shows the create form without any template controls", async () => {
     mockApi()
     renderPage()
 
-    await screen.findByRole("button", { name: "Duplicate" })
+    await openForm()
 
-    expect(screen.queryByLabelText("Jira target scope")).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Duplicate" })).not.toBeInTheDocument()
+    expect(screen.getByLabelText("Name")).toBeInTheDocument()
+    expect(screen.getByLabelText("Type")).toBeInTheDocument()
   })
 
-  it("duplicates a template, edits duration, and saves without target scopes", async () => {
+  it("adds a second rule joined by a uniform connector shown on both rows", async () => {
+    mockApi()
+    renderPage()
+    await openForm()
+
+    fireEvent.change(screen.getByLabelText("Add rule"), { target: { value: "OR" } })
+
+    // The first row connector now reflects the shared operator, the new last row offers add again.
+    expect((screen.getByLabelText("Connector 1") as HTMLSelectElement).value).toBe("OR")
+    expect(screen.getByLabelText("Add rule")).toBeInTheDocument()
+  })
+
+  it("saves a two-rule OR signal with operator any and two conditions", async () => {
     const fetchMock = mockApi()
     renderPage()
+    await openForm()
 
-    fireEvent.click(await screen.findByRole("button", { name: "Duplicate" }))
-    fireEvent.change(screen.getByLabelText("Duration days"), { target: { value: "5" } })
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "My signal" } })
+    fireEvent.change(screen.getByLabelText("Add rule"), { target: { value: "OR" } })
     fireEvent.click(screen.getByRole("button", { name: "Save signal" }))
 
     await waitFor(() => {
@@ -142,31 +141,46 @@ describe("SignalSettingsPage", () => {
       )
       expect(call).toBeTruthy()
       const body = JSON.parse(String((call?.[1] as RequestInit).body))
-      expect(body.target_scopes).toBeUndefined()
-      expect(body.expression.conditions[0].value.amount).toBe(5)
+      expect(body.name).toBe("My signal")
+      expect(body.expression.operator).toBe("any")
+      expect(body.expression.conditions).toHaveLength(2)
+      expect(body.report_settings.severity).toBe("warning")
     })
   })
 
-  it("preserves enum values when saving a non-duration condition", async () => {
-    const fetchMock = mockApi()
+  it("does not exceed five rules", async () => {
+    mockApi()
     renderPage()
+    await openForm()
 
-    await screen.findByRole("button", { name: "Duplicate" })
+    for (let index = 0; index < 4; index += 1) {
+      fireEvent.change(screen.getByLabelText("Add rule"), { target: { value: "AND" } })
+    }
+
+    expect(screen.queryByLabelText("Add rule")).not.toBeInTheDocument()
+    expect(screen.getByText("Max 5")).toBeInTheDocument()
+  })
+
+  it("renders an enum value dropdown for enum fields", async () => {
+    mockApi()
+    renderPage()
+    await openForm()
+
     fireEvent.change(screen.getByLabelText("Field"), { target: { value: "status_category" } })
-    fireEvent.change(screen.getByLabelText("Value"), { target: { value: "in_progress" } })
+
+    const valueControl = screen.getByLabelText("Value") as HTMLSelectElement
+    expect(valueControl.tagName).toBe("SELECT")
+    expect(screen.getByRole("option", { name: "in_progress" })).toBeInTheDocument()
+  })
+
+  it("surfaces a duplicate-name conflict message", async () => {
+    mockApi({ duplicateName: true })
+    renderPage()
+    await openForm()
+
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Taken" } })
     fireEvent.click(screen.getByRole("button", { name: "Save signal" }))
 
-    await waitFor(() => {
-      const call = fetchMock.mock.calls.find(
-        ([url, init]) => String(url).endsWith("/api/signal-definitions") && init?.method === "POST",
-      )
-      expect(call).toBeTruthy()
-      const body = JSON.parse(String((call?.[1] as RequestInit).body))
-      expect(body.expression.conditions[0]).toMatchObject({
-        field: "status_category",
-        operator: "is",
-        value: "in_progress",
-      })
-    })
+    expect(await screen.findByRole("alert")).toHaveTextContent("signal name must be unique")
   })
 })

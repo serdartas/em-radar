@@ -7,17 +7,6 @@ export interface ReportSettings {
   message_template?: string | null
 }
 
-export interface SignalTemplate {
-  key: string
-  name: string
-  description: string
-  required_connector_type: string
-  entity_type: string
-  required_scope_capabilities: string[]
-  expression: Record<string, unknown>
-  report_settings: ReportSettings
-}
-
 export interface SignalDefinition {
   id: string
   name: string
@@ -55,14 +44,6 @@ export interface SignalDefinitionPreview {
   match_count: number
   samples: SignalDefinitionPreviewSample[]
   warnings: string[]
-}
-
-export async function listSignalTemplates(): Promise<SignalTemplate[]> {
-  return apiFetch<SignalTemplate[]>("/signal-templates")
-}
-
-export async function restoreSignalTemplate(templateKey: string): Promise<SignalTemplate> {
-  return apiFetch<SignalTemplate>(`/signal-templates/${templateKey}/restore`, { method: "POST" })
 }
 
 export async function listSignalDefinitions(): Promise<SignalDefinition[]> {
