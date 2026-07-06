@@ -52,6 +52,45 @@ def test_missing_api_version_is_rejected() -> None:
         load_signal_pack(VALID_PACK.replace("apiVersion: emradar.dev/v1\n", ""))
 
 
+GROUP_PACK = """\
+apiVersion: emradar.dev/v1
+kind: SignalPack
+metadata:
+  name: group-pack
+  version: 1.0.0
+  description: Pack with a group.
+spec:
+  export_type: private_backup
+  signals:
+    - name: Defined signal
+      entity_type: issue
+      expression:
+        type: group
+        operator: all
+        conditions:
+          - field: labels
+            operator: contains
+            value: x
+      report_settings:
+        severity: warning
+        category: flow
+  groups:
+    - name: known-group
+      signals: [Defined signal]
+"""
+
+
+def test_group_referencing_defined_signal_is_accepted() -> None:
+    result = load_signal_pack(GROUP_PACK)
+
+    assert result.pack.spec.groups[0].signals == ["Defined signal"]
+
+
+def test_group_referencing_unknown_signal_is_rejected() -> None:
+    with pytest.raises(PackValidationError, match="unknown signal"):
+        load_signal_pack(GROUP_PACK.replace("signals: [Defined signal]", "signals: [Missing]"))
+
+
 def test_duplicate_mapping_keys_are_rejected() -> None:
     yaml_text = VALID_PACK.replace(
         "      enabled: true", "      enabled: true\n      enabled: false"

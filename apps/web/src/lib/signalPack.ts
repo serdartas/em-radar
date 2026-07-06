@@ -4,6 +4,7 @@ import type { Severity } from "@/lib/severity"
 export type ExportMode = "full" | "minimal"
 export type ExportType = "legacy" | "private_backup" | "public_template"
 export type ImportMode = "additive" | "replace_all"
+export type ConflictMode = "skip" | "overwrite" | "keep_both" | "cancel"
 
 export interface ImportWarning {
   code: string
@@ -39,15 +40,33 @@ export interface SignalPackImportPreview {
   changes: SignalImportDiff[]
   unresolved_mappings: string[]
   imported_signal_names: string[]
+  signal_name_clashes?: string[]
+  group_name_clashes?: string[]
 }
 
 export interface ImportRequest {
   raw_yaml: string
   mode: ImportMode
+  conflict?: ConflictMode
 }
 
 export async function exportSignalPack(mode: ExportMode, exportType: ExportType): Promise<string> {
   const params = new URLSearchParams({ mode, export_type: exportType })
+  const response = await fetch(`${API_BASE_URL}/signal-pack/export?${params.toString()}`)
+  if (!response.ok) {
+    throw new ApiError(response.status, `Export failed with status ${response.status}.`)
+  }
+  return response.text()
+}
+
+export async function exportSignalGroupsPack(
+  groupIds: string[],
+  exportType: Exclude<ExportType, "legacy">,
+): Promise<string> {
+  const params = new URLSearchParams({ export_type: exportType })
+  for (const groupId of groupIds) {
+    params.append("group_ids", groupId)
+  }
   const response = await fetch(`${API_BASE_URL}/signal-pack/export?${params.toString()}`)
   if (!response.ok) {
     throw new ApiError(response.status, `Export failed with status ${response.status}.`)

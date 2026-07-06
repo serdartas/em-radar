@@ -1,15 +1,32 @@
+from typing import Literal
+
 from pydantic import BaseModel, JsonValue
 from sqlmodel import Session, select
 
 from em_radar_api.models.signal_pack_history import SignalPackHistory
-from em_radar_api.repositories.signal_config_groups import create_signal_config_group
-from em_radar_api.repositories.signal_definitions import create_signal_definition
-from em_radar_api.signal_config_groups import SignalConfigGroupCreate, SignalConfigGroupTable
-from em_radar_api.signal_definitions import SignalDefinitionCreate, SignalDefinitionTable
+from em_radar_api.repositories.signal_config_groups import (
+    create_signal_config_group,
+    update_signal_config_group,
+)
+from em_radar_api.repositories.signal_definitions import (
+    create_signal_definition,
+    update_signal_definition,
+)
+from em_radar_api.signal_config_groups import (
+    SignalConfigGroupCreate,
+    SignalConfigGroupTable,
+    SignalConfigGroupUpdate,
+)
+from em_radar_api.signal_definitions import (
+    SignalDefinitionCreate,
+    SignalDefinitionTable,
+    SignalDefinitionUpdate,
+)
 from em_radar_api.signal_configs import SignalConfigRead, SignalConfigTable, SignalConfigUpsert
 from em_radar_api.tables import ProjectTable, RepositoryTable
 from em_radar_config import (
     SIGNAL_CATALOG,
+    PackGroupEntry,
     PackLoadResult,
     PackValidationContext,
     PackValidationWarning,
@@ -18,6 +35,8 @@ from em_radar_config import (
     load_signal_pack,
 )
 from em_radar_core.models import Severity
+
+ConflictMode = Literal["skip", "overwrite", "keep_both", "cancel"]
 
 
 class BoolChange(BaseModel):
@@ -54,6 +73,8 @@ class SignalPackImportPreview(BaseModel):
     changes: list[SignalImportDiff]
     unresolved_mappings: list[str] = []
     imported_signal_names: list[str] = []
+    signal_name_clashes: list[str] = []
+    group_name_clashes: list[str] = []
 
 
 def preview_signal_pack_import(
@@ -64,7 +85,7 @@ def preview_signal_pack_import(
 ) -> SignalPackImportPreview:
     result = load_signal_pack(raw_yaml, _validation_context(session))
     if _is_definition_pack(result.pack):
-        return _preview_definition_pack(result)
+        return _preview_definition_pack(session, result)
     configs = {
         config.signal_id: config
         for config in session.exec(select(SignalConfigTable).order_by(SignalConfigTable.signal_id))
@@ -77,11 +98,14 @@ def apply_signal_pack_import(
     raw_yaml: str,
     *,
     replace_all: bool = False,
+    conflict: ConflictMode = "keep_both",
 ) -> SignalPackImportPreview:
     result = load_signal_pack(raw_yaml, _validation_context(session))
     if _is_definition_pack(result.pack):
-        preview = _preview_definition_pack(result)
-        _import_group(session, result.pack)
+        preview = _preview_definition_pack(session, result)
+        if conflict == "cancel":
+            return preview
+        _import_definition_pack(session, result.pack, conflict)
         session.add(SignalPackHistory(pack_name=result.pack.metadata.name, raw_yaml=raw_yaml))
         session.commit()
         return preview
@@ -208,46 +232,109 @@ def _import_warning(warning: PackValidationWarning) -> ImportWarning:
 
 
 def _is_definition_pack(pack: SignalPack) -> bool:
-    return pack.spec.export_type in {"private_backup", "public_template"} and any(
-        signal.expression is not None for signal in pack.spec.signals
+    return pack.spec.export_type in {"private_backup", "public_template"} and (
+        bool(pack.spec.groups) or any(signal.expression is not None for signal in pack.spec.signals)
     )
 
 
-def _preview_definition_pack(result: PackLoadResult) -> SignalPackImportPreview:
+def _preview_definition_pack(session: Session, result: PackLoadResult) -> SignalPackImportPreview:
+    pack = result.pack
+    existing_signal_names = set(session.exec(select(SignalDefinitionTable.name)))
+    existing_group_names = set(session.exec(select(SignalConfigGroupTable.name)))
+    signal_names = [_signal_source_name(signal) for signal in pack.spec.signals]
+    group_names = [group.name for group in _pack_groups(pack)]
     return SignalPackImportPreview(
-        pack_name=result.pack.metadata.name,
+        pack_name=pack.metadata.name,
         warnings=[_import_warning(warning) for warning in result.warnings],
         changes=[],
-        imported_signal_names=[
-            signal.name or signal.id or "unnamed signal" for signal in result.pack.spec.signals
-        ],
+        imported_signal_names=signal_names,
+        signal_name_clashes=[name for name in signal_names if name in existing_signal_names],
+        group_name_clashes=[name for name in group_names if name in existing_group_names],
     )
 
 
-def _import_group(session: Session, pack: SignalPack) -> None:
-    used_signal_names = set(session.exec(select(SignalDefinitionTable.name)))
-    signal_ids = []
+def _import_definition_pack(session: Session, pack: SignalPack, conflict: ConflictMode) -> None:
+    existing_signals = {row.name: row.id for row in session.exec(select(SignalDefinitionTable))}
+    used_signal_names = set(existing_signals)
+    name_to_id = {}
     for signal in pack.spec.signals:
+        source_name = _signal_source_name(signal)
         definition = _definition_from_signal(signal)
-        name = _dedupe_name(definition.name, used_signal_names)
-        used_signal_names.add(name)
-        created = create_signal_definition(session, definition.model_copy(update={"name": name}))
-        signal_ids.append(created.id)
+        if source_name in existing_signals:
+            existing_id = existing_signals[source_name]
+            if conflict == "skip":
+                name_to_id[source_name] = existing_id
+                continue
+            if conflict == "overwrite":
+                update_signal_definition(
+                    session,
+                    existing_id,
+                    SignalDefinitionUpdate(**definition.model_dump()),
+                )
+                name_to_id[source_name] = existing_id
+                continue
+            new_name = _dedupe_name(source_name, used_signal_names)
+            used_signal_names.add(new_name)
+            created = create_signal_definition(
+                session, definition.model_copy(update={"name": new_name})
+            )
+            name_to_id[source_name] = created.id
+        else:
+            used_signal_names.add(source_name)
+            created = create_signal_definition(session, definition)
+            name_to_id[source_name] = created.id
 
-    used_group_names = set(session.exec(select(SignalConfigGroupTable.name)))
-    create_signal_config_group(
-        session,
-        SignalConfigGroupCreate(
-            name=_dedupe_name(pack.metadata.name, used_group_names),
+    existing_groups = {row.name: row.id for row in session.exec(select(SignalConfigGroupTable))}
+    used_group_names = set(existing_groups)
+    for group in _pack_groups(pack):
+        signal_ids = [name_to_id[name] for name in group.signals if name in name_to_id]
+        if group.name in existing_groups:
+            if conflict == "skip":
+                continue
+            if conflict == "overwrite":
+                update_signal_config_group(
+                    session,
+                    existing_groups[group.name],
+                    SignalConfigGroupUpdate(description=group.description, signal_ids=signal_ids),
+                )
+                continue
+            new_name = _dedupe_name(group.name, used_group_names)
+            used_group_names.add(new_name)
+            create_signal_config_group(
+                session,
+                SignalConfigGroupCreate(
+                    name=new_name, description=group.description, signal_ids=signal_ids
+                ),
+            )
+        else:
+            used_group_names.add(group.name)
+            create_signal_config_group(
+                session,
+                SignalConfigGroupCreate(
+                    name=group.name, description=group.description, signal_ids=signal_ids
+                ),
+            )
+
+
+def _pack_groups(pack: SignalPack) -> list[PackGroupEntry]:
+    if pack.spec.groups:
+        return pack.spec.groups
+    return [
+        PackGroupEntry(
+            name=pack.metadata.name,
             description=pack.metadata.description,
-            signal_ids=signal_ids,
-        ),
-    )
+            signals=[_signal_source_name(signal) for signal in pack.spec.signals],
+        )
+    ]
+
+
+def _signal_source_name(signal: SignalEntry) -> str:
+    return signal.name or signal.id or "Imported signal"
 
 
 def _definition_from_signal(signal: SignalEntry) -> SignalDefinitionCreate:
     return SignalDefinitionCreate(
-        name=signal.name or signal.id or "Imported signal",
+        name=_signal_source_name(signal),
         description=signal.description,
         entity_type=signal.entity_type or "issue",
         expression=signal.expression or {"type": "group", "operator": "all", "conditions": []},
