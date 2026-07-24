@@ -279,7 +279,7 @@ def test_connection_connector_name_cannot_change_when_scopes_reference_it(
     )
 
 
-def test_jira_project_and_board_listing_populates_scope_definitions(
+def test_jira_project_and_board_listing_is_side_effect_free(
     api_client: TestClient,
     monkeypatch,
 ) -> None:
@@ -302,23 +302,11 @@ def test_jira_project_and_board_listing_populates_scope_definitions(
     assert boards_response.status_code == 200
     assert [board["external_id"] for board in boards_response.json()] == ["20000", "20001"]
 
+    # Listing must not create any ScopeDefinition rows — browsing the picker is read-only.
     scopes_response = api_client.get(f"/api/scopes?connection_id={connection_id}")
     assert scopes_response.status_code == 200
-    scopes = scopes_response.json()
-    assert [(scope["scope_type"], scope["external_ref"]["id"]) for scope in scopes] == [
-        ("project", "10000"),
-        ("board", "20000"),
-        ("board", "20001"),
-    ]
-    assert scopes[0]["external_ref"] == {
-        "type": "jira_project",
-        "id": "10000",
-        "key": "PLAT",
-        "name": "Platform",
-    }
-    assert scopes[1]["capabilities"] == ["sprint", "statuses", "labels"]
-    assert scopes[2]["capabilities"] == ["kanban", "statuses", "labels"]
+    assert scopes_response.json() == []
 
-    repeat_response = api_client.get(f"/api/connections/{connection_id}/projects")
-    assert repeat_response.status_code == 200
-    assert len(api_client.get(f"/api/scopes?connection_id={connection_id}").json()) == 3
+    # Because no scopes were created, the connection must still be deletable.
+    delete_response = api_client.delete(f"/api/connections/{connection_id}")
+    assert delete_response.status_code == 204

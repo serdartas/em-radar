@@ -9,10 +9,6 @@ from starlette.responses import Response
 
 from em_radar_api.connector_registry import create_connector
 from em_radar_api.db import get_session, get_write_session
-from em_radar_api.repositories.scope_definitions import (
-    upsert_jira_board_scope,
-    upsert_jira_project_scope,
-)
 from em_radar_api.repositories.source_connections import (
     SourceConnectionDuplicateName,
     SourceConnectionInUse,
@@ -182,14 +178,13 @@ async def test_existing_connection(
 @router.get("/connections/{connection_id}/projects", response_model=list[ProjectResponse])
 async def list_connection_projects(
     connection_id: UUID,
-    session: Session = Depends(get_write_session),
+    session: Session = Depends(get_session),
 ) -> list[ProjectResponse]:
     connector = _workitem_connector(session, connection_id)
     try:
-        projects = await connector.list_projects()
-        for project in projects:
-            upsert_jira_project_scope(session, connection_id, project)
-        return [ProjectResponse.from_project(project) for project in projects]
+        return [ProjectResponse.from_project(p) for p in await connector.list_projects()]
+    except ConnectorError as error:
+        raise HTTPException(status_code=_picker_status(error), detail=str(error)) from error
     finally:
         await connector.close()
 
@@ -201,14 +196,13 @@ async def list_connection_projects(
 async def list_connection_boards(
     connection_id: UUID,
     project_id: str,
-    session: Session = Depends(get_write_session),
+    session: Session = Depends(get_session),
 ) -> list[BoardResponse]:
     connector = _workitem_connector(session, connection_id)
     try:
-        boards = await connector.list_boards(project_id)
-        for board in boards:
-            upsert_jira_board_scope(session, connection_id, board)
-        return [BoardResponse.from_board(board) for board in boards]
+        return [BoardResponse.from_board(b) for b in await connector.list_boards(project_id)]
+    except ConnectorError as error:
+        raise HTTPException(status_code=_picker_status(error), detail=str(error)) from error
     finally:
         await connector.close()
 
@@ -224,9 +218,9 @@ async def list_connection_sprints(
 ) -> list[SprintResponse]:
     connector = _workitem_connector(session, connection_id)
     try:
-        return [
-            SprintResponse.from_sprint(sprint) for sprint in await connector.list_sprints(board_id)
-        ]
+        return [SprintResponse.from_sprint(s) for s in await connector.list_sprints(board_id)]
+    except ConnectorError as error:
+        raise HTTPException(status_code=_picker_status(error), detail=str(error)) from error
     finally:
         await connector.close()
 
@@ -306,6 +300,19 @@ def _error_code(error: ConnectorError) -> ConnectionErrorCode:
     if isinstance(error, ConnectorDataError):
         return "data"
     return "unknown"
+
+
+def _picker_status(error: ConnectorError) -> int:
+    code = _error_code(error)
+    if code == "auth":
+        return status.HTTP_401_UNAUTHORIZED
+    if code == "not_found":
+        return status.HTTP_404_NOT_FOUND
+    if code == "rate_limited":
+        return status.HTTP_429_TOO_MANY_REQUESTS
+    if code == "config":
+        return status.HTTP_422_UNPROCESSABLE_CONTENT
+    return status.HTTP_502_BAD_GATEWAY
 
 
 def _connection_not_found() -> HTTPException:

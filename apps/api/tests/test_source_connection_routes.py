@@ -3,6 +3,7 @@ from datetime import UTC, datetime, timedelta, tzinfo
 from typing import ClassVar
 from uuid import UUID
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import sessionmaker
 from sqlmodel import Session, select
@@ -11,7 +12,9 @@ from em_radar_core.connectors import (
     Capabilities,
     ConnectionTestResult,
     ConnectorAuthError,
+    ConnectorConfigError,
     ConnectorNotFoundError,
+    ConnectorRateLimitedError,
     ConnectorTransientError,
     WorkItemScope,
 )
@@ -195,6 +198,61 @@ class JiraKanbanTestConnector(JiraTestConnector):
         del entity_type, entity_external_ids
         if False:
             yield
+
+
+class JiraAuthErrorOnPickerConnector(JiraTestConnector):
+    async def list_projects(self) -> list[Project]:
+        raise ConnectorAuthError("token expired")
+
+    async def list_boards(self, project_id: str) -> list[Board]:
+        raise ConnectorAuthError("token expired")
+
+    async def list_sprints(self, board_id: str) -> list[Sprint]:
+        raise ConnectorAuthError("token expired")
+
+
+class JiraNotFoundErrorOnPickerConnector(JiraTestConnector):
+    async def list_projects(self) -> list[Project]:
+        raise ConnectorNotFoundError("project not found")
+
+    async def list_boards(self, project_id: str) -> list[Board]:
+        raise ConnectorNotFoundError("board not found")
+
+    async def list_sprints(self, board_id: str) -> list[Sprint]:
+        raise ConnectorNotFoundError("board not found")
+
+
+class JiraRateLimitedOnPickerConnector(JiraTestConnector):
+    async def list_projects(self) -> list[Project]:
+        raise ConnectorRateLimitedError("rate limited")
+
+    async def list_boards(self, project_id: str) -> list[Board]:
+        raise ConnectorRateLimitedError("rate limited")
+
+    async def list_sprints(self, board_id: str) -> list[Sprint]:
+        raise ConnectorRateLimitedError("rate limited")
+
+
+class JiraConfigErrorOnPickerConnector(JiraTestConnector):
+    async def list_projects(self) -> list[Project]:
+        raise ConnectorConfigError("bad config")
+
+    async def list_boards(self, project_id: str) -> list[Board]:
+        raise ConnectorConfigError("bad config")
+
+    async def list_sprints(self, board_id: str) -> list[Sprint]:
+        raise ConnectorConfigError("bad config")
+
+
+class JiraTransientErrorOnPickerConnector(JiraTestConnector):
+    async def list_projects(self) -> list[Project]:
+        raise ConnectorTransientError("Jira unreachable")
+
+    async def list_boards(self, project_id: str) -> list[Board]:
+        raise ConnectorTransientError("Jira unreachable")
+
+    async def list_sprints(self, board_id: str) -> list[Sprint]:
+        raise ConnectorTransientError("Jira unreachable")
 
 
 class JiraAuthErrorConnector(JiraTestConnector):
@@ -714,3 +772,66 @@ def test_source_connection_draft_test_works_without_name(api_client: TestClient)
         json={"connector_name": "jira", "config": {}},
     )
     assert response.status_code == 200
+
+
+@pytest.mark.parametrize(
+    "connector_class, expected_status",
+    [
+        (JiraAuthErrorOnPickerConnector, 401),
+        (JiraNotFoundErrorOnPickerConnector, 404),
+        (JiraRateLimitedOnPickerConnector, 429),
+        (JiraConfigErrorOnPickerConnector, 422),
+        (JiraTransientErrorOnPickerConnector, 502),
+    ],
+)
+def test_picker_endpoints_map_connector_error_not_500(
+    api_client: TestClient,
+    monkeypatch,
+    connector_class: type,
+    expected_status: int,
+) -> None:
+    monkeypatch.setattr(
+        "em_radar_api.connector_registry._connector_types",
+        lambda: [connector_class],
+    )
+    connection_id = _create_jira_connection(api_client)
+
+    projects_response = api_client.get(f"/api/connections/{connection_id}/projects")
+    assert projects_response.status_code == expected_status
+    assert "Traceback" not in projects_response.text
+    assert "demo-token-123456789" not in projects_response.json()["detail"]
+
+    boards_response = api_client.get(f"/api/connections/{connection_id}/projects/10000/boards")
+    assert boards_response.status_code == expected_status
+    assert "Traceback" not in boards_response.text
+    assert "demo-token-123456789" not in boards_response.json()["detail"]
+
+    sprints_response = api_client.get(f"/api/connections/{connection_id}/boards/20000/sprints")
+    assert sprints_response.status_code == expected_status
+    assert "Traceback" not in sprints_response.text
+    assert "demo-token-123456789" not in sprints_response.json()["detail"]
+
+
+def test_picker_listing_is_side_effect_free_and_connection_remains_deletable(
+    api_client: TestClient, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "em_radar_api.connector_registry._connector_types",
+        lambda: [JiraTestConnector],
+    )
+    connection_id = _create_jira_connection(api_client)
+
+    assert api_client.get(f"/api/connections/{connection_id}/projects").status_code == 200
+    assert (
+        api_client.get(f"/api/connections/{connection_id}/projects/10000/boards").status_code == 200
+    )
+    assert (
+        api_client.get(f"/api/connections/{connection_id}/boards/20000/sprints").status_code == 200
+    )
+
+    # No ScopeDefinition rows must have been created by picker reads.
+    scopes = api_client.get(f"/api/scopes?connection_id={connection_id}")
+    assert scopes.json() == []
+
+    # The connection must be deletable because no accidental scope rows block it.
+    assert api_client.delete(f"/api/connections/{connection_id}").status_code == 204

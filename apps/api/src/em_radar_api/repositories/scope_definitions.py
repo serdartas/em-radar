@@ -13,7 +13,6 @@ from em_radar_api.scope_definitions import (
 )
 from em_radar_api.source_connections import ConnectorName, SourceConnectionTable
 from em_radar_api.tables import TeamProfileTable
-from em_radar_core.models import Board, BoardType, Project
 
 
 class InvalidScopeDefinition(ValueError):
@@ -90,82 +89,6 @@ def delete_scope_definition(session: Session, scope_id: UUID) -> bool:
     session.delete(row)
     session.commit()
     return True
-
-
-def upsert_jira_project_scope(
-    session: Session,
-    connection_id: UUID,
-    project: Project,
-) -> ScopeDefinitionRead:
-    return _upsert_connector_scope(
-        session,
-        ScopeDefinitionCreate(
-            connection_id=connection_id,
-            name=project.name,
-            scope_type=ScopeType.PROJECT,
-            external_ref={
-                "type": "jira_project",
-                "id": project.external_id,
-                "key": project.key,
-                "name": project.name,
-            },
-            capabilities=["statuses", "labels"],
-        ),
-    )
-
-
-def upsert_jira_board_scope(
-    session: Session,
-    connection_id: UUID,
-    board: Board,
-) -> ScopeDefinitionRead:
-    capabilities = ["statuses", "labels"]
-    if board.type is BoardType.SCRUM:
-        capabilities.insert(0, "sprint")
-    elif board.type is BoardType.KANBAN:
-        capabilities.insert(0, "kanban")
-    return _upsert_connector_scope(
-        session,
-        ScopeDefinitionCreate(
-            connection_id=connection_id,
-            name=board.name,
-            scope_type=ScopeType.BOARD,
-            external_ref={
-                "type": "jira_board",
-                "id": board.external_id,
-                "key": None,
-                "name": board.name,
-            },
-            capabilities=capabilities,
-        ),
-    )
-
-
-def _upsert_connector_scope(
-    session: Session,
-    scope: ScopeDefinitionCreate,
-) -> ScopeDefinitionRead:
-    row = session.exec(
-        select(ScopeDefinitionTable).where(
-            ScopeDefinitionTable.connection_id == scope.connection_id,
-            ScopeDefinitionTable.scope_type == scope.scope_type,
-        )
-    ).all()
-    matching_row = next(
-        (
-            item
-            for item in row
-            if item.external_ref.get("type") == scope.external_ref.get("type")
-            and item.external_ref.get("id") == scope.external_ref.get("id")
-        ),
-        None,
-    )
-    if matching_row is None:
-        return create_scope_definition(session, scope)
-    matching_row.sqlmodel_update(scope.model_dump())
-    matching_row.updated_at = datetime.now(UTC)
-    _write(session, matching_row)
-    return ScopeDefinitionRead.model_validate(matching_row)
 
 
 def _validate_scope_definition(session: Session, scope: ScopeDefinitionCreate) -> None:
