@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select } from "@/components/ui/select"
 import { apiErrorMessage } from "@/lib/api"
+import { getConnectors, type Connector } from "@/lib/connectors"
 import {
   listConnections,
   listJiraBoards,
@@ -54,6 +55,7 @@ export function TeamsPage() {
     queryKey: ["signal-config-groups"],
     queryFn: listSignalConfigGroups,
   })
+  const connectorsQuery = useQuery({ queryKey: ["connectors"], queryFn: getConnectors })
   const connectionsQuery = useQuery({ queryKey: ["connections"], queryFn: listConnections })
   const [name, setName] = useState("")
 
@@ -69,12 +71,25 @@ export function TeamsPage() {
     teamsQuery.isLoading ||
     scopesQuery.isLoading ||
     groupsQuery.isLoading ||
+    connectorsQuery.isLoading ||
     connectionsQuery.isLoading
   const teams = teamsQuery.data ?? []
   const boardScopes = (scopesQuery.data ?? []).filter((scope) => scope.scope_type === "board")
   const groups = groupsQuery.data ?? []
   const jiraConnections = (connectionsQuery.data ?? []).filter(
     (conn) => conn.connector_name === "jira",
+  )
+  const connectors = connectorsQuery.data ?? []
+  const connections = connectionsQuery.data ?? []
+
+  // Connections whose connector supports merge-request data.
+  const mrCapableConnectorNames = new Set(
+    connectors
+      .filter((c: Connector) => c.capabilities.provides_mergerequests)
+      .map((c: Connector) => c.name),
+  )
+  const codeConnections = connections.filter((conn: SourceConnection) =>
+    mrCapableConnectorNames.has(conn.connector_name),
   )
 
   return (
@@ -117,6 +132,7 @@ export function TeamsPage() {
             <li key={team.id}>
               <TeamCard
                 boardScopes={boardScopes}
+                codeConnections={codeConnections}
                 groups={groups}
                 jiraConnections={jiraConnections}
                 key={team.updated_at}
@@ -132,11 +148,13 @@ export function TeamsPage() {
 
 function TeamCard({
   boardScopes,
+  codeConnections,
   groups,
   jiraConnections,
   team,
 }: {
   boardScopes: ScopeDefinition[]
+  codeConnections: SourceConnection[]
   groups: SignalConfigGroup[]
   jiraConnections: SourceConnection[]
   team: TeamProfile
@@ -151,6 +169,14 @@ function TeamCard({
     mutationFn: () => deleteTeam(team.id),
     onSuccess: invalidate,
   })
+
+  function setCodeConnection(connectionId: string) {
+    if (!connectionId) {
+      updateMutation.mutate({ code_connection_id: null })
+      return
+    }
+    updateMutation.mutate({ code_connection_id: connectionId })
+  }
 
   function toggleGroup(groupId: string, attached: boolean) {
     const next = attached
@@ -173,6 +199,13 @@ function TeamCard({
           boardScopes={boardScopes}
           jiraConnections={jiraConnections}
           team={team}
+        />
+
+        <CodeSourceSection
+          codeConnections={codeConnections}
+          onSelect={setCodeConnection}
+          teamId={team.id}
+          value={team.code_connection_id}
         />
 
         <div>
@@ -521,6 +554,47 @@ function TaskBoardPicker({
           )}
         </div>
       )}
+    </div>
+  )
+}
+
+function CodeSourceSection({
+  codeConnections,
+  onSelect,
+  teamId,
+  value,
+}: {
+  codeConnections: SourceConnection[]
+  onSelect: (connectionId: string) => void
+  teamId: string
+  value: string | null
+}) {
+  if (codeConnections.length === 0) {
+    return (
+      <div className="space-y-1.5">
+        <h3 className="text-sm font-medium text-slate-700">Code source</h3>
+        <p className="text-sm text-slate-500">
+          No code connections available. Add a GitLab or GitHub connection to attach a code source.
+        </p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-1.5">
+      <Label htmlFor={`code-source-${teamId}`}>Code source</Label>
+      <Select
+        id={`code-source-${teamId}`}
+        onChange={(event) => onSelect(event.target.value)}
+        value={value ?? ""}
+      >
+        <option value="">No code source</option>
+        {codeConnections.map((conn) => (
+          <option key={conn.id} value={conn.id}>
+            {conn.name}
+          </option>
+        ))}
+      </Select>
     </div>
   )
 }

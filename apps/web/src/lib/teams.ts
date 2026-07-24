@@ -12,6 +12,7 @@ export interface TeamProfile {
   board_ids: string[]
   repository_ids: string[]
   signal_config_group_ids: string[]
+  code_connection_id: string | null
   working_mode: WorkingMode
   sprint_length_days: number | null
   member_user_keys: string[]
@@ -25,6 +26,7 @@ export interface TeamProfileCreate {
   connection_ids?: string[]
   scope_ids?: string[]
   signal_config_group_ids?: string[]
+  code_connection_id?: string | null
   working_mode?: WorkingMode
   sprint_length_days?: number | null
 }
@@ -35,6 +37,7 @@ export interface TeamProfileUpdate {
   connection_ids?: string[]
   scope_ids?: string[]
   signal_config_group_ids?: string[]
+  code_connection_id?: string | null
   working_mode?: WorkingMode
   sprint_length_days?: number | null
 }

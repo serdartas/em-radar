@@ -127,6 +127,7 @@ class TeamProfileTable(TeamProfile, table=True):
     board_ids: list[UUID] = Field(default_factory=list, sa_type=UUIDListJSON)
     repository_ids: list[UUID] = Field(default_factory=list, sa_type=UUIDListJSON)
     signal_config_group_ids: list[UUID] = Field(default_factory=list, sa_type=UUIDListJSON)
+    code_connection_id: UUID | None = Field(default=None, foreign_key="source_connection.id")
 
 
 class EvaluationWindowTable(EvaluationWindow, table=True):
