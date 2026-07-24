@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TypeAlias
 
 from em_radar_core.connectors import SignalCapabilitySchema, SignalField
@@ -405,9 +405,10 @@ def _range(value: object) -> tuple[float, float]:
 
 def _date_value(value: object) -> datetime:
     if isinstance(value, datetime):
-        return value
+        return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
     if isinstance(value, str):
-        return datetime.fromisoformat(value)
+        parsed = datetime.fromisoformat(value)
+        return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
     raise ExpressionValidationError("date comparison expects an ISO datetime")
 
 
