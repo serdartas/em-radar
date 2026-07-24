@@ -1,4 +1,5 @@
-from uuid import uuid4
+from datetime import datetime, timezone
+from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import sessionmaker
@@ -6,6 +7,8 @@ from sqlmodel import Session
 
 from em_radar_api.repositories.source_connections import create_source_connection
 from em_radar_api.source_connections import ConnectorName, SourceConnectionCreate
+from em_radar_api.tables import EvaluationWindowTable
+from em_radar_core.models import WindowType
 
 
 def test_team_profile_crud_supports_multiple_working_modes(
@@ -18,7 +21,7 @@ def test_team_profile_crud_supports_multiple_working_modes(
         connection = create_source_connection(
             session,
             SourceConnectionCreate(
-                connector_name=ConnectorName.DEMO,
+                connector_name=ConnectorName.JIRA,
                 selected_project_ids=[project_id],
                 selected_board_ids=[board_id],
                 selected_repository_ids=[repository_id],
@@ -137,9 +140,33 @@ def test_team_scope_ids_must_belong_to_existing_connections(
     assert response.json()["detail"] == "project_ids must reference the selected connections"
 
 
-def test_team_referenced_by_evaluation_window_cannot_be_deleted(api_client: TestClient) -> None:
-    assert api_client.post("/api/reports/run", json={"connector": "demo"}).status_code == 200
-    team = api_client.get("/api/teams").json()[0]
+def test_team_referenced_by_evaluation_window_cannot_be_deleted(
+    api_client: TestClient, session_factory: sessionmaker[Session]
+) -> None:
+    created = api_client.post(
+        "/api/teams",
+        json={
+            "name": "Platform",
+            "project_ids": [],
+            "repository_ids": [],
+            "working_mode": "scrum",
+            "sprint_length_days": 14,
+        },
+    )
+    assert created.status_code == 201
+    team = created.json()
+
+    with session_factory() as session:
+        now = datetime.now(timezone.utc)
+        session.add(
+            EvaluationWindowTable(
+                window_type=WindowType.DATE_RANGE,
+                start=now,
+                end=now,
+                team_profile_id=UUID(team["id"]),
+            )
+        )
+        session.commit()
 
     response = api_client.delete(f"/api/teams/{team['id']}")
 

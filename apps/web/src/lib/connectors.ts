@@ -52,3 +52,16 @@ export interface Connector {
 export async function getConnectors(): Promise<Connector[]> {
   return apiFetch<Connector[]>("/connectors")
 }
+
+export interface SourceType {
+  name: string
+  label: string
+}
+
+export const SOURCE_TYPES: SourceType[] = [
+  { name: "jira", label: "Jira" },
+  { name: "linear", label: "Linear" },
+  { name: "github_issues", label: "GitHub Issues" },
+  { name: "gitlab", label: "GitLab" },
+  { name: "github", label: "GitHub" },
+]

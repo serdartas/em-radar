@@ -25,7 +25,7 @@ def values(enum_type: type) -> set[str]:
 
 
 def test_enum_member_sets_match_the_canonical_data_model() -> None:
-    assert values(Source) == {"jira", "gitlab", "github", "linear", "demo"}
+    assert values(Source) == {"jira", "gitlab", "github", "linear"}
     assert values(WorkItemType) == {"epic", "story", "task", "bug", "subtask", "spike", "other"}
     assert values(StatusCategory) == {"todo", "in_progress", "done", "blocked"}
     assert values(MergeRequestState) == {"open", "draft", "merged", "closed"}
@@ -56,8 +56,8 @@ def test_enum_member_sets_match_the_canonical_data_model() -> None:
 
 def test_common_fields_defaults() -> None:
     before = datetime.now(timezone.utc)
-    first = CommonFields(source=Source.DEMO, external_id="first")
-    second = CommonFields(source=Source.DEMO, external_id="second")
+    first = CommonFields(source=Source.JIRA, external_id="first")
+    second = CommonFields(source=Source.JIRA, external_id="second")
     after = datetime.now(timezone.utc)
 
     assert first.id != second.id

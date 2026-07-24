@@ -6,7 +6,6 @@ class Source(StrEnum):
     GITLAB = "gitlab"
     GITHUB = "github"
     LINEAR = "linear"
-    DEMO = "demo"
 
 
 class WorkItemType(StrEnum):

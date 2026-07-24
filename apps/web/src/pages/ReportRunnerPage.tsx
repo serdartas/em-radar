@@ -5,7 +5,7 @@ import { Link, useNavigate } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { apiErrorMessage } from "@/lib/api"
-import { runDemoReport, runTeamReport, type ReportDetail } from "@/lib/reports"
+import { runTeamReport, type ReportDetail } from "@/lib/reports"
 import { listTeams } from "@/lib/teams"
 
 export function ReportRunnerPage() {
@@ -19,7 +19,6 @@ export function ReportRunnerPage() {
     navigate(`/reports/results/${report.id}`)
   }
 
-  const demoRun = useMutation({ mutationFn: runDemoReport, onSuccess: openReport })
   const teamRun = useMutation({
     mutationFn: async (teamIds: string[]) => {
       let last: ReportDetail | null = null
@@ -36,7 +35,7 @@ export function ReportRunnerPage() {
   })
 
   const teams = teamsQuery.data ?? []
-  const running = demoRun.isPending || teamRun.isPending
+  const running = teamRun.isPending
 
   function toggleTeam(teamId: string) {
     setSelectedTeamIds((current) =>
@@ -54,7 +53,7 @@ export function ReportRunnerPage() {
         </h1>
         <p className="mt-2 max-w-xl text-slate-600">
           Run a report for one or more teams against each team&apos;s board scope and attached
-          signal config groups, or run the deterministic demo report.
+          signal config groups.
         </p>
       </header>
 
@@ -90,27 +89,10 @@ export function ReportRunnerPage() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardContent className="flex flex-wrap items-center justify-between gap-4 p-4">
-          <div>
-            <h2 className="text-lg font-semibold">Demo report</h2>
-            <p className="mt-1 text-sm text-slate-600">
-              Run the deterministic demo report. The result is stored and opens automatically.
-            </p>
-          </div>
-          <Button disabled={running} onClick={() => demoRun.mutate()}>
-            {demoRun.isPending ? "Running demo report…" : "Run demo report"}
-          </Button>
-        </CardContent>
-      </Card>
-
       <div aria-live="polite" className="space-y-4">
-        {(demoRun.isError || teamRun.isError) && (
+        {teamRun.isError && (
           <p className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-700" role="alert">
-            {apiErrorMessage(
-              demoRun.error ?? teamRun.error,
-              "The report run failed. Please try again.",
-            )}
+            {apiErrorMessage(teamRun.error, "The report run failed. Please try again.")}
           </p>
         )}
         <p className="rounded-lg border border-dashed p-4 text-center text-slate-500">

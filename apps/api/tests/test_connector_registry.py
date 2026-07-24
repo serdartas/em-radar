@@ -44,32 +44,12 @@ class ConfiguredConnector:
         pass
 
 
-def test_get_connectors_includes_demo_with_schema_and_capabilities(api_client) -> None:
+def test_get_connectors_does_not_include_demo(api_client) -> None:
     response = api_client.get("/api/connectors")
 
     assert response.status_code == 200
-    demo = next(connector for connector in response.json() if connector["name"] == "demo")
-    assert demo == {
-        "name": "demo",
-        "display_name": "Demo company",
-        "config_schema": {
-            "type": "object",
-            "properties": {},
-            "additionalProperties": False,
-        },
-        "capabilities": {
-            "provides_workitems": True,
-            "provides_sprints": True,
-            "provides_mergerequests": True,
-            "provides_repositories": True,
-            "provides_reviews": True,
-            "provides_comments": True,
-            "provides_transitions": True,
-            "supports_incremental_fetch": False,
-            "supports_pagination_cursor": False,
-            "max_window_days": None,
-        },
-    }
+    names = [connector["name"] for connector in response.json()]
+    assert "demo" not in names
 
 
 def test_registry_flags_secrets_and_factory_validates_config(

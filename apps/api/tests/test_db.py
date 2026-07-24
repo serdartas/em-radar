@@ -20,10 +20,10 @@ def test_file_backed_sqlite_session_round_trips_canonical_row(tmp_path: Path) ->
     SQLModel.metadata.create_all(engine)
 
     project = ProjectTable(
-        source=Source.DEMO,
-        external_id="demo-project",
-        key="DEMO",
-        name="Demo Project",
+        source=Source.JIRA,
+        external_id="jira-project",
+        key="PROJ",
+        name="Test Project",
     )
     with session_factory() as session:
         session.add(project)
@@ -35,7 +35,7 @@ def test_file_backed_sqlite_session_round_trips_canonical_row(tmp_path: Path) ->
         foreign_keys = session.exec(text("PRAGMA foreign_keys")).one()[0]
 
     assert database_path.is_file()
-    assert stored_project.key == "DEMO"
+    assert stored_project.key == "PROJ"
     assert journal_mode == "wal"
     assert foreign_keys == 1
     assert schema_version == 1

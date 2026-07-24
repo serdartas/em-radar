@@ -9,7 +9,6 @@ from sqlmodel import Field, SQLModel
 
 
 class ConnectorName(StrEnum):
-    DEMO = "demo"
     JIRA = "jira"
     GITLAB = "gitlab"
 

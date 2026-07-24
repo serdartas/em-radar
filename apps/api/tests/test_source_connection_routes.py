@@ -351,7 +351,7 @@ def test_source_connection_routes_crud_test_and_preserve_omitted_config(
 def test_source_connection_draft_test_returns_token_free_failure(api_client: TestClient) -> None:
     response = api_client.post(
         "/api/connections/test",
-        json={"connector_name": "demo", "config": {"unexpected": "secret-token"}},
+        json={"connector_name": "jira", "config": {"unexpected": "secret-token"}},
     )
 
     assert response.status_code == 200

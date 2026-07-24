@@ -78,34 +78,18 @@ afterEach(() => {
 })
 
 describe("ReportRunnerPage", () => {
-  it("runs the demo report and navigates to the persisted results", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+  it("does not show a demo report button", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const url = typeof input === "string" ? input : input.toString()
       if (url.endsWith("/api/teams")) {
         return Promise.resolve(jsonResponse([]))
       }
-      if (url.endsWith("/api/reports/run")) {
-        return Promise.resolve(jsonResponse(report))
-      }
-      if (url.endsWith("/api/reports/report-1")) {
-        return Promise.resolve(jsonResponse(report))
-      }
       throw new Error(`unexpected fetch: ${url}`)
     })
 
-    renderApp()
-
-    fireEvent.click(await screen.findByRole("button", { name: "Run demo report" }))
-
-    expect(await screen.findByText("PLAT-2 stale for 12 days")).toBeInTheDocument()
-    expect(
-      fetchMock.mock.calls.some(
-        ([url, requestInit]) =>
-          String(url).endsWith("/api/reports/run") &&
-          requestInit?.method === "POST" &&
-          String(requestInit?.body) === JSON.stringify({ connector: "demo" }),
-      ),
-    ).toBe(true)
+    renderPage()
+    await screen.findByRole("button", { name: "Run team reports" })
+    expect(screen.queryByRole("button", { name: /demo/i })).toBeNull()
   })
 
   it("runs a report for a selected team", async () => {
@@ -140,22 +124,38 @@ describe("ReportRunnerPage", () => {
     ).toBe(true)
   })
 
-  it("shows an error when the run fails", async () => {
+  it("shows an error when the team run fails", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const url = typeof input === "string" ? input : input.toString()
       if (url.endsWith("/api/teams")) {
-        return Promise.resolve(jsonResponse([]))
+        return Promise.resolve(jsonResponse([team]))
       }
       return Promise.resolve(
-        new Response(JSON.stringify({ detail: "Demo data unavailable." }), { status: 500 }),
+        new Response(JSON.stringify({ detail: "Report run failed." }), { status: 500 }),
       )
     })
 
     renderApp()
-    fireEvent.click(await screen.findByRole("button", { name: "Run demo report" }))
+    fireEvent.click(await screen.findByLabelText("Platform"))
+    fireEvent.click(screen.getByRole("button", { name: "Run team reports" }))
 
     await waitFor(() => {
-      expect(screen.getByText("Demo data unavailable.")).toBeInTheDocument()
+      expect(screen.getByText("Report run failed.")).toBeInTheDocument()
     })
   })
 })
+
+function renderPage() {
+  const queryClient = new QueryClient({
+    defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
+  })
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={["/reports/run"]}>
+        <Routes>
+          <Route element={<ReportRunnerPage />} path="/reports/run" />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+}
