@@ -155,9 +155,10 @@ def test_snapshot_records_group_ids_and_signal_set(api_client: TestClient, monke
     assert [definition["id"] for definition in snapshot["signal_definitions"]] == [signal_id]
 
 
-def test_jira_run_requires_team_with_board_scope(api_client: TestClient, monkeypatch) -> None:
+def test_run_requires_team_with_at_least_one_source(api_client: TestClient, monkeypatch) -> None:
     _use_jira_connector(monkeypatch)
     connection_id = _create_jira_connection(api_client)
+    # Team with a Jira connection but no board scope and no code_connection_id has no sources.
     team_id = api_client.post(
         "/api/teams",
         json={"name": "No scope", "connection_ids": [connection_id]},
@@ -168,4 +169,4 @@ def test_jira_run_requires_team_with_board_scope(api_client: TestClient, monkeyp
     )
 
     assert response.status_code == 422
-    assert response.json()["detail"] == "team has no board scope"
+    assert "no source" in response.json()["detail"]
