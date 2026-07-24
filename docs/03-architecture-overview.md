@@ -397,9 +397,9 @@ For enterprise or multi-user deployment
 
 The storage layer stores:
 
-* source connection metadata
-* team profiles, including each team's board scope and attached signal config groups
-* scope definitions for selected boards/repositories
+* source connection metadata (a required, unique name + credentials; no scope)
+* team profiles, including each team's task-board scope, code connection, and attached signal config groups
+* scope definitions for selected boards (the code source is attached as a whole connection, not a repository scope, in MVP)
 * signal definitions and signal config groups
 * field mappings
 * normalized source data cache
@@ -668,8 +668,13 @@ Report Results
 Settings / Privacy
 ```
 
-The Teams page is where a team's board scope is set and signal config groups are attached. The
-Signals & Config Groups page is where signals are built and bundled into reusable groups.
+The Source Connections page is **create-only**: it creates, edits, tests, and deletes named source
+connections (name + credentials) and nothing else — no project/board/repository selection and no
+report run. The Teams page is where a team's two sources are attached — the task-board scope (a Jira
+board, via a searchable project → board picker) and the code source (a whole GitLab/GitHub
+connection) — and signal config groups are attached. A team may be saved with no sources, but a
+report run requires at least one. The Signals & Config Groups page is where signals are built and
+bundled into reusable groups.
 
 The Setup page is an onboarding wizard that guides connection setup and team creation; the
 Dashboard is the post-setup landing showing the latest report per team. See
@@ -987,15 +992,15 @@ sequenceDiagram
 
     User->>UI: Open local app
     UI->>Config: Load default config
-    User->>UI: Add Jira connection
+    User->>UI: Add Jira connection (name, url, token)
     UI->>Jira: Test Jira connection
     Jira-->>UI: Success
-    UI->>Config: Save Jira settings
-    User->>UI: Add GitLab connection
+    UI->>Config: Save named Jira connection
+    User->>UI: Add GitLab connection (name, url, token)
     UI->>GitLab: Test GitLab connection
     GitLab-->>UI: Success
-    UI->>Config: Save GitLab settings
-    User->>UI: Create team, set board scope, attach signal config groups
+    UI->>Config: Save named GitLab connection
+    User->>UI: Create team, set task-board scope + code connection, attach signal config groups
     UI->>Config: Save team profile
 ```
 

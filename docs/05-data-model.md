@@ -51,9 +51,9 @@ erDiagram
     MERGEREQUEST }o--o{ WORKITEM : "linked"
 
     TEAMPROFILE ||--o{ PROJECT : "owns"
-    TEAMPROFILE ||--o{ REPOSITORY : "owns"
+    TEAMPROFILE ||--o{ REPOSITORY : "code source (whole connection)"
     TEAMPROFILE ||--o{ USER : "includes"
-    TEAMPROFILE }o--o| BOARD : "jira scope (0..1)"
+    TEAMPROFILE }o--o| BOARD : "task-board scope (0..1)"
     TEAMPROFILE }o--o{ SIGNALCONFIGGROUP : "attaches"
     SIGNALCONFIGGROUP }o--o{ SIGNALDEFINITION : "contains"
 
@@ -279,8 +279,11 @@ Used directly by *repeated carry-over*, *sprint scope churn*, and *blocked witho
 ### 5.12A ScopeDefinition
 
 A subset of data inside a source connection. Scopes are selected from connector-provided options and
-attached to a team (a team owns 0..1 Jira board scope in MVP). Signals never reference scopes — scope
-is resolved from the team at report time.
+attached to a team. In MVP a `ScopeDefinition` is used for the team's **task-board source** (a team
+owns `0..1` scope of `scope_type = board`); the **code source** is attached as a *whole connection*
+(`TeamProfile.code_connection_id`), not a `repository` scope. The `repository`, `project`,
+`saved_filter`, and `custom` scope types are reserved for finer-grained scoping in a later phase.
+Signals never reference scopes — scope is resolved from the team at report time.
 
 | Field | Type | Nullable | Description |
 |---|---|---|---|
@@ -355,8 +358,9 @@ A user-defined grouping that scopes a report. Created locally in EM Radar; not p
 | `id` | UUID | no | |
 | `name` | string | no | |
 | `description` | text | yes | |
-| `connection_ids` | UUID[] | no | Source connections this team draws from. Default `[]`. |
-| `scope_ids` | UUID[] | no | Scopes this team reports against. In MVP a team has **0..1 Jira board** scope; the door is open for GitLab repos later. Default `[]`. |
+| `connection_ids` | UUID[] | no | Source connections this team draws from (its task-board connection and its code connection). Default `[]`. |
+| `scope_ids` | UUID[] | no | The team's **task-board source**: a scope of `scope_type = board`. In MVP a team has **0..1 board** scope, resolved at report time. Default `[]`. |
+| `code_connection_id` | UUID | yes | The team's **code source**: a whole GitLab/GitHub `SourceConnection` (all repositories it can access are in scope). `0..1` per team; null when no code source is attached. Per-repository scoping is a later phase (§5.12A). |
 | `signal_config_group_ids` | UUID[] | no | Signal config groups attached to this team. A team's signals are the union of all signals in its attached groups. Default `[]`. |
 | `working_mode` | enum | no | `scrum` or `kanban`. See §6.7. Derived from the selected board, user-confirmable. Default `scrum`. |
 | `sprint_length_days` | integer | yes | Inferred sprint cadence (scrum only); null for kanban. |
@@ -364,11 +368,18 @@ A user-defined grouping that scopes a report. Created locally in EM Radar; not p
 | `created_at` | timestamp | no | |
 | `updated_at` | timestamp | no | |
 
-A `TeamProfile` is first-class and created during onboarding (one or more per install). The team is
-the unit a report runs against: its scope (the team's Jira board) and its signals (the union of the
-signals in its attached `SignalConfigGroup`s) are both resolved from the team at report time —
-signals are never scoped individually. Its `working_mode` sets the default evaluation window (sprint
-vs date range) — see
+A `TeamProfile` is first-class and created during onboarding (one or more per install). It is created
+with just a name and may be **saved with no sources attached**. A team carries up to two sources: a
+**task-board source** (a Jira/workflow board, via `scope_ids`, `0..1`) and a **code source** (a whole
+GitLab/GitHub connection, via `code_connection_id`, `0..1`). Both are resolved from the team at report
+time, together with its signals (the union of the signals in its attached `SignalConfigGroup`s) —
+signals are never scoped individually.
+
+A team may be saved without sources, but a **report run requires at least one source**; signals whose
+source is absent are skipped with a note, reusing the connector-capability skip pattern
+([07-connector-interface §6.5](./07-connector-interface.md#65-transitionprovider-optional)). Its
+`working_mode` (derived from the selected board, user-confirmable) sets the default evaluation window
+(sprint vs date range) — see
 [09-functional-flows §5–§6](./09-functional-flows.md#5-flow-c--team-scope--working-mode-detection).
 
 ### 5.13 EvaluationWindow
