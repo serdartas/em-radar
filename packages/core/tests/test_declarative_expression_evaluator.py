@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from em_radar_core.evaluation import (
@@ -238,3 +238,128 @@ def test_sprint_relative_fields_match_sprint_scope() -> None:
 
     assert len(findings) == 1
     assert findings[0].evidence["sprint_day"] == 3
+
+
+# Items with tz-aware UTC created_at used in naive-date-string comparisons.
+_CREATED_JAN = datetime(2026, 1, 20, 12, tzinfo=timezone.utc)
+_CREATED_AUG = datetime(2026, 8, 1, 0, tzinfo=timezone.utc)
+
+
+def test_before_date_only_string_true() -> None:
+    """before with a date-only rule value must not raise and must return True when observed < rule."""
+    item = workitem(created_at=_CREATED_JAN)
+    expression = {
+        "field": "created_at",
+        "operator": "before",
+        "value": "2026-06-17",
+    }
+
+    findings = evaluate_signal_definition(
+        _definition({"type": "group", "operator": "all", "conditions": [expression]}),
+        SignalData(report_id=uuid4(), projects=(project(),), workitems=(item,)),
+        context(),
+        JiraConnector.describe_signal_schema(),
+        [_scope()],
+    )
+
+    assert len(findings) == 1
+
+
+def test_before_date_only_string_false() -> None:
+    """before with a date-only rule value returns False when observed is after the rule date."""
+    item = workitem(created_at=_CREATED_AUG)
+    expression = {
+        "field": "created_at",
+        "operator": "before",
+        "value": "2026-06-17",
+    }
+
+    findings = evaluate_signal_definition(
+        _definition({"type": "group", "operator": "all", "conditions": [expression]}),
+        SignalData(report_id=uuid4(), projects=(project(),), workitems=(item,)),
+        context(),
+        JiraConnector.describe_signal_schema(),
+        [_scope()],
+    )
+
+    assert findings == []
+
+
+def test_after_date_only_string_true() -> None:
+    """after with a date-only rule value must not raise and must return True when observed > rule."""
+    item = workitem(created_at=_CREATED_AUG)
+    expression = {
+        "field": "created_at",
+        "operator": "after",
+        "value": "2026-06-17",
+    }
+
+    findings = evaluate_signal_definition(
+        _definition({"type": "group", "operator": "all", "conditions": [expression]}),
+        SignalData(report_id=uuid4(), projects=(project(),), workitems=(item,)),
+        context(),
+        JiraConnector.describe_signal_schema(),
+        [_scope()],
+    )
+
+    assert len(findings) == 1
+
+
+def test_after_date_only_string_false() -> None:
+    """after with a date-only rule value returns False when observed is before the rule date."""
+    item = workitem(created_at=_CREATED_JAN)
+    expression = {
+        "field": "created_at",
+        "operator": "after",
+        "value": "2026-06-17",
+    }
+
+    findings = evaluate_signal_definition(
+        _definition({"type": "group", "operator": "all", "conditions": [expression]}),
+        SignalData(report_id=uuid4(), projects=(project(),), workitems=(item,)),
+        context(),
+        JiraConnector.describe_signal_schema(),
+        [_scope()],
+    )
+
+    assert findings == []
+
+
+def test_between_date_only_strings_true() -> None:
+    """between with date-only start/end strings must not raise and match when observed is within range."""
+    item = workitem(created_at=_CREATED_JAN)
+    expression = {
+        "field": "created_at",
+        "operator": "between",
+        "value": {"start": "2026-01-01", "end": "2026-06-30"},
+    }
+
+    findings = evaluate_signal_definition(
+        _definition({"type": "group", "operator": "all", "conditions": [expression]}),
+        SignalData(report_id=uuid4(), projects=(project(),), workitems=(item,)),
+        context(),
+        JiraConnector.describe_signal_schema(),
+        [_scope()],
+    )
+
+    assert len(findings) == 1
+
+
+def test_between_date_only_strings_false() -> None:
+    """between with date-only start/end strings returns False when observed is outside the range."""
+    item = workitem(created_at=_CREATED_AUG)
+    expression = {
+        "field": "created_at",
+        "operator": "between",
+        "value": {"start": "2026-01-01", "end": "2026-06-30"},
+    }
+
+    findings = evaluate_signal_definition(
+        _definition({"type": "group", "operator": "all", "conditions": [expression]}),
+        SignalData(report_id=uuid4(), projects=(project(),), workitems=(item,)),
+        context(),
+        JiraConnector.describe_signal_schema(),
+        [_scope()],
+    )
+
+    assert findings == []

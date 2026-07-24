@@ -2,11 +2,9 @@ import { apiFetch } from "@/lib/api"
 
 export interface SourceConnection {
   id: string
+  name: string
   connector_name: string
   config: Record<string, unknown>
-  selected_project_ids: string[]
-  selected_board_ids: string[]
-  selected_repository_ids: string[]
   created_at: string
 }
 
@@ -28,6 +26,7 @@ export interface ConnectionTestResult {
 }
 
 export interface ConnectionDraft {
+  name: string
   connector_name: string
   config: Record<string, unknown>
 }

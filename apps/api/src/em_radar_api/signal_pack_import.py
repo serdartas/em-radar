@@ -29,6 +29,7 @@ from em_radar_config import (
     PackGroupEntry,
     PackLoadResult,
     PackValidationContext,
+    PackValidationError,
     PackValidationWarning,
     SignalEntry,
     SignalPack,
@@ -75,6 +76,8 @@ class SignalPackImportPreview(BaseModel):
     imported_signal_names: list[str] = []
     signal_name_clashes: list[str] = []
     group_name_clashes: list[str] = []
+    intra_pack_duplicate_signal_names: list[str] = []
+    intra_pack_duplicate_group_names: list[str] = []
 
 
 def preview_signal_pack_import(
@@ -105,6 +108,14 @@ def apply_signal_pack_import(
         preview = _preview_definition_pack(session, result)
         if conflict == "cancel":
             return preview
+        duplicate_names = (
+            preview.intra_pack_duplicate_signal_names + preview.intra_pack_duplicate_group_names
+        )
+        if duplicate_names:
+            raise PackValidationError(
+                "Pack contains duplicate names within a single pack: "
+                + ", ".join(f"{n!r}" for n in duplicate_names)
+            )
         _import_definition_pack(session, result.pack, conflict)
         session.add(SignalPackHistory(pack_name=result.pack.metadata.name, raw_yaml=raw_yaml))
         session.commit()
@@ -250,6 +261,8 @@ def _preview_definition_pack(session: Session, result: PackLoadResult) -> Signal
         imported_signal_names=signal_names,
         signal_name_clashes=[name for name in signal_names if name in existing_signal_names],
         group_name_clashes=[name for name in group_names if name in existing_group_names],
+        intra_pack_duplicate_signal_names=_find_duplicates(signal_names),
+        intra_pack_duplicate_group_names=_find_duplicates(group_names),
     )
 
 
@@ -343,6 +356,18 @@ def _definition_from_signal(signal: SignalEntry) -> SignalDefinitionCreate:
         origin=signal.origin or "imported",
         template_key=signal.template_key,
     )
+
+
+def _find_duplicates(names: list[str]) -> list[str]:
+    seen: set[str] = set()
+    duplicates: list[str] = []
+    for name in names:
+        if name in seen:
+            if name not in duplicates:
+                duplicates.append(name)
+        else:
+            seen.add(name)
+    return duplicates
 
 
 def _dedupe_name(base: str, used: set[str]) -> str:
