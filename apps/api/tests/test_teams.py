@@ -21,10 +21,8 @@ def test_team_profile_crud_supports_multiple_working_modes(
         connection = create_source_connection(
             session,
             SourceConnectionCreate(
+                name="Jira prod",
                 connector_name=ConnectorName.JIRA,
-                selected_project_ids=[project_id],
-                selected_board_ids=[board_id],
-                selected_repository_ids=[repository_id],
             ),
         )
 
@@ -116,28 +114,6 @@ def test_team_scope_ids_must_belong_to_existing_connections(
 
     assert response.status_code == 422
     assert response.json()["detail"] == "connection_ids must reference existing connections"
-
-    with session_factory() as session:
-        connection = create_source_connection(
-            session,
-            SourceConnectionCreate(
-                connector_name=ConnectorName.JIRA,
-                selected_project_ids=[uuid4()],
-            ),
-        )
-
-    response = api_client.post(
-        "/api/teams",
-        json={
-            "name": "Platform",
-            "connection_ids": [str(connection.id)],
-            "project_ids": [str(uuid4())],
-            "repository_ids": [],
-        },
-    )
-
-    assert response.status_code == 422
-    assert response.json()["detail"] == "project_ids must reference the selected connections"
 
 
 def test_team_referenced_by_evaluation_window_cannot_be_deleted(

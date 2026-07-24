@@ -86,7 +86,8 @@ describe("SourceConnectionsPage", () => {
     mockApi()
     renderPage()
 
-    const select = (await screen.findByLabelText(/Source type/)) as HTMLSelectElement
+    await screen.findByLabelText(/^Base URL/)
+    const select = screen.getByLabelText(/Source type/) as HTMLSelectElement
     expect(select.value).toBe("jira")
   })
 
@@ -94,7 +95,7 @@ describe("SourceConnectionsPage", () => {
     mockApi()
     renderPage()
 
-    await screen.findByLabelText(/Source type/)
+    await screen.findByLabelText(/^Base URL/)
     const options = screen.getAllByRole("option") as HTMLOptionElement[]
     const optionMap = Object.fromEntries(options.map((o) => [o.value, o]))
 
@@ -111,19 +112,19 @@ describe("SourceConnectionsPage", () => {
     mockApi()
     renderPage()
 
-    const token = (await screen.findByLabelText(/Token/)) as HTMLInputElement
+    const token = (await screen.findByLabelText(/^Token/)) as HTMLInputElement
     expect(token.type).toBe("password")
-    expect(screen.getByLabelText(/Base URL/)).toBeInTheDocument()
+    expect(screen.getByLabelText(/^Base URL/)).toBeInTheDocument()
   })
 
   it("shows the authenticated user after a successful test", async () => {
     mockApi()
     renderPage()
 
-    fireEvent.change(await screen.findByLabelText(/Base URL/), {
+    fireEvent.change(await screen.findByLabelText(/^Base URL/), {
       target: { value: "https://demo.invalid" },
     })
-    fireEvent.change(screen.getByLabelText(/Token/), { target: { value: "secret-token" } })
+    fireEvent.change(screen.getByLabelText(/^Token/), { target: { value: "secret-token" } })
     fireEvent.click(screen.getByRole("button", { name: "Test connection" }))
 
     expect(await screen.findByText(/Connected as Ada Lovelace/)).toBeInTheDocument()
@@ -140,10 +141,10 @@ describe("SourceConnectionsPage", () => {
     )
     renderPage()
 
-    fireEvent.change(await screen.findByLabelText(/Base URL/), {
+    fireEvent.change(await screen.findByLabelText(/^Base URL/), {
       target: { value: "https://demo.invalid" },
     })
-    fireEvent.change(screen.getByLabelText(/Token/), { target: { value: "rejected-token" } })
+    fireEvent.change(screen.getByLabelText(/^Token/), { target: { value: "rejected-token" } })
     fireEvent.click(screen.getByRole("button", { name: "Test connection" }))
 
     await waitFor(() => {
@@ -163,10 +164,10 @@ describe("SourceConnectionsPage", () => {
     )
     renderPage()
 
-    fireEvent.change(await screen.findByLabelText(/Base URL/), {
+    fireEvent.change(await screen.findByLabelText(/^Base URL/), {
       target: { value: "https://demo.invalid" },
     })
-    fireEvent.change(screen.getByLabelText(/Token/), { target: { value: "bad-token" } })
+    fireEvent.change(screen.getByLabelText(/^Token/), { target: { value: "bad-token" } })
     fireEvent.click(screen.getByRole("button", { name: "Test connection" }))
 
     expect(await screen.findByText("The credentials were rejected by the source.")).toBeInTheDocument()
@@ -215,7 +216,7 @@ describe("SourceConnectionsPage", () => {
     renderPage()
 
     fireEvent.click(await screen.findByRole("button", { name: "Edit" }))
-    fireEvent.change(screen.getByLabelText(/Base URL/), {
+    fireEvent.change(screen.getByLabelText(/^Base URL/), {
       target: { value: "https://updated.invalid" },
     })
     fireEvent.click(screen.getByRole("button", { name: "Save connection" }))

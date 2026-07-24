@@ -113,18 +113,6 @@ def _validate_team_profile(session: Session, team: TeamProfileCreate) -> None:
             "signal_config_group_ids must reference existing signal config groups"
         )
 
-    scoped_ids = (
-        ("project_ids", team.project_ids, "selected_project_ids"),
-        ("board_ids", team.board_ids, "selected_board_ids"),
-        ("repository_ids", team.repository_ids, "selected_repository_ids"),
-    )
-    for field_name, values, connection_field in scoped_ids:
-        available = {
-            item for connection in connections for item in getattr(connection, connection_field)
-        }
-        if not set(values).issubset(available):
-            raise InvalidTeamProfile(f"{field_name} must reference the selected connections")
-
 
 def _write(session: Session, row: TeamProfileTable) -> None:
     session.add(row)

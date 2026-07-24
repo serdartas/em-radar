@@ -93,7 +93,7 @@ def test_scope_definition_crud_and_team_scope_ids(
     with session_factory() as session:
         connection = create_source_connection(
             session,
-            SourceConnectionCreate(connector_name=ConnectorName.JIRA),
+            SourceConnectionCreate(name="Jira prod", connector_name=ConnectorName.JIRA),
         )
 
     create_response = api_client.post(
@@ -166,7 +166,11 @@ def test_scope_definitions_validate_connection_and_credentials(api_client: TestC
 
     connection_response = api_client.post(
         "/api/connections",
-        json={"connector_name": "jira", "config": {"token": "jira-token-123456789"}},
+        json={
+            "name": "Jira prod",
+            "connector_name": "jira",
+            "config": {"token": "jira-token-123456789"},
+        },
     )
     assert connection_response.status_code == 201
 
@@ -205,11 +209,11 @@ def test_scope_definitions_validate_connection_and_credentials(api_client: TestC
 def test_scope_connection_cannot_move_when_referenced_by_team(api_client: TestClient) -> None:
     first_connection_response = api_client.post(
         "/api/connections",
-        json={"connector_name": "jira", "config": {}},
+        json={"name": "Jira A", "connector_name": "jira", "config": {}},
     )
     second_connection_response = api_client.post(
         "/api/connections",
-        json={"connector_name": "jira", "config": {}},
+        json={"name": "Jira B", "connector_name": "jira", "config": {}},
     )
     assert first_connection_response.status_code == 201
     assert second_connection_response.status_code == 201
@@ -249,7 +253,7 @@ def test_connection_connector_name_cannot_change_when_scopes_reference_it(
 ) -> None:
     connection_response = api_client.post(
         "/api/connections",
-        json={"connector_name": "jira", "config": {}},
+        json={"name": "Jira prod", "connector_name": "jira", "config": {}},
     )
     assert connection_response.status_code == 201
     scope_response = api_client.post(
@@ -285,7 +289,7 @@ def test_jira_project_and_board_listing_populates_scope_definitions(
     )
     connection_response = api_client.post(
         "/api/connections",
-        json={"connector_name": "jira", "config": {}},
+        json={"name": "Jira prod", "connector_name": "jira", "config": {}},
     )
     assert connection_response.status_code == 201
     connection_id = connection_response.json()["id"]

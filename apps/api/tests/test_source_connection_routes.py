@@ -212,10 +212,11 @@ class JiraTransientErrorConnector(JiraTestConnector):
         raise ConnectorTransientError("Failed to reach Jira")
 
 
-def _create_jira_connection(api_client: TestClient) -> str:
+def _create_jira_connection(api_client: TestClient, name: str = "Jira") -> str:
     return api_client.post(
         "/api/connections",
         json={
+            "name": name,
             "connector_name": "jira",
             "config": {"base_url": "https://demo.invalid", "token": "demo-token-123456789"},
         },
@@ -311,12 +312,14 @@ def test_source_connection_routes_crud_test_and_preserve_omitted_config(
     created_response = api_client.post(
         "/api/connections",
         json={
+            "name": "Jira prod",
             "connector_name": "jira",
             "config": {"base_url": "https://demo.invalid", "token": "demo-token-123456789"},
         },
     )
     assert created_response.status_code == 201
     created = created_response.json()
+    assert created["name"] == "Jira prod"
     assert created["config"] == {
         "base_url": "https://demo.invalid",
         "token": "****6789",
@@ -367,6 +370,7 @@ def test_source_connection_jira_list_routes(api_client: TestClient, monkeypatch)
     created = api_client.post(
         "/api/connections",
         json={
+            "name": "Jira prod",
             "connector_name": "jira",
             "config": {"base_url": "https://demo.invalid", "token": "demo-token-123456789"},
         },
@@ -498,6 +502,7 @@ def test_signal_definition_preview_uses_persisted_jira_samples_and_warnings(
     created = api_client.post(
         "/api/connections",
         json={
+            "name": "Jira prod",
             "connector_name": "jira",
             "config": {"base_url": "https://demo.invalid", "token": "demo-token-123456789"},
         },
@@ -606,3 +611,106 @@ def test_jira_kanban_report_uses_date_range_without_active_sprint(
     assert window.window_type == "date_range"
     assert window.start == (_REPORT_STARTED_AT - timedelta(days=14)).replace(tzinfo=None)
     assert window.end == _REPORT_STARTED_AT.replace(tzinfo=None)
+
+
+def test_source_connection_create_requires_name(api_client: TestClient) -> None:
+    response = api_client.post(
+        "/api/connections",
+        json={"connector_name": "jira", "config": {}},
+    )
+    assert response.status_code == 422
+
+
+def test_source_connection_duplicate_name_rejected(api_client: TestClient) -> None:
+    first = api_client.post(
+        "/api/connections",
+        json={"name": "Jira prod", "connector_name": "jira", "config": {}},
+    )
+    assert first.status_code == 201
+
+    second = api_client.post(
+        "/api/connections",
+        json={"name": "Jira prod", "connector_name": "jira", "config": {}},
+    )
+    assert second.status_code == 422
+    assert "Jira prod" in second.json()["detail"]
+
+
+def test_source_connection_duplicate_name_rejected_on_patch(api_client: TestClient) -> None:
+    api_client.post(
+        "/api/connections",
+        json={"name": "Jira A", "connector_name": "jira", "config": {}},
+    )
+    b = api_client.post(
+        "/api/connections",
+        json={"name": "Jira B", "connector_name": "jira", "config": {}},
+    ).json()
+
+    response = api_client.patch(f"/api/connections/{b['id']}", json={"name": "Jira A"})
+    assert response.status_code == 422
+    assert "Jira A" in response.json()["detail"]
+
+
+def test_source_connection_selected_fields_absent_from_api(api_client: TestClient) -> None:
+    response = api_client.post(
+        "/api/connections",
+        json={"name": "Jira prod", "connector_name": "jira", "config": {}},
+    )
+    assert response.status_code == 201
+    body = response.json()
+    assert "selected_project_ids" not in body
+    assert "selected_board_ids" not in body
+    assert "selected_repository_ids" not in body
+    assert "name" in body
+
+
+def test_two_connections_same_connector_different_names_coexist(api_client: TestClient) -> None:
+    r1 = api_client.post(
+        "/api/connections",
+        json={"name": "Jira tenant A", "connector_name": "jira", "config": {}},
+    )
+    r2 = api_client.post(
+        "/api/connections",
+        json={"name": "Jira tenant B", "connector_name": "jira", "config": {}},
+    )
+    assert r1.status_code == 201
+    assert r2.status_code == 201
+    assert r1.json()["name"] == "Jira tenant A"
+    assert r2.json()["name"] == "Jira tenant B"
+
+    listed = api_client.get("/api/connections").json()
+    assert len(listed) == 2
+    names = {c["name"] for c in listed}
+    assert names == {"Jira tenant A", "Jira tenant B"}
+
+
+def test_source_connection_patch_null_name_returns_422(api_client: TestClient) -> None:
+    connection = api_client.post(
+        "/api/connections",
+        json={"name": "Jira prod", "connector_name": "jira", "config": {}},
+    ).json()
+
+    response = api_client.patch(f"/api/connections/{connection['id']}", json={"name": None})
+    assert response.status_code == 422
+
+
+def test_source_connection_blank_name_returns_422(api_client: TestClient) -> None:
+    response_empty = api_client.post(
+        "/api/connections",
+        json={"name": "", "connector_name": "jira", "config": {}},
+    )
+    assert response_empty.status_code == 422
+
+    response_whitespace = api_client.post(
+        "/api/connections",
+        json={"name": "   ", "connector_name": "jira", "config": {}},
+    )
+    assert response_whitespace.status_code == 422
+
+
+def test_source_connection_draft_test_works_without_name(api_client: TestClient) -> None:
+    response = api_client.post(
+        "/api/connections/test",
+        json={"connector_name": "jira", "config": {}},
+    )
+    assert response.status_code == 200

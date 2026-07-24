@@ -20,7 +20,10 @@ def _connection_id(session_factory: sessionmaker[Session]) -> str:
     with session_factory() as session:
         connection = create_source_connection(
             session,
-            SourceConnectionCreate(connector_name=ConnectorName.JIRA),
+            SourceConnectionCreate(
+                name=f"Jira {uuid4().hex[:8]}",
+                connector_name=ConnectorName.JIRA,
+            ),
         )
     return str(connection.id)
 
