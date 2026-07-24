@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import ClassVar
 from uuid import uuid4
 
 from alembic import command
@@ -12,8 +13,35 @@ from sqlmodel import Session
 from em_radar_api.db import DATABASE_PATH_ENV, create_db_engine
 from em_radar_api.repositories.source_connections import create_source_connection
 from em_radar_api.source_connections import ConnectorName, SourceConnectionCreate
+from em_radar_core.connectors import Capabilities, ConnectionTestResult
 
 REPO_ROOT = Path(__file__).parents[3]
+
+
+class _FakeGitLabConnector:
+    """Minimal MR-capable connector used only in tests."""
+
+    name: ClassVar[str] = "gitlab"
+    display_name: ClassVar[str] = "GitLab (test)"
+    config_schema: ClassVar[dict[str, object]] = {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": True,
+    }
+    min_model_version: ClassVar[int] = 1
+
+    def __init__(self, config: dict[str, object]) -> None:
+        pass
+
+    async def test_connection(self) -> ConnectionTestResult:
+        return ConnectionTestResult(ok=True, detail="ok")
+
+    @classmethod
+    def describe_capabilities(cls) -> Capabilities:
+        return Capabilities(provides_mergerequests=True, provides_repositories=True)
+
+    async def close(self) -> None:
+        pass
 
 
 def _connection_id(session_factory: sessionmaker[Session]) -> str:
@@ -23,6 +51,18 @@ def _connection_id(session_factory: sessionmaker[Session]) -> str:
             SourceConnectionCreate(
                 name=f"Jira {uuid4().hex[:8]}",
                 connector_name=ConnectorName.JIRA,
+            ),
+        )
+    return str(connection.id)
+
+
+def _gitlab_connection_id(session_factory: sessionmaker[Session]) -> str:
+    with session_factory() as session:
+        connection = create_source_connection(
+            session,
+            SourceConnectionCreate(
+                name=f"GitLab {uuid4().hex[:8]}",
+                connector_name=ConnectorName.GITLAB,
             ),
         )
     return str(connection.id)
@@ -197,24 +237,26 @@ def test_duplicate_group_ids_are_rejected(api_client: TestClient) -> None:
     assert response.json()["detail"] == "signal_config_group_ids must not contain duplicates"
 
 
-def test_board_scope_must_belong_to_team_connection(
+def test_board_scope_connection_is_derived_not_caller_supplied(
     api_client: TestClient, session_factory: sessionmaker[Session]
 ) -> None:
     scope_connection = _connection_id(session_factory)
-    other_connection = _connection_id(session_factory)
+    _other_connection = _connection_id(session_factory)
     board = _create_board_scope(api_client, scope_connection, "Board A")
 
+    # connection_ids is server-derived from scope_ids; the caller's value is ignored.
     response = api_client.post(
         "/api/teams",
         json={
             "name": "Platform",
-            "connection_ids": [other_connection],
+            "connection_ids": [_other_connection],
             "scope_ids": [board],
         },
     )
 
-    assert response.status_code == 422
-    assert response.json()["detail"] == "scope_ids must reference the selected connections"
+    assert response.status_code == 201
+    # Derived connection_ids = scope_connection (from the board scope).
+    assert response.json()["connection_ids"] == [scope_connection]
 
 
 def test_migration_adds_signal_config_group_ids_column(
@@ -230,3 +272,234 @@ def test_migration_adds_signal_config_group_ids_column(
     }
     assert "signal_config_group_ids" in columns
     assert columns["signal_config_group_ids"]["nullable"] is False
+
+
+def test_migration_adds_code_connection_id_column(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database_path = tmp_path / "team-code-conn.db"
+    monkeypatch.setenv(DATABASE_PATH_ENV, str(database_path))
+    command.upgrade(Config(REPO_ROOT / "alembic.ini"), "head")
+
+    columns = {
+        column["name"]: column
+        for column in inspect(create_db_engine(database_path)).get_columns("team_profile")
+    }
+    assert "code_connection_id" in columns
+    assert columns["code_connection_id"]["nullable"] is True
+
+
+def test_null_code_connection_id_is_allowed(api_client: TestClient) -> None:
+    response = api_client.post(
+        "/api/teams",
+        json={"name": "Platform", "code_connection_id": None},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["code_connection_id"] is None
+
+
+def test_nonexistent_code_connection_id_is_rejected(api_client: TestClient) -> None:
+    response = api_client.post(
+        "/api/teams",
+        json={"name": "Platform", "code_connection_id": str(uuid4())},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "code_connection_id must reference an existing connection"
+
+
+def test_ticketing_only_connection_rejected_as_code_source(
+    api_client: TestClient, session_factory: sessionmaker[Session]
+) -> None:
+    jira_id = _connection_id(session_factory)
+
+    response = api_client.post(
+        "/api/teams",
+        json={"name": "Platform", "code_connection_id": jira_id},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == (
+        "code_connection_id must reference a connection that provides merge-request data"
+    )
+
+
+def test_mr_capable_connection_accepted_as_code_source(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "em_radar_api.connector_registry._connector_types",
+        lambda: [_FakeGitLabConnector],
+    )
+    gitlab_id = _gitlab_connection_id(session_factory)
+
+    response = api_client.post(
+        "/api/teams",
+        json={"name": "Platform", "code_connection_id": gitlab_id},
+    )
+
+    assert response.status_code == 201
+    data = response.json()
+    assert data["code_connection_id"] == gitlab_id
+    # code_connection_id must be merged into connection_ids automatically.
+    assert gitlab_id in data["connection_ids"]
+
+
+def test_attaching_code_connection_alongside_board_scope(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Attaching a code connection PRESERVES the board scope's connection in connection_ids."""
+    monkeypatch.setattr(
+        "em_radar_api.connector_registry._connector_types",
+        lambda: [_FakeGitLabConnector],
+    )
+    jira_id = _connection_id(session_factory)
+    gitlab_id = _gitlab_connection_id(session_factory)
+    board = _create_board_scope(api_client, jira_id, "Board A")
+
+    # Create a team with a board scope (connection_ids derives to [jira_id]).
+    created = api_client.post(
+        "/api/teams",
+        json={"name": "Platform", "scope_ids": [board]},
+    ).json()
+    assert jira_id in created["connection_ids"]
+
+    # Attach the GitLab code source — should NOT drop the board connection.
+    response = api_client.patch(
+        f"/api/teams/{created['id']}",
+        json={"code_connection_id": gitlab_id},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["code_connection_id"] == gitlab_id
+    assert jira_id in data["connection_ids"]
+    assert gitlab_id in data["connection_ids"]
+
+
+def test_adding_board_scope_preserves_code_connection_id(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Attaching a board scope PRESERVES an existing code connection in connection_ids."""
+    monkeypatch.setattr(
+        "em_radar_api.connector_registry._connector_types",
+        lambda: [_FakeGitLabConnector],
+    )
+    jira_id = _connection_id(session_factory)
+    gitlab_id = _gitlab_connection_id(session_factory)
+    board = _create_board_scope(api_client, jira_id, "Board A")
+
+    # Create a team with just the code source (connection_ids derives to [gitlab_id]).
+    created = api_client.post(
+        "/api/teams",
+        json={"name": "Platform", "code_connection_id": gitlab_id},
+    ).json()
+    assert created["connection_ids"] == [gitlab_id]
+
+    # Attach the board scope — code connection must be preserved.
+    response = api_client.patch(
+        f"/api/teams/{created['id']}",
+        json={"scope_ids": [board]},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["code_connection_id"] == gitlab_id
+    assert jira_id in data["connection_ids"]
+    assert gitlab_id in data["connection_ids"]
+
+
+def test_switching_code_connection_removes_orphaned_connection(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Switching code connection A→B removes A from connection_ids (no orphans)."""
+    monkeypatch.setattr(
+        "em_radar_api.connector_registry._connector_types",
+        lambda: [_FakeGitLabConnector],
+    )
+    gitlab_a = _gitlab_connection_id(session_factory)
+    gitlab_b = _gitlab_connection_id(session_factory)
+
+    created = api_client.post(
+        "/api/teams",
+        json={"name": "Platform", "code_connection_id": gitlab_a},
+    ).json()
+    assert gitlab_a in created["connection_ids"]
+
+    response = api_client.patch(
+        f"/api/teams/{created['id']}",
+        json={"code_connection_id": gitlab_b},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["code_connection_id"] == gitlab_b
+    assert gitlab_b in data["connection_ids"]
+    assert gitlab_a not in data["connection_ids"]
+
+
+def test_detaching_code_connection_removes_it_from_connection_ids(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "em_radar_api.connector_registry._connector_types",
+        lambda: [_FakeGitLabConnector],
+    )
+    gitlab_id = _gitlab_connection_id(session_factory)
+
+    created = api_client.post(
+        "/api/teams",
+        json={"name": "Platform", "code_connection_id": gitlab_id},
+    ).json()
+    assert gitlab_id in created["connection_ids"]
+
+    response = api_client.patch(
+        f"/api/teams/{created['id']}",
+        json={"code_connection_id": None},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["code_connection_id"] is None
+    assert gitlab_id not in data["connection_ids"]
+
+
+def test_code_only_connection_deletion_blocked_by_team_guard(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A connection referenced only via code_connection_id (no scope) cannot be deleted.
+
+    This exercises the _referencing_teams deletion guard, which is the only remaining
+    protection for code-only connections (the _referencing_scopes guard does not fire
+    when there is no ScopeDefinition for the connection).
+    """
+    monkeypatch.setattr(
+        "em_radar_api.connector_registry._connector_types",
+        lambda: [_FakeGitLabConnector],
+    )
+    gitlab_id = _gitlab_connection_id(session_factory)
+
+    # Attach the connection ONLY via code_connection_id — no board scope, so no
+    # ScopeDefinition references it.  The derived connection_ids will contain gitlab_id.
+    api_client.post(
+        "/api/teams",
+        json={"name": "Platform", "code_connection_id": gitlab_id},
+    )
+
+    response = api_client.delete(f"/api/connections/{gitlab_id}")
+
+    assert response.status_code == 409
+    assert "referenced by a team" in response.json()["detail"]

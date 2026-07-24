@@ -15,6 +15,7 @@ const team = {
   board_ids: [],
   repository_ids: [],
   signal_config_group_ids: [],
+  code_connection_id: null,
   working_mode: "scrum",
   sprint_length_days: 14,
   member_user_keys: [],
@@ -93,6 +94,52 @@ const createdScope = {
   updated_at: "2026-01-01T00:00:00Z",
 }
 
+// A connector that can supply merge-request data (e.g. GitLab).
+const mrConnector = {
+  name: "gitlab",
+  display_name: "GitLab",
+  config_schema: { type: "object", properties: {} },
+  capabilities: {
+    provides_workitems: false,
+    provides_sprints: false,
+    provides_mergerequests: true,
+    provides_repositories: true,
+    provides_reviews: true,
+    provides_comments: false,
+    provides_transitions: false,
+    supports_incremental_fetch: false,
+    supports_pagination_cursor: false,
+    max_window_days: null,
+  },
+}
+
+// A ticketing-only connector (e.g. Jira) — cannot supply merge-request data.
+const ticketingConnector = {
+  name: "jira",
+  display_name: "Jira",
+  config_schema: { type: "object", properties: {} },
+  capabilities: {
+    provides_workitems: true,
+    provides_sprints: true,
+    provides_mergerequests: false,
+    provides_repositories: false,
+    provides_reviews: false,
+    provides_comments: false,
+    provides_transitions: true,
+    supports_incremental_fetch: false,
+    supports_pagination_cursor: false,
+    max_window_days: null,
+  },
+}
+
+const gitlabConnection = {
+  id: "conn-gitlab",
+  name: "GitLab Cloud",
+  connector_name: "gitlab",
+  config: {},
+  created_at: "2026-01-01T00:00:00Z",
+}
+
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -104,11 +151,15 @@ type MockOptions = {
   boards?: typeof scrumBoards | typeof kanbanBoards | Array<(typeof scrumBoards)[0] | (typeof kanbanBoards)[0]>
   sprintsResponse?: typeof sprints | Promise<Response>
   scopePostResponse?: Response
+  connectors?: unknown[]
+  connections?: unknown[]
 }
 
 function mockApi(options: MockOptions = {}) {
   const boards = options.boards ?? scrumBoards
   const scopePostResponse = options.scopePostResponse ?? jsonResponse(createdScope, 201)
+  const connectorsList = options.connectors ?? []
+  const connectionsList = options.connections ?? connections
 
   return vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
     const url = typeof input === "string" ? input : input.toString()
@@ -126,8 +177,11 @@ function mockApi(options: MockOptions = {}) {
     if (url.endsWith("/api/signal-config-groups")) {
       return Promise.resolve(jsonResponse(groups))
     }
+    if (url.endsWith("/api/connectors")) {
+      return Promise.resolve(jsonResponse(connectorsList))
+    }
     if (url.endsWith("/api/connections") && method === "GET") {
-      return Promise.resolve(jsonResponse(connections))
+      return Promise.resolve(jsonResponse(connectionsList))
     }
     if (url.match(/\/api\/connections\/conn-1\/projects$/) && method === "GET") {
       return Promise.resolve(jsonResponse(projects))
@@ -384,6 +438,73 @@ describe("TeamsPage — task-board source picker", () => {
     // userOverrodeModeRef is now true, so detection cannot reset the value back to 14.
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Save board source" })).toBeDisabled()
+    })
+  })
+
+  it("shows an empty-state message when no MR-capable connections exist", async () => {
+    mockApi({ connectors: [ticketingConnector], connections: [] })
+    renderPage()
+
+    expect(
+      await screen.findByText(/no code connections available/i),
+    ).toBeInTheDocument()
+  })
+
+  it("attaches a code connection", async () => {
+    const fetchMock = mockApi({
+      connectors: [mrConnector],
+      connections: [gitlabConnection],
+    })
+    renderPage()
+
+    fireEvent.change(await screen.findByLabelText("Code source"), {
+      target: { value: "conn-gitlab" },
+    })
+
+    await waitFor(() => {
+      const call = fetchMock.mock.calls.find(
+        ([url, init]) => String(url).includes("/api/teams/") && init?.method === "PATCH",
+      )
+      expect(call).toBeTruthy()
+      const body = JSON.parse(String((call?.[1] as RequestInit).body))
+      expect(body.code_connection_id).toEqual("conn-gitlab")
+    })
+  })
+
+  it("detaches a code connection by selecting the empty option", async () => {
+    const teamWithCode = { ...team, code_connection_id: "conn-gitlab" }
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = typeof input === "string" ? input : input.toString()
+      const method = init?.method ?? "GET"
+      if (url.endsWith("/api/teams") && method === "GET") {
+        return Promise.resolve(jsonResponse([teamWithCode]))
+      }
+      if (url.endsWith("/api/scopes")) return Promise.resolve(jsonResponse([]))
+      if (url.endsWith("/api/signal-config-groups")) return Promise.resolve(jsonResponse(groups))
+      if (url.endsWith("/api/connectors")) return Promise.resolve(jsonResponse([mrConnector]))
+      if (url.endsWith("/api/connections") && method === "GET") {
+        return Promise.resolve(jsonResponse([gitlabConnection]))
+      }
+      if (url.includes("/api/teams/") && method === "PATCH") {
+        const body = JSON.parse(String(init?.body))
+        return Promise.resolve(jsonResponse({ ...teamWithCode, ...body }))
+      }
+      throw new Error(`unexpected fetch: ${method} ${url}`)
+    })
+
+    renderPage()
+
+    fireEvent.change(await screen.findByLabelText("Code source"), {
+      target: { value: "" },
+    })
+
+    await waitFor(() => {
+      const call = fetchMock.mock.calls.find(
+        ([url, init]) => String(url).includes("/api/teams/") && init?.method === "PATCH",
+      )
+      expect(call).toBeTruthy()
+      const body = JSON.parse(String((call?.[1] as RequestInit).body))
+      expect(body.code_connection_id).toBeNull()
     })
   })
 })

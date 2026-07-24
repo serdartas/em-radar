@@ -7,6 +7,7 @@ from typing import cast
 from jsonschema import SchemaError, ValidationError, validators
 
 from em_radar_core.connectors import (
+    Capabilities,
     ConnectorBase,
     ConnectorConfigError,
     ConnectorError,
@@ -33,6 +34,14 @@ def list_connectors() -> list[dict[str, object]]:
             descriptor["signal_schema"] = asdict(_signal_schema(connector_type))
         connectors.append(descriptor)
     return connectors
+
+
+def get_connector_capabilities(name: str) -> Capabilities | None:
+    """Return capabilities for a registered connector, or None if not found or incompatible."""
+    try:
+        return _connector_type(name).describe_capabilities()
+    except (ConnectorNotFoundError, ConnectorError):
+        return None
 
 
 def create_connector(name: str, config: Mapping[str, object]) -> ConnectorBase:
