@@ -11,6 +11,21 @@ export interface ScopeDefinition {
   updated_at: string
 }
 
+export interface ScopeDefinitionCreate {
+  connection_id: string
+  name: string
+  scope_type: "board" | "custom" | "project" | "repository" | "saved_filter"
+  external_ref: Record<string, string>
+  capabilities: string[]
+}
+
 export async function listScopes(): Promise<ScopeDefinition[]> {
   return apiFetch<ScopeDefinition[]>("/scopes")
+}
+
+export async function createScope(draft: ScopeDefinitionCreate): Promise<ScopeDefinition> {
+  return apiFetch<ScopeDefinition>("/scopes", {
+    method: "POST",
+    body: JSON.stringify(draft),
+  })
 }
