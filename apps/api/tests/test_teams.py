@@ -99,9 +99,11 @@ def test_kanban_team_rejects_non_null_sprint_length(api_client: TestClient) -> N
     assert response.status_code == 422
 
 
-def test_team_scope_ids_must_belong_to_existing_connections(
+def test_caller_supplied_connection_ids_are_ignored(
     api_client: TestClient, session_factory: sessionmaker[Session]
 ) -> None:
+    # connection_ids is server-derived from scope_ids + code_connection_id; any value sent
+    # by the caller is ignored, so even a non-existent ID does not cause a 422.
     response = api_client.post(
         "/api/teams",
         json={
@@ -112,8 +114,9 @@ def test_team_scope_ids_must_belong_to_existing_connections(
         },
     )
 
-    assert response.status_code == 422
-    assert response.json()["detail"] == "connection_ids must reference existing connections"
+    assert response.status_code == 201
+    # No scopes and no code_connection_id → derived connection_ids is empty.
+    assert response.json()["connection_ids"] == []
 
 
 def test_team_referenced_by_evaluation_window_cannot_be_deleted(

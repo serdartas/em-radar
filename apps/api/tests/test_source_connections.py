@@ -3,6 +3,7 @@ from pydantic import SecretStr
 from sqlmodel import SQLModel, Session, select
 
 from em_radar_api.db import create_db_engine
+from em_radar_api.repositories.scope_definitions import create_scope_definition
 from em_radar_api.repositories.source_connections import (
     SourceConnectionInUse,
     create_source_connection,
@@ -13,6 +14,7 @@ from em_radar_api.repositories.source_connections import (
     update_source_connection,
 )
 from em_radar_api.repositories.team_profiles import create_team_profile
+from em_radar_api.scope_definitions import ScopeDefinitionCreate, ScopeType
 from em_radar_api.source_connections import (
     ConnectorName,
     SourceConnectionCreate,
@@ -94,13 +96,22 @@ def test_source_connection_referenced_by_team_cannot_be_deleted() -> None:
                 connector_name=ConnectorName.JIRA,
             ),
         )
+        # Create a scope for the connection, then a team whose connection_ids is derived
+        # from that scope.  This is the canonical way to reference a connection via a team
+        # after connection_ids became server-derived.
+        scope = create_scope_definition(
+            session,
+            ScopeDefinitionCreate(
+                connection_id=connection.id,
+                name="Board A",
+                scope_type=ScopeType.BOARD,
+                external_ref={"id": "1"},
+                capabilities=[],
+            ),
+        )
         create_team_profile(
             session,
-            TeamProfileCreate(
-                name="Platform",
-                connection_ids=[connection.id],
-                repository_ids=[],
-            ),
+            TeamProfileCreate(name="Platform", scope_ids=[scope.id]),
         )
 
         updated = update_source_connection(
@@ -111,6 +122,7 @@ def test_source_connection_referenced_by_team_cannot_be_deleted() -> None:
         assert updated is not None
         assert updated.config == {"base_url": "https://jira.example.com"}
 
-        with pytest.raises(SourceConnectionInUse, match="referenced by a team"):
+        # The scope references the connection; deletion is blocked at the scope level.
+        with pytest.raises(SourceConnectionInUse, match="referenced by a scope definition"):
             delete_source_connection(session, connection.id)
         assert get_source_connection(session, connection.id) == updated

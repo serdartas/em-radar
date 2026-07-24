@@ -6,6 +6,7 @@ from uuid import UUID
 from pydantic import SecretStr
 from sqlmodel import Session, select
 
+from em_radar_api.connector_registry import get_connector_capabilities
 from em_radar_api.source_connections import (
     SourceConnectionCreate,
     SourceConnectionRead,
@@ -88,12 +89,19 @@ def update_source_connection(
             values["config"] = {**row.config, **stored_config}
         else:
             values["config"] = stored_config
-    if values.get(
-        "connector_name", row.connector_name
-    ) != row.connector_name and _referencing_scopes(session, connection_id):
-        raise SourceConnectionInUse(
-            "source connection connector_name cannot change while scopes reference it"
-        )
+    new_connector_name = values.get("connector_name", row.connector_name)
+    if new_connector_name != row.connector_name:
+        if _referencing_scopes(session, connection_id):
+            raise SourceConnectionInUse(
+                "source connection connector_name cannot change while scopes reference it"
+            )
+        if _teams_using_as_code_source(session, connection_id):
+            caps = get_connector_capabilities(str(new_connector_name))
+            if caps is None or not caps.provides_mergerequests:
+                raise SourceConnectionInUse(
+                    "source connection connector_name cannot change to a non-MR-capable connector"
+                    " while referenced as a team's code source"
+                )
     row.sqlmodel_update(values)
     _write(session, row)
     return _masked_read(row)
@@ -142,6 +150,12 @@ def _referencing_teams(session: Session, connection_id: UUID) -> list[TeamProfil
         for team in session.exec(select(TeamProfileTable)).all()
         if connection_id in team.connection_ids
     ]
+
+
+def _teams_using_as_code_source(session: Session, connection_id: UUID) -> list[TeamProfileTable]:
+    return session.exec(
+        select(TeamProfileTable).where(TeamProfileTable.code_connection_id == connection_id)
+    ).all()
 
 
 def _referencing_scopes(session: Session, connection_id: UUID) -> list[ScopeDefinitionTable]:
