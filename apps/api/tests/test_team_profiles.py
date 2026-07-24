@@ -1,6 +1,6 @@
 from pathlib import Path
 from typing import ClassVar
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from alembic import command
 from alembic.config import Config
@@ -13,7 +13,9 @@ from sqlmodel import Session
 from em_radar_api.db import DATABASE_PATH_ENV, create_db_engine
 from em_radar_api.repositories.source_connections import create_source_connection
 from em_radar_api.source_connections import ConnectorName, SourceConnectionCreate
+from em_radar_api.tables import TeamProfileTable
 from em_radar_core.connectors import Capabilities, ConnectionTestResult
+from em_radar_core.models import TeamProfile as CanonicalTeamProfile
 
 REPO_ROOT = Path(__file__).parents[3]
 
@@ -39,6 +41,63 @@ class _FakeGitLabConnector:
     @classmethod
     def describe_capabilities(cls) -> Capabilities:
         return Capabilities(provides_mergerequests=True, provides_repositories=True)
+
+    async def close(self) -> None:
+        pass
+
+
+class _FakeJiraMRConnector:
+    """Fake Jira connector that (artificially) provides MR data — only used in tests that need
+    to switch between two MR-capable connectors to verify the update guard allows the change."""
+
+    name: ClassVar[str] = "jira"
+    display_name: ClassVar[str] = "Jira (test MR)"
+    config_schema: ClassVar[dict[str, object]] = {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": True,
+    }
+    min_model_version: ClassVar[int] = 1
+
+    def __init__(self, config: dict[str, object]) -> None:
+        pass
+
+    async def test_connection(self) -> ConnectionTestResult:
+        return ConnectionTestResult(ok=True, detail="ok")
+
+    @classmethod
+    def describe_capabilities(cls) -> Capabilities:
+        return Capabilities(provides_mergerequests=True)
+
+    async def close(self) -> None:
+        pass
+
+
+class _FakeTicketingConnector:
+    """Registered ticketing-only connector (provides_mergerequests=False).
+
+    Used to exercise the `not caps.provides_mergerequests` branch of the connector_name
+    change guard, as distinct from the `caps is None` (unregistered) branch.
+    """
+
+    name: ClassVar[str] = "jira"
+    display_name: ClassVar[str] = "Jira (test ticketing only)"
+    config_schema: ClassVar[dict[str, object]] = {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": True,
+    }
+    min_model_version: ClassVar[int] = 1
+
+    def __init__(self, config: dict[str, object]) -> None:
+        pass
+
+    async def test_connection(self) -> ConnectionTestResult:
+        return ConnectionTestResult(ok=True, detail="ok")
+
+    @classmethod
+    def describe_capabilities(cls) -> Capabilities:
+        return Capabilities(provides_mergerequests=False, provides_workitems=True)
 
     async def close(self) -> None:
         pass
@@ -503,3 +562,116 @@ def test_code_only_connection_deletion_blocked_by_team_guard(
 
     assert response.status_code == 409
     assert "referenced by a team" in response.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# Finding 1: connector_name change guard for code-source connections
+# ---------------------------------------------------------------------------
+
+
+def test_changing_code_source_connector_to_non_mr_capable_is_rejected(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Changing connector_name of a code-source connection to a ticketing-only connector
+    must be rejected — it would leave code_connection_id pointing at a non-MR-capable conn.
+
+    Both connectors are registered so get_connector_capabilities("jira") returns a real
+    Capabilities with provides_mergerequests=False, exercising that branch (not caps is None).
+    """
+    monkeypatch.setattr(
+        "em_radar_api.connector_registry._connector_types",
+        lambda: [_FakeGitLabConnector, _FakeTicketingConnector],
+    )
+    gitlab_id = _gitlab_connection_id(session_factory)
+    api_client.post("/api/teams", json={"name": "Platform", "code_connection_id": gitlab_id})
+
+    response = api_client.patch(
+        f"/api/connections/{gitlab_id}",
+        json={"connector_name": "jira"},
+    )
+
+    assert response.status_code == 409
+    assert "non-MR-capable" in response.json()["detail"]
+
+
+def test_changing_code_source_connector_to_another_mr_capable_is_allowed(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Changing connector_name to another MR-capable connector is permitted."""
+    # Both connectors report provides_mergerequests=True in this test.
+    monkeypatch.setattr(
+        "em_radar_api.connector_registry._connector_types",
+        lambda: [_FakeJiraMRConnector, _FakeGitLabConnector],
+    )
+    jira_id = _connection_id(session_factory)
+    # With the fake Jira connector providing MR, we can set it as code source.
+    api_client.post("/api/teams", json={"name": "Platform", "code_connection_id": jira_id})
+
+    # Switch to gitlab — also MR-capable in this test.
+    response = api_client.patch(
+        f"/api/connections/{jira_id}",
+        json={"connector_name": "gitlab"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["connector_name"] == "gitlab"
+
+
+def test_changing_connector_name_on_non_code_source_connection_is_unaffected(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The new guard does not block connector_name changes on connections not used as code source."""
+    monkeypatch.setattr(
+        "em_radar_api.connector_registry._connector_types",
+        lambda: [_FakeGitLabConnector],
+    )
+    gitlab_id = _gitlab_connection_id(session_factory)
+    # No team uses this connection as code_connection_id.
+
+    response = api_client.patch(
+        f"/api/connections/{gitlab_id}",
+        json={"connector_name": "jira"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["connector_name"] == "jira"
+
+
+# ---------------------------------------------------------------------------
+# Finding 2: canonical TeamProfile must preserve code_connection_id
+# ---------------------------------------------------------------------------
+
+
+def test_canonical_team_profile_preserves_code_connection_id(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TeamProfile.model_validate(team_row) must carry code_connection_id through.
+
+    Guards against the regression where the canonical TeamProfile lacked the field and
+    model_validate silently dropped it, breaking EvaluationContext.team.code_connection_id.
+    """
+    monkeypatch.setattr(
+        "em_radar_api.connector_registry._connector_types",
+        lambda: [_FakeGitLabConnector],
+    )
+    gitlab_id = _gitlab_connection_id(session_factory)
+
+    created = api_client.post(
+        "/api/teams",
+        json={"name": "Platform", "code_connection_id": gitlab_id},
+    ).json()
+
+    with session_factory() as session:
+        row = session.get(TeamProfileTable, UUID(created["id"]))
+        assert row is not None
+        canonical = CanonicalTeamProfile.model_validate(row, from_attributes=True)
+
+    assert canonical.code_connection_id == UUID(gitlab_id)
