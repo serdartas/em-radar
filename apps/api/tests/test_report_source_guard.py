@@ -132,7 +132,7 @@ def _create_mr_signal(api_client: TestClient, name: str) -> str:
         "/api/signal-definitions",
         json={
             "name": name,
-            "entity_type": "mergerequest",
+            "entity_type": "merge_request",
             "expression": {
                 "type": "group",
                 "operator": "all",

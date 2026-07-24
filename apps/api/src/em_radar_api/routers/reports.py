@@ -76,8 +76,12 @@ router = APIRouter()
 DEFAULT_KANBAN_REPORT_DAYS = 14
 
 # Entity types whose signals require a code (VCS) source.  Everything else is treated as
-# a board (task-tracker) signal.
-_CODE_ENTITY_TYPES: frozenset[str] = frozenset({"mergerequest", "repository"})
+# a board (task-tracker) signal.  Both the connector-capability spelling (`merge_request`,
+# the authoritative signal-pack value per data model 5.12B) and the canonical-model spelling
+# (`mergerequest`) are accepted so imported and canonical definitions classify identically.
+_CODE_ENTITY_TYPES: frozenset[str] = frozenset(
+    {"merge_request", "mergerequest", "repository"}
+)
 
 
 class ReportRunRequest(BaseModel):
