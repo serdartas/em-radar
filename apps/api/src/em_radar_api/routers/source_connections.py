@@ -14,7 +14,9 @@ from em_radar_api.repositories.scope_definitions import (
     upsert_jira_project_scope,
 )
 from em_radar_api.repositories.source_connections import (
+    SourceConnectionDuplicateName,
     SourceConnectionInUse,
+    SourceConnectionInvalidName,
     create_source_connection,
     delete_source_connection,
     get_source_connection,
@@ -51,6 +53,13 @@ class ConnectionTestResponse(BaseModel):
     user_display_name: str | None
     permissions: list[str]
     code: ConnectionErrorCode | None = None
+
+
+class SourceConnectionDraft(BaseModel):
+    """Request body for the draft connection test — no name required since nothing is persisted."""
+
+    connector_name: ConnectorName
+    config: dict[str, object] = {}
 
 
 class ProjectResponse(BaseModel):
@@ -106,7 +115,10 @@ def create_connection(
     connection: SourceConnectionCreate,
     session: Session = Depends(get_write_session),
 ) -> SourceConnectionRead:
-    return create_source_connection(session, connection)
+    try:
+        return create_source_connection(session, connection)
+    except SourceConnectionDuplicateName as error:
+        raise _connection_duplicate_name(error) from error
 
 
 @router.patch("/connections/{connection_id}", response_model=SourceConnectionRead)
@@ -117,6 +129,10 @@ def patch_connection(
 ) -> SourceConnectionRead:
     try:
         connection = update_source_connection(session, connection_id, update)
+    except SourceConnectionInvalidName as error:
+        raise _connection_invalid_name(error) from error
+    except SourceConnectionDuplicateName as error:
+        raise _connection_duplicate_name(error) from error
     except SourceConnectionInUse as error:
         raise _connection_conflict(error) from error
     if connection is None:
@@ -138,7 +154,7 @@ def delete_connection(
 
 
 @router.post("/connections/test", response_model=ConnectionTestResponse)
-async def test_connection_draft(connection: SourceConnectionCreate) -> ConnectionTestResponse:
+async def test_connection_draft(connection: SourceConnectionDraft) -> ConnectionTestResponse:
     return await _test_connector(connection.connector_name, connection.config)
 
 
@@ -298,3 +314,11 @@ def _connection_not_found() -> HTTPException:
 
 def _connection_conflict(error: SourceConnectionInUse) -> HTTPException:
     return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error))
+
+
+def _connection_duplicate_name(error: SourceConnectionDuplicateName) -> HTTPException:
+    return HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error))
+
+
+def _connection_invalid_name(error: SourceConnectionInvalidName) -> HTTPException:
+    return HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error))

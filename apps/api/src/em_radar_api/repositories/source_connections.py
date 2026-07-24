@@ -37,9 +37,21 @@ class SourceConnectionInUse(ValueError):
     pass
 
 
+class SourceConnectionDuplicateName(ValueError):
+    pass
+
+
+class SourceConnectionInvalidName(ValueError):
+    pass
+
+
 def create_source_connection(
     session: Session, connection: SourceConnectionCreate
 ) -> SourceConnectionRead:
+    if _name_taken(session, connection.name):
+        raise SourceConnectionDuplicateName(
+            f"a connection named '{connection.name}' already exists"
+        )
     row = SourceConnectionTable.model_validate(connection)
     row.config = _stored_config(row.config)
     _write(session, row)
@@ -66,6 +78,10 @@ def update_source_connection(
         return None
 
     values = update.model_dump(exclude_unset=True)
+    if "name" in values and values["name"] is None:
+        raise SourceConnectionInvalidName("connection name cannot be set to null")
+    if "name" in values and _name_taken(session, values["name"], exclude_id=connection_id):
+        raise SourceConnectionDuplicateName(f"a connection named '{values['name']}' already exists")
     if "config" in values:
         stored_config = _stored_config(cast(Mapping[str, object], values["config"]))
         if values.get("connector_name", row.connector_name) == row.connector_name:
@@ -78,8 +94,6 @@ def update_source_connection(
         raise SourceConnectionInUse(
             "source connection connector_name cannot change while scopes reference it"
         )
-    candidate = SourceConnectionTable.model_validate(row, update=values)
-    _validate_team_scopes(session, connection_id, candidate)
     row.sqlmodel_update(values)
     _write(session, row)
     return _masked_read(row)
@@ -115,34 +129,11 @@ def _write(session: Session, row: SourceConnectionTable) -> None:
     session.refresh(row)
 
 
-def _validate_team_scopes(
-    session: Session,
-    connection_id: UUID,
-    candidate: SourceConnectionTable,
-) -> None:
-    for team in _referencing_teams(session, connection_id):
-        connections = [
-            candidate
-            if referenced_id == connection_id
-            else session.get(SourceConnectionTable, referenced_id)
-            for referenced_id in team.connection_ids
-        ]
-        scoped_ids = (
-            ("project_ids", team.project_ids, "selected_project_ids"),
-            ("board_ids", team.board_ids, "selected_board_ids"),
-            ("repository_ids", team.repository_ids, "selected_repository_ids"),
-        )
-        for field_name, values, connection_field in scoped_ids:
-            available = {
-                item
-                for connection in connections
-                if connection is not None
-                for item in getattr(connection, connection_field)
-            }
-            if not set(values).issubset(available):
-                raise SourceConnectionInUse(
-                    f"source connection update would invalidate team {field_name}"
-                )
+def _name_taken(session: Session, name: str, exclude_id: UUID | None = None) -> bool:
+    query = select(SourceConnectionTable).where(SourceConnectionTable.name == name)
+    if exclude_id is not None:
+        query = query.where(SourceConnectionTable.id != exclude_id)
+    return session.exec(query).first() is not None
 
 
 def _referencing_teams(session: Session, connection_id: UUID) -> list[TeamProfileTable]:
@@ -162,11 +153,9 @@ def _referencing_scopes(session: Session, connection_id: UUID) -> list[ScopeDefi
 def _masked_read(row: SourceConnectionTable) -> SourceConnectionRead:
     return SourceConnectionRead(
         id=row.id,
+        name=row.name,
         connector_name=row.connector_name,
         config=cast(dict[str, object], _mask_value(row.config)),
-        selected_project_ids=row.selected_project_ids,
-        selected_board_ids=row.selected_board_ids,
-        selected_repository_ids=row.selected_repository_ids,
         created_at=row.created_at,
     )
 
