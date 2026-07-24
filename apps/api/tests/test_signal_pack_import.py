@@ -127,7 +127,7 @@ def test_import_preview_warns_about_unknown_scope_targets(
     with session_factory() as session:
         session.add(
             ProjectTable(
-                source=Source.DEMO,
+                source=Source.JIRA,
                 external_id="known-project",
                 key="KNOWN",
                 name="Known project",
@@ -135,7 +135,7 @@ def test_import_preview_warns_about_unknown_scope_targets(
         )
         session.add(
             RepositoryTable(
-                source=Source.DEMO,
+                source=Source.JIRA,
                 external_id="known-repository",
                 name="Known repository",
                 full_path="known/repository",

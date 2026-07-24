@@ -89,5 +89,5 @@ def test_enums_are_not_treated_as_references() -> None:
 
     assert resolved["state"] is original_state
     assert resolved["linked_workitem_keys"] == ["ABC-1"]
-    assert Source.DEMO not in resolved.values()
+    assert Source.JIRA not in resolved.values()
     assert StatusCategory.DONE not in resolved.values()

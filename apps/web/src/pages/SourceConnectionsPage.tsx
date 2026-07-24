@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label"
 import { Select } from "@/components/ui/select"
 import { apiErrorMessage } from "@/lib/api"
 import { connectionErrorGuidance } from "@/lib/connectionErrors"
-import { type Connector, getConnectors } from "@/lib/connectors"
+import { type Connector, getConnectors, SOURCE_TYPES } from "@/lib/connectors"
 import {
   type ConnectionDraft,
   type ConnectionTestResult,
@@ -72,6 +72,7 @@ export function SourceConnectionsPage() {
   const connectionsQuery = useQuery({ queryKey: ["connections"], queryFn: listConnections })
 
   const connectors = useMemo(() => connectorsQuery.data ?? [], [connectorsQuery.data])
+  const implementedNames = useMemo(() => new Set(connectors.map((c) => c.name)), [connectors])
   const [connectorName, setConnectorName] = useState("")
   const [values, setValues] = useState<Record<string, unknown>>({})
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -80,10 +81,14 @@ export function SourceConnectionsPage() {
 
   useEffect(() => {
     if (connectorName === "" && connectors.length > 0) {
-      setConnectorName(connectors[0].name)
-      setValues(defaultValues(connectors[0].config_schema))
+      const firstImplemented = SOURCE_TYPES.find((t) => implementedNames.has(t.name))
+      if (firstImplemented) {
+        const connector = connectors.find((c) => c.name === firstImplemented.name)
+        setConnectorName(firstImplemented.name)
+        setValues(connector ? defaultValues(connector.config_schema) : {})
+      }
     }
-  }, [connectorName, connectors])
+  }, [connectorName, connectors, implementedNames])
 
   const testMutation = useMutation({ mutationFn: testConnectionDraft })
   const saveMutation = useMutation({
@@ -101,10 +106,11 @@ export function SourceConnectionsPage() {
 
   function resetForm() {
     setEditingId(null)
-    const first = connectors[0]
-    if (first) {
-      setConnectorName(first.name)
-      setValues(defaultValues(first.config_schema))
+    const firstImplemented = SOURCE_TYPES.find((t) => implementedNames.has(t.name))
+    if (firstImplemented) {
+      const connector = connectors.find((c) => c.name === firstImplemented.name)
+      setConnectorName(firstImplemented.name)
+      setValues(connector ? defaultValues(connector.config_schema) : {})
     }
     testMutation.reset()
   }
@@ -191,11 +197,18 @@ export function SourceConnectionsPage() {
                 onChange={(event) => pickConnector(event.target.value)}
                 value={connectorName}
               >
-                {connectors.map((connector) => (
-                  <option key={connector.name} value={connector.name}>
-                    {connector.display_name}
-                  </option>
-                ))}
+                {SOURCE_TYPES.map((sourceType) => {
+                  const implemented = implementedNames.has(sourceType.name)
+                  return (
+                    <option
+                      disabled={!implemented}
+                      key={sourceType.name}
+                      value={sourceType.name}
+                    >
+                      {implemented ? sourceType.label : `${sourceType.label} (coming soon)`}
+                    </option>
+                  )
+                })}
               </Select>
             </div>
 

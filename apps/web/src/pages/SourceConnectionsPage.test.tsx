@@ -5,9 +5,9 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { SourceConnectionsPage } from "@/pages/SourceConnectionsPage"
 
-const demoConnector = {
-  name: "demo",
-  display_name: "Demo company",
+const jiraConnector = {
+  name: "jira",
+  display_name: "Jira (Cloud or Server)",
   config_schema: {
     type: "object",
     properties: {
@@ -19,21 +19,15 @@ const demoConnector = {
   capabilities: {
     provides_workitems: true,
     provides_sprints: true,
-    provides_mergerequests: true,
-    provides_repositories: true,
-    provides_reviews: true,
-    provides_comments: true,
+    provides_mergerequests: false,
+    provides_repositories: false,
+    provides_reviews: false,
+    provides_comments: false,
     provides_transitions: true,
     supports_incremental_fetch: false,
     supports_pagination_cursor: false,
     max_window_days: null,
   },
-}
-
-const jiraConnector = {
-  ...demoConnector,
-  name: "jira",
-  display_name: "Jira (Cloud or Server)",
 }
 
 const testResult = {
@@ -54,7 +48,7 @@ function mockApi(testHandler: () => Response = () => jsonResponse(testResult)) {
   return vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
     const url = typeof input === "string" ? input : input.toString()
     if (url.endsWith("/api/connectors")) {
-      return Promise.resolve(jsonResponse([demoConnector]))
+      return Promise.resolve(jsonResponse([jiraConnector]))
     }
     if (url.endsWith("/api/connections") && (init?.method ?? "GET") === "GET") {
       return Promise.resolve(jsonResponse([]))
@@ -88,6 +82,31 @@ afterEach(() => {
 })
 
 describe("SourceConnectionsPage", () => {
+  it("renders Jira as the default selected connector in the dropdown", async () => {
+    mockApi()
+    renderPage()
+
+    const select = (await screen.findByLabelText(/Source type/)) as HTMLSelectElement
+    expect(select.value).toBe("jira")
+  })
+
+  it("lists all five source types in the dropdown with non-Jira ones disabled", async () => {
+    mockApi()
+    renderPage()
+
+    await screen.findByLabelText(/Source type/)
+    const options = screen.getAllByRole("option") as HTMLOptionElement[]
+    const optionMap = Object.fromEntries(options.map((o) => [o.value, o]))
+
+    expect(optionMap["jira"].disabled).toBe(false)
+    expect(optionMap["jira"].textContent).toBe("Jira")
+
+    for (const name of ["linear", "github_issues", "gitlab", "github"]) {
+      expect(optionMap[name].disabled).toBe(true)
+      expect(optionMap[name].textContent).toContain("coming soon")
+    }
+  })
+
   it("renders the connector form with a write-only secret field", async () => {
     mockApi()
     renderPage()
@@ -157,16 +176,7 @@ describe("SourceConnectionsPage", () => {
   })
 
   it("offers click-to-toggle help for the Jira Base URL and Token fields", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
-      const url = typeof input === "string" ? input : input.toString()
-      if (url.endsWith("/api/connectors")) {
-        return Promise.resolve(jsonResponse([jiraConnector]))
-      }
-      if (url.endsWith("/api/connections") && (init?.method ?? "GET") === "GET") {
-        return Promise.resolve(jsonResponse([]))
-      }
-      throw new Error(`unexpected fetch: ${init?.method ?? "GET"} ${url}`)
-    })
+    mockApi()
     renderPage()
 
     expect(await screen.findByRole("button", { name: "About Base URL" })).toBeInTheDocument()
@@ -180,14 +190,14 @@ describe("SourceConnectionsPage", () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
       const url = typeof input === "string" ? input : input.toString()
       if (url.endsWith("/api/connectors")) {
-        return Promise.resolve(jsonResponse([demoConnector]))
+        return Promise.resolve(jsonResponse([jiraConnector]))
       }
       if (url.endsWith("/api/connections") && (init?.method ?? "GET") === "GET") {
         return Promise.resolve(
           jsonResponse([
             {
               id: "connection-1",
-              connector_name: "demo",
+              connector_name: "jira",
               config: { base_url: "https://demo.invalid", token: "****5678" },
               selected_project_ids: [],
               selected_board_ids: [],

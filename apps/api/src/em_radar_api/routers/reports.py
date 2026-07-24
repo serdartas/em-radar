@@ -3,17 +3,14 @@ from datetime import datetime, timedelta, timezone
 from typing import Literal, Self
 from uuid import UUID
 
-from em_radar_connector_demo import DemoConnector
 from em_radar_connector_jira.connector import JiraConnector
 from em_radar_core.connectors import (
     ConnectorConfigError,
     ConnectorError,
-    MergeRequestScope,
     TransitionProvider,
     WorkItemProvider,
     WorkItemScope,
 )
-from em_radar_core.evaluation import SignalConfig, SignalEvaluator
 from em_radar_core.evaluation import ScopeDescriptor, evaluate_signal_definition
 from em_radar_core.models import (
     Board,
@@ -37,7 +34,7 @@ from em_radar_core.models import (
     WorkItem,
     WorkingMode,
 )
-from em_radar_core.signals import SignalData, default_registry
+from em_radar_core.signals import SignalData
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, JsonValue, model_validator
 from sqlmodel import Session, select
@@ -53,7 +50,6 @@ from em_radar_api.repositories.reports import (
     list_reports,
     save_report,
 )
-from em_radar_api.repositories.signal_configs import list_signal_configs
 from em_radar_api.repositories.source_connections import (
     get_source_connection,
     instantiate_connector,
@@ -73,33 +69,14 @@ router = APIRouter()
 DEFAULT_KANBAN_REPORT_DAYS = 14
 
 
-class ReportWindowRequest(BaseModel):
-    window_type: WindowType
-    sprint_id: UUID | None = None
-    start: datetime | None = None
-    end: datetime | None = None
-
-    @model_validator(mode="after")
-    def validate_scope(self) -> Self:
-        if self.window_type is WindowType.SPRINT:
-            if self.sprint_id is None or self.start is not None or self.end is not None:
-                raise ValueError("sprint windows require only sprint_id")
-        elif self.sprint_id is not None or self.start is None or self.end is None:
-            raise ValueError("date-range windows require only start and end")
-        return self
-
-
 class ReportRunRequest(BaseModel):
-    connector: Literal["demo", "jira"]
+    connector: Literal["jira"]
     team_profile_id: UUID | None = None
-    window: ReportWindowRequest | None = None
 
     @model_validator(mode="after")
     def validate_connector_scope(self) -> Self:
         if self.connector == "jira" and self.team_profile_id is None:
             raise ValueError("jira reports require a team_profile_id")
-        if self.connector == "demo" and self.team_profile_id is not None:
-            raise ValueError("demo reports do not accept a team_profile_id")
         return self
 
 
@@ -156,151 +133,8 @@ async def run_report(
     request: ReportRunRequest,
     session: Session = Depends(get_write_session),
 ) -> ReportDetailResponse:
-    if request.connector == "jira":
-        if request.team_profile_id is None:
-            raise HTTPException(status_code=422, detail="jira reports require a team_profile_id")
-        return await _run_jira_report(request.team_profile_id, session)
-    return await _run_demo_report(request.window, session)
-
-
-async def _run_demo_report(
-    requested_window: ReportWindowRequest | None,
-    session: Session,
-) -> ReportDetailResponse:
-    started_at = datetime.now(timezone.utc)
-    connector = DemoConnector({})
-
-    try:
-        users = await connector.list_users()
-        projects = await connector.list_projects()
-        boards = [
-            board
-            for project in projects
-            for board in await connector.list_boards(project.external_id)
-        ]
-        sprints = [
-            sprint for board in boards for sprint in await connector.list_sprints(board.external_id)
-        ]
-        repositories = await connector.list_repositories()
-
-        team = TeamProfile(
-            name="Demo team",
-            project_ids=[project.id for project in projects],
-            board_ids=[board.id for board in boards],
-            repository_ids=[repository.id for repository in repositories],
-            created_at=started_at,
-            updated_at=started_at,
-        )
-        window = _evaluation_window(requested_window, sprints, team.id)
-
-        workitems = await _collect(
-            connector.fetch_workitems(
-                WorkItemScope(
-                    project_external_ids=[project.external_id for project in projects],
-                    board_external_ids=[board.external_id for board in boards],
-                ),
-                window,
-            )
-        )
-        merge_requests = await _collect(
-            connector.fetch_mergerequests(
-                MergeRequestScope(
-                    repository_external_ids=[repository.external_id for repository in repositories],
-                    include_closed_unmerged=True,
-                ),
-                window,
-            )
-        )
-        reviews = await _collect(
-            connector.fetch_reviews([merge_request.external_id for merge_request in merge_requests])
-        )
-        transitions = await _collect(
-            connector.fetch_transitions(
-                "workitem", [workitem.external_id for workitem in workitems]
-            )
-        )
-        comments = [
-            *await _collect(
-                connector.fetch_comments(
-                    "workitem", [workitem.external_id for workitem in workitems]
-                )
-            ),
-            *await _collect(
-                connector.fetch_comments(
-                    "mergerequest",
-                    [merge_request.external_id for merge_request in merge_requests],
-                )
-            ),
-        ]
-    finally:
-        await connector.close()
-
-    identity = persist_fetch(
-        session,
-        users=users,
-        projects=projects,
-        boards=boards,
-        sprints=sprints,
-        workitems=workitems,
-        repositories=repositories,
-        mergerequests=merge_requests,
-        reviews=reviews,
-        transitions=transitions,
-        comments=comments,
-    )
-    session.add(_team_row(team))
-    session.commit()
-    persisted_window = _persisted_window(window, identity.identity_map)
-    session.add(EvaluationWindowTable(**persisted_window.model_dump()))
-    session.commit()
-    signal_configs = _signal_configs(session)
-
-    report = create_report(
-        session,
-        ReportTable(
-            evaluation_window_id=window.id,
-            signal_pack_snapshot=_signal_pack_snapshot(signal_configs),
-            status=ReportStatus.PENDING,
-            started_at=started_at,
-        ),
-    )
-    report.status = ReportStatus.RUNNING
-    save_report(session, report)
-
-    try:
-        findings = SignalEvaluator().evaluate(
-            SignalData(
-                report_id=report.id,
-                projects=tuple(projects),
-                boards=tuple(boards),
-                sprints=tuple(sprints),
-                workitems=tuple(workitems),
-                repositories=tuple(repositories),
-                mergerequests=tuple(merge_requests),
-                reviews=tuple(reviews),
-                transitions=tuple(transitions),
-                comments=tuple(comments),
-            ),
-            EvaluationContext(now=started_at, window=window, team=team),
-            signal_configs,
-        )
-        persisted_findings = [
-            _persisted_finding(finding, identity.identity_map) for finding in findings
-        ]
-        add_findings(session, persisted_findings)
-        report.status = ReportStatus.SUCCEEDED
-        report.finished_at = datetime.now(timezone.utc)
-        report.findings_count_by_severity = _counts_by_severity(findings)
-        save_report(session, report)
-    except Exception as error:
-        session.rollback()
-        report.status = ReportStatus.FAILED
-        report.finished_at = datetime.now(timezone.utc)
-        report.error = str(error)
-        save_report(session, report)
-        raise
-
-    return ReportDetailResponse.from_report_with_findings(report, persisted_findings)
+    assert request.team_profile_id is not None  # enforced by model validator
+    return await _run_jira_report(request.team_profile_id, session)
 
 
 async def _run_jira_report(
@@ -450,22 +284,6 @@ async def get_report_endpoint(
     return ReportDetailResponse.from_report_with_findings(report, get_findings(session, report_id))
 
 
-def _evaluation_window(
-    requested: ReportWindowRequest | None,
-    sprints: list[Sprint],
-    team_id: UUID,
-) -> EvaluationWindow:
-    if requested is not None:
-        return EvaluationWindow(team_profile_id=team_id, **requested.model_dump())
-
-    active_sprint = next(sprint for sprint in sprints if sprint.state is SprintState.ACTIVE)
-    return EvaluationWindow(
-        window_type=WindowType.SPRINT,
-        sprint_id=active_sprint.id,
-        team_profile_id=team_id,
-    )
-
-
 def _jira_evaluation_window(
     team: TeamProfile,
     sprints: list[Sprint],
@@ -493,10 +311,6 @@ def _jira_evaluation_window(
     )
 
 
-def _team_row(team: TeamProfile) -> TeamProfileTable:
-    return TeamProfileTable.model_validate(team)
-
-
 def _persisted_window(window: EvaluationWindow, identity_map: dict[UUID, UUID]) -> EvaluationWindow:
     """Same window with its sprint reference resolved to the persisted internal id (the
     in-memory window keeps the connector sprint id so it lines up with in-memory work items)."""
@@ -513,25 +327,6 @@ def _persisted_finding(
     data = finding.model_dump()
     data["entity_id"] = identity_map.get(finding.entity_id, finding.entity_id)
     return SignalFindingTable(**data)
-
-
-def _signal_pack_snapshot(configs: Sequence[SignalConfig]) -> dict[str, object]:
-    configs_by_id = {config.signal_id: config for config in configs}
-    return {
-        "schema_id": "emradar.dev/v1",
-        "signals": [
-            {
-                "id": signal.id,
-                "name": signal.name,
-                "default_severity": signal.default_severity.value,
-                "enabled": config.enabled,
-                "severity": (config.severity or signal.default_severity).value,
-                "params": dict(config.params),
-            }
-            for signal in (default_registry.get(signal_id) for signal_id in default_registry.ids())
-            for config in [configs_by_id[signal.id]]
-        ],
-    }
 
 
 def _team_signal_pack_snapshot(
@@ -554,25 +349,6 @@ def _team_signal_pack_snapshot(
             for definition in definitions
         ],
     }
-
-
-def _signal_configs(session: Session) -> list[SignalConfig]:
-    stored = {config.signal_id: config for config in list_signal_configs(session)}
-    configs: list[SignalConfig] = []
-    for signal_id in default_registry.ids():
-        stored_config = stored.get(signal_id)
-        if stored_config is None:
-            configs.append(SignalConfig(signal_id=signal_id))
-        else:
-            configs.append(
-                SignalConfig(
-                    signal_id=signal_id,
-                    enabled=stored_config.enabled,
-                    params=stored_config.params,
-                    severity=stored_config.severity_override,
-                )
-            )
-    return configs
 
 
 def _team_board_scope(session: Session, team_row: TeamProfileTable) -> ScopeDefinitionTable | None:

@@ -3,83 +3,62 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
-from em_radar_connector_demo.fixtures import FIXTURE_NOW, build_fixtures
 from em_radar_core.evaluation import SignalConfig, SignalEvaluator
 from em_radar_core.models import (
     EntityType,
-    EvaluationContext,
-    EvaluationWindow,
     Severity,
-    TeamProfile,
-    WindowType,
 )
 from em_radar_core.signals import SignalData, StaleInProgressSignal, default_registry
 from pydantic import ValidationError
 
-
-def evaluation_context() -> EvaluationContext:
-    fixtures = build_fixtures()
-    team = TeamProfile(
-        name="Demo team",
-        project_ids=[project.id for project in fixtures.projects],
-        repository_ids=[repository.id for repository in fixtures.repositories],
-        created_at=FIXTURE_NOW,
-        updated_at=FIXTURE_NOW,
-    )
-    window = EvaluationWindow(
-        window_type=WindowType.SPRINT,
-        sprint_id=fixtures.sprints[-1].id,
-        team_profile_id=team.id,
-    )
-    return EvaluationContext(now=FIXTURE_NOW, window=window, team=team)
+from _signal_helpers import NOW, context, workitem
 
 
-def test_stale_in_progress_emits_exact_demo_findings_and_evidence() -> None:
-    fixtures = build_fixtures()
+def test_stale_in_progress_emits_findings_and_evidence() -> None:
+    stale_1 = workitem("RAD-1", updated_at=NOW - timedelta(days=12))
+    stale_2 = workitem("RAD-2", updated_at=NOW - timedelta(days=12))
+    fresh = workitem("RAD-3", updated_at=NOW - timedelta(days=3))
+    no_updated_at = workitem("RAD-4")
+
     report_id = uuid4()
     findings = StaleInProgressSignal().evaluate(
-        SignalData(report_id=report_id, workitems=fixtures.workitems),
-        evaluation_context(),
+        SignalData(report_id=report_id, workitems=(stale_1, stale_2, fresh, no_updated_at)),
+        context(),
     )
 
-    assert [finding.title.split()[0] for finding in findings] == [
-        "PLAT-2",
-        "PLAT-4",
-        "PLAT-8",
-        "CHECK-16",
-        "MOB-22",
-    ]
+    assert [f.title.split()[0] for f in findings] == ["RAD-1", "RAD-2"]
+    stale_timestamp = (NOW - timedelta(days=12)).isoformat()
     assert all(
-        finding.report_id == report_id
-        and finding.signal_id == "stale-in-progress-work-item"
-        and finding.severity is Severity.WARNING
-        and finding.entity_type is EntityType.WORKITEM
-        and finding.created_at == FIXTURE_NOW
-        and finding.evidence
-        == {
-            "days_idle": 12,
-            "last_updated_at": (FIXTURE_NOW - timedelta(days=12)).isoformat(),
-            "threshold": 7,
-        }
-        for finding in findings
+        f.report_id == report_id
+        and f.signal_id == "stale-in-progress-work-item"
+        and f.severity is Severity.WARNING
+        and f.entity_type is EntityType.WORKITEM
+        and f.created_at == NOW
+        and f.evidence == {"days_idle": 12, "last_updated_at": stale_timestamp, "threshold": 7}
+        for f in findings
     )
 
 
 def test_exclude_labels_suppresses_matching_items() -> None:
-    fixtures = build_fixtures()
+    labeled = workitem("RAD-1", updated_at=NOW - timedelta(days=12), labels=["area-2"])
+    unlabeled_1 = workitem("RAD-2", updated_at=NOW - timedelta(days=12))
+    unlabeled_2 = workitem("RAD-3", updated_at=NOW - timedelta(days=12))
+
     findings = StaleInProgressSignal({"exclude_labels": ["area-2"]}).evaluate(
-        SignalData(report_id=uuid4(), workitems=fixtures.workitems),
-        evaluation_context(),
+        SignalData(report_id=uuid4(), workitems=(labeled, unlabeled_1, unlabeled_2)),
+        context(),
     )
 
-    assert [finding.title.split()[0] for finding in findings] == ["PLAT-2", "PLAT-8"]
+    assert [f.title.split()[0] for f in findings] == ["RAD-2", "RAD-3"]
 
 
 def test_evaluator_runs_only_enabled_signals_with_configured_params() -> None:
-    fixtures = build_fixtures()
+    stale_1 = workitem("RAD-1", updated_at=NOW - timedelta(days=12))
+    stale_2 = workitem("RAD-2", updated_at=NOW - timedelta(days=12))
+
     findings = SignalEvaluator().evaluate(
-        SignalData(report_id=uuid4(), workitems=fixtures.workitems),
-        evaluation_context(),
+        SignalData(report_id=uuid4(), workitems=(stale_1, stale_2)),
+        context(),
         [
             SignalConfig(signal_id="stale-in-progress-work-item", enabled=False),
             SignalConfig(
@@ -89,35 +68,32 @@ def test_evaluator_runs_only_enabled_signals_with_configured_params() -> None:
         ],
     )
 
-    assert len(findings) == 5
+    assert len(findings) == 2
 
 
 def test_evaluator_applies_configured_severity_override() -> None:
-    fixtures = build_fixtures()
+    stale = workitem("RAD-1", updated_at=NOW - timedelta(days=12))
+
     findings = SignalEvaluator().evaluate(
-        SignalData(report_id=uuid4(), workitems=fixtures.workitems),
-        evaluation_context(),
-        [
-            SignalConfig(
-                signal_id="stale-in-progress-work-item",
-                severity=Severity.CRITICAL,
-            ),
-        ],
+        SignalData(report_id=uuid4(), workitems=(stale,)),
+        context(),
+        [SignalConfig(signal_id="stale-in-progress-work-item", severity=Severity.CRITICAL)],
     )
 
     assert findings
-    assert {finding.severity for finding in findings} == {Severity.CRITICAL}
+    assert {f.severity for f in findings} == {Severity.CRITICAL}
 
 
 def test_evaluator_runs_registered_signals_by_default() -> None:
-    fixtures = build_fixtures()
+    stale = workitem("RAD-1", updated_at=NOW - timedelta(days=12))
+    story_no_ac = workitem("RAD-2", acceptance_criteria=None)
 
     findings = SignalEvaluator().evaluate(
-        SignalData(report_id=uuid4(), workitems=fixtures.workitems),
-        evaluation_context(),
+        SignalData(report_id=uuid4(), workitems=(stale, story_no_ac)),
+        context(),
     )
 
-    signal_ids = {finding.signal_id for finding in findings}
+    signal_ids = {f.signal_id for f in findings}
     assert "stale-in-progress-work-item" in signal_ids
     assert "story-without-acceptance-criteria" in signal_ids
 
