@@ -42,11 +42,20 @@ const team = {
   board_ids: [],
   repository_ids: [],
   signal_config_group_ids: ["group-1"],
+  code_connection_id: null,
   working_mode: "scrum",
   sprint_length_days: 14,
   member_user_keys: [],
   created_at: "2026-01-01T00:00:00Z",
   updated_at: "2026-01-01T00:00:00Z",
+}
+
+const noSourceTeam = {
+  ...team,
+  id: "team-no-source",
+  name: "No Source Team",
+  scope_ids: [],
+  code_connection_id: null,
 }
 
 function jsonResponse(body: unknown): Response {
@@ -142,6 +151,22 @@ describe("ReportRunnerPage", () => {
     await waitFor(() => {
       expect(screen.getByText("Report run failed.")).toBeInTheDocument()
     })
+  })
+
+  it("disables the checkbox and shows a message for a team with no sources", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = typeof input === "string" ? input : input.toString()
+      if (url.endsWith("/api/teams")) {
+        return Promise.resolve(jsonResponse([noSourceTeam]))
+      }
+      throw new Error(`unexpected fetch: ${url}`)
+    })
+
+    renderPage()
+
+    const checkbox = await screen.findByRole("checkbox", { name: /No Source Team/i })
+    expect(checkbox).toBeDisabled()
+    expect(screen.getByText("no sources attached")).toBeInTheDocument()
   })
 })
 
