@@ -220,10 +220,13 @@ erDiagram
 
 ## 4. Scoping, Evaluation & Configuration Domain
 
-A team owns a single Jira board scope (0..1) and attaches reusable signal config groups; a group
-bundles signals, and one signal may belong to many groups. A report is the result of evaluating a
-team's signals (the union across its attached groups) over an evaluation window, against the team's
-board scope. `SourceConnection`, `ScopeDefinition`, `SignalConfigGroup`, `SignalDefinition`, and
+A team carries up to two sources — a task-board scope (`0..1` Jira board via `scope_ids`) and a code
+source (a whole GitLab/GitHub connection via `code_connection_id`, `0..1`) — and attaches reusable
+signal config groups; a group bundles signals, and one signal may belong to many groups. A report is
+the result of evaluating a team's signals (the union across its attached groups) over an evaluation
+window, against the team's sources (a report run requires at least one). `SourceConnection` is created
+create-only on the Connections page and carries a required, workspace-unique `name`.
+`SourceConnection`, `ScopeDefinition`, `SignalConfigGroup`, `SignalDefinition`, and
 `SignalPackHistory` are local application tables
 ([backlog M2-03/M2-18/M2-19](./backlog/M2-storage-config-ui.md)), not pulled from a source.
 
@@ -231,11 +234,9 @@ board scope. `SourceConnection`, `ScopeDefinition`, `SignalConfigGroup`, `Signal
 erDiagram
     SOURCECONNECTION {
         uuid id PK
-        string connector_name "demo|jira|gitlab"
+        string name "required, unique per workspace"
+        string connector_name "jira|gitlab|github"
         json config "credentials masked on read"
-        array selected_project_ids
-        array selected_board_ids
-        array selected_repository_ids
         datetime created_at
     }
     TEAMPROFILE {
@@ -243,11 +244,9 @@ erDiagram
         string name
         text description
         array connection_ids
-        array scope_ids "0..1 jira board in MVP"
+        array scope_ids "task-board scope: 0..1 board in MVP"
+        uuid code_connection_id FK "code source: whole connection, 0..1, nullable"
         array signal_config_group_ids
-        array project_ids
-        array board_ids
-        array repository_ids
         enum working_mode "scrum|kanban"
         int sprint_length_days
         array member_user_keys
@@ -353,7 +352,11 @@ erDiagram
   repository); the four "about" relationships above are mutually exclusive per row.
 - `SourceConnection.config` holds credentials at rest (SQLite, masked on read,
   [ADR-0006](./ADRs/0006-token-storage.md)); it is the only place tokens live and is never
-  exported.
+  exported. `SourceConnection.name` is required and unique per workspace so multiple connections of
+  the same type (e.g. two Jira instances) are distinguishable. A connection stores **no** scope; the
+  team owns its task-board scope and its `code_connection_id`.
+- A `TeamProfile` may be **saved with no sources**; a **report run requires at least one** of its
+  task-board scope or `code_connection_id`. Signals whose source is absent are skipped with a note.
 - `Dashboard` is **not** an entity — it is derived by reading the latest `Report` per
   `TeamProfile` ([09-functional-flows §6](./09-functional-flows.md#6-flow-d--initial-sync--dashboard)).
 

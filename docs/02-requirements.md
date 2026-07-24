@@ -102,8 +102,8 @@ The UI shall include at minimum:
 
 * onboarding/setup wizard (guides connection setup and team creation; see [09-functional-flows §3](./09-functional-flows.md#3-flow-a--first-run-onboarding-wizard))
 * dashboard (landing view showing the latest report per team)
-* source connections page
-* teams page (create/manage teams and their scope)
+* source connections page (create-only: named connections; no scope or report actions)
+* teams page (create/manage teams and their two sources: task-board scope + code connection)
 * signal settings page
 * report runner page
 * report results page
@@ -125,8 +125,8 @@ The system shall store local application data in SQLite by default.
 Stored data includes:
 
 * connector configuration
-* team profiles, including each team's board scope and attached signal config groups
-* scope definitions for selected boards/repositories
+* team profiles, including each team's task-board scope, code connection, and attached signal config groups
+* scope definitions for selected boards (the code source is a whole connection, not a repository scope, in MVP)
 * signal definitions and signal config groups
 * report history
 * cached normalized source data
@@ -264,6 +264,29 @@ Acceptance criteria:
 * default pattern supports common Jira keys such as `ABC-123`
 * merge requests with detected keys are linked to matching WorkItems when available
 * merge requests without detected keys can be reported as findings
+
+---
+
+### REQ-F-017 — Named, Create-only Source Connections
+
+**MVP**
+
+The system shall let users create multiple named source connections, and the Source Connections page
+shall create/manage connections only.
+
+Each connection carries a user-provided **name** that is required and unique per workspace, so that
+multiple connections of the same source type (for example two Jira instances, or a contractor working
+across companies) are distinguishable. The Source Connections page creates, edits, tests, and deletes
+connections; it does not select projects, boards, or repositories and does not run reports — those are
+team concerns (REQ-F-041A, REQ-F-050).
+
+Acceptance criteria:
+
+* a connection has a required name that is unique within the workspace
+* a user can create several connections of the same source type with different names and credentials
+* the connection form tests the connection and saves only credentials + name (no scope)
+* the Source Connections page has no project/board/repository picker and no run-report action
+* connections are reusable across teams
 
 ---
 
@@ -609,21 +632,29 @@ Acceptance criteria:
 
 ---
 
-### REQ-F-041A — Team-owned Scope
+### REQ-F-041A — Team-owned Sources
 
 **MVP**
 
-The system shall store scopes separately from connectors and signals, and attach a scope to a team.
+The system shall store sources separately from connectors and signals, and attach them to a team. A
+team carries up to two sources: a **task-board source** (a Jira board, 0..1, stored as a
+`ScopeDefinition`) and a **code source** (a whole GitLab/GitHub connection, 0..1, stored as
+`TeamProfile.code_connection_id`). Both are resolved from the team at report time; signals never
+reference sources.
 
-A scope represents a subset of data inside a connector, such as a Jira board (later, GitLab
-repositories). In MVP a team owns a single Jira board scope (0..1). Scope is resolved from the team
-at report time; signals never reference scopes.
+The task-board source is chosen via a searchable project → board picker from connector-provided
+options. The code source attaches the whole connection — every repository the token can access is in
+scope; per-repository selection is a later phase. A team may be **saved with no sources**, but a
+**report run requires at least one source** (see REQ-F-050); signals whose source is absent are
+skipped with a note.
 
 Acceptance criteria:
 
 * connectors represent access to external systems, not signal applicability
-* users can select a team's board scope from connector-provided options
-* a team's report runs against the team's board scope
+* users can select a team's board scope from connector-provided options (searchable project + board)
+* users can attach a whole GitLab/GitHub connection as the team's code source
+* a team can be saved with no sources; a report run is blocked when the team has no sources
+* a team's report runs against the team's attached sources
 * reports include the scope name for each finding
 
 ---
@@ -737,10 +768,11 @@ The system shall allow users to run a sprint report for one or more selected tea
 Acceptance criteria:
 
 * user can select one or more teams
-* for each team, the system uses the team's board scope (no separate board picker)
+* for each team, the system uses the team's attached sources — board scope + code connection — with no separate board picker
+* a team with no sources attached cannot run a report (the run is blocked with a clear message)
 * user can select a sprint (scrum teams default to the active sprint)
 * system fetches relevant Jira and GitLab data
-* system evaluates each team's signals (the union across its attached signal config groups)
+* system evaluates each team's signals (the union across its attached signal config groups); signals whose source is absent are skipped
 * system displays report results per team
 
 ---
@@ -754,7 +786,8 @@ The system shall allow users to run a date-range report for one or more selected
 Acceptance criteria:
 
 * user can select one or more teams and a start and end date
-* for each team, the system uses the team's board scope
+* for each team, the system uses the team's attached sources (board scope + code connection)
+* a team with no sources attached cannot run a report
 * system fetches relevant Jira and GitLab data for that range
 * system evaluates each team's signals (the union across its attached signal config groups)
 * system displays report results per team

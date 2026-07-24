@@ -201,8 +201,9 @@ EM Radar is not:
 
 ### 6.1 Sprint Health Report
 
-An EM selects a team and a sprint — the team's Jira board scope and its signals (from its attached
-signal config groups) are already configured — and generates a report showing:
+An EM selects a team and a sprint — the team's sources (its Jira board scope and its code connection)
+and its signals (from its attached signal config groups) are already configured — and generates a
+report showing:
 
 * stale in-progress work
 * blocked items without recent updates
