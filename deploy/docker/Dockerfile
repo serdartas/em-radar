@@ -18,6 +18,7 @@ WORKDIR /app
 
 COPY pyproject.toml ./
 COPY packages/core/src ./packages/core/src
+COPY packages/connectors/gitlab/src ./packages/connectors/gitlab/src
 COPY packages/connectors/jira/src ./packages/connectors/jira/src
 COPY packages/config/src ./packages/config/src
 COPY packages/config/defaults ./packages/config/defaults
