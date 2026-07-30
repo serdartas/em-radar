@@ -40,10 +40,9 @@ def _redacting_record_factory(*args: object, **kwargs: object) -> logging.LogRec
 def _install_redacting_record_factory() -> None:
     global _UPSTREAM_RECORD_FACTORY
 
-    current_factory = logging.getLogRecordFactory()
-    if current_factory is _redacting_record_factory:
+    if _UPSTREAM_RECORD_FACTORY is not None:
         return
-    _UPSTREAM_RECORD_FACTORY = current_factory
+    _UPSTREAM_RECORD_FACTORY = logging.getLogRecordFactory()
     logging.setLogRecordFactory(_redacting_record_factory)
 
 

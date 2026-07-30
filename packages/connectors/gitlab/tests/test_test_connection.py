@@ -154,6 +154,62 @@ def test_connection_does_not_log_token(
     assert all(token not in record.getMessage() for record in caplog.records)
 
 
+def test_later_logging_factory_wrapper_does_not_create_a_cycle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_token = "gitlab-token-first"
+    second_token = "gitlab-token-second"
+
+    async def run() -> None:
+        def handler(_: httpx.Request) -> httpx.Response:
+            return httpx.Response(401)
+
+        monkeypatch.setattr(
+            gitlab_connector_module,
+            "CLIENT_FACTORY",
+            _client_factory_for(handler),
+        )
+        first_connector = GitLabConnector(
+            {
+                "base_url": "https://gitlab.example.com",
+                "token": first_token,
+            }
+        )
+        redacting_factory = logging.getLogRecordFactory()
+        second_connector: GitLabConnector | None = None
+
+        def wrapper(*args: object, **kwargs: object) -> logging.LogRecord:
+            return redacting_factory(*args, **kwargs)
+
+        logging.setLogRecordFactory(wrapper)
+        try:
+            second_connector = GitLabConnector(
+                {
+                    "base_url": "https://gitlab.example.com",
+                    "token": second_token,
+                }
+            )
+            assert logging.getLogRecordFactory() is wrapper
+            record = logging.getLogRecordFactory()(
+                "httpx",
+                logging.WARNING,
+                __file__,
+                1,
+                "request token: %s",
+                (second_token,),
+                None,
+            )
+            assert "[REDACTED]" in record.getMessage()
+            assert second_token not in record.getMessage()
+        finally:
+            logging.setLogRecordFactory(redacting_factory)
+            if second_connector is not None:
+                await second_connector.close()
+            await first_connector.close()
+
+    asyncio.run(run())
+
+
 def test_connection_preserves_base_url_context_path(monkeypatch: pytest.MonkeyPatch) -> None:
     requested_paths: list[str] = []
 
