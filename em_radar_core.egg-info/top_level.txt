@@ -1,4 +1,5 @@
 em_radar_config
+em_radar_connector_gitlab
 em_radar_connector_jira
 em_radar_core
 em_radar_normalizer
