@@ -22,8 +22,15 @@ class PackDefaults(PackModel):
 
 
 class SignalEntry(PackModel):
-    id: str
-    enabled: StrictBool
+    id: str | None = None
+    name: str | None = None
+    description: str | None = None
+    entity_type: str | None = None
+    expression: dict[str, JsonValue] | None = None
+    report_settings: dict[str, JsonValue] | None = None
+    enabled: StrictBool = True
+    origin: str | None = None
+    template_key: str | None = None
     severity: Severity | None = None
     scope: SignalScope | None = None
     params: dict[str, JsonValue] | None = None
@@ -55,9 +62,17 @@ class PackMetadata(PackModel):
     min_emradar_version: str | None = None
 
 
+class PackGroupEntry(PackModel):
+    name: str
+    description: str | None = None
+    signals: list[str] = Field(default_factory=list)
+
+
 class SignalPackSpec(PackModel):
+    export_type: str = "private_backup"
     defaults: PackDefaults | None = None
-    signals: list[SignalEntry]
+    signals: list[SignalEntry] = Field(default_factory=list)
+    groups: list[PackGroupEntry] = Field(default_factory=list)
     field_mappings: FieldMappings | None = None
 
 

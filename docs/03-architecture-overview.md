@@ -397,9 +397,10 @@ For enterprise or multi-user deployment
 
 The storage layer stores:
 
-* source connection metadata
-* selected projects/boards/repositories
-* signal configuration
+* source connection metadata (a required, unique name + credentials; no scope)
+* team profiles, including each team's task-board scope, code connection, and attached signal config groups
+* scope definitions for selected boards (the code source is attached as a whole connection, not a repository scope, in MVP)
+* signal definitions and signal config groups
 * field mappings
 * normalized source data cache
 * generated reports
@@ -456,13 +457,12 @@ This allows non-coding EMs to configure the system through the UI.
 
 Configuration includes:
 
-* enabled/disabled signals
-* signal thresholds
-* severity overrides
+* scope definitions (a team's board scope)
+* signal definitions and signal config groups
+* signal expressions and report settings
 * Jira field mappings
 * GitLab key extraction pattern
-* selected projects/boards/repositories
-* team profiles
+* team profiles (board scope + attached signal config groups)
 * report preferences
 
 ---
@@ -471,7 +471,7 @@ Configuration includes:
 
 On first startup:
 
-1. EM Radar loads bundled default signal packs.
+1. EM Radar loads the bundled default signal pack into a default signal config group.
 2. The defaults are seeded into the local database.
 3. The user can modify settings through the UI.
 4. Changes persist locally.
@@ -480,12 +480,14 @@ On first startup:
 
 ### 9.3 Import and Export
 
-The system supports YAML import/export for signal configuration.
+The system supports YAML import/export for signal configuration in private backup and public
+template modes.
 
 Rules:
 
 * credentials must never be exported
 * imported config must be schema-validated
+* importing a pack creates a new signal config group; the user attaches it to teams afterward
 * invalid config must be rejected with clear errors
 * community configs must be declarative only
 * config import must not execute arbitrary code
@@ -504,8 +506,10 @@ It is the core of EM Radar.
 
 The signal engine is responsible for:
 
-* loading enabled signals
-* reading signal thresholds
+* loading a team's enabled signals (the union across its attached signal config groups)
+* evaluating them against the team's board scope
+* evaluating structured rule expressions
+* validating field/operator availability against connector capability schemas
 * evaluating signals against canonical models
 * producing findings
 * assigning severity
@@ -536,13 +540,14 @@ sequenceDiagram
     participant Engine as Signal Engine
     participant Report as Report Generator
 
-    User->>UI: Select sprint or date range
+    User->>UI: Select team(s) and window
     UI->>Runner: Start report
-    Runner->>Connector: Fetch source data
+    Runner->>Store: Resolve team's board scope + attached signal config groups
+    Runner->>Connector: Fetch source data (team's scope)
     Connector->>Normalizer: Return raw/semi-normalized data
     Normalizer->>Store: Save normalized data
     Runner->>Store: Load normalized data
-    Runner->>Engine: Evaluate enabled signals
+    Runner->>Engine: Evaluate the team's signals (union of groups)
     Engine->>Store: Persist findings
     Engine->>Report: Send findings
     Report->>UI: Render report
@@ -657,11 +662,19 @@ Onboarding / Setup wizard
 Dashboard
 Source Connections
 Teams
-Signal Settings
+Signals & Config Groups
 Report Runner
 Report Results
 Settings / Privacy
 ```
+
+The Source Connections page is **create-only**: it creates, edits, tests, and deletes named source
+connections (name + credentials) and nothing else — no project/board/repository selection and no
+report run. The Teams page is where a team's two sources are attached — the task-board scope (a Jira
+board, via a searchable project → board picker) and the code source (a whole GitLab/GitHub
+connection) — and signal config groups are attached. A team may be saved with no sources, but a
+report run requires at least one. The Signals & Config Groups page is where signals are built and
+bundled into reusable groups.
 
 The Setup page is an onboarding wizard that guides connection setup and team creation; the
 Dashboard is the post-setup landing showing the latest report per team. See
@@ -676,8 +689,8 @@ The UI is responsible for:
 * guiding first-time setup
 * collecting Jira/GitLab connection settings
 * testing source connections
-* selecting projects/boards/repositories
-* configuring signal thresholds
+* setting a team's board scope and attaching signal config groups
+* creating, editing, previewing, importing, and exporting signals and signal config groups
 * running reports
 * displaying findings
 * exporting reports
@@ -979,16 +992,16 @@ sequenceDiagram
 
     User->>UI: Open local app
     UI->>Config: Load default config
-    User->>UI: Add Jira connection
+    User->>UI: Add Jira connection (name, url, token)
     UI->>Jira: Test Jira connection
     Jira-->>UI: Success
-    UI->>Config: Save Jira settings
-    User->>UI: Add GitLab connection
+    UI->>Config: Save named Jira connection
+    User->>UI: Add GitLab connection (name, url, token)
     UI->>GitLab: Test GitLab connection
     GitLab-->>UI: Success
-    UI->>Config: Save GitLab settings
-    User->>UI: Select signal pack
-    UI->>Config: Save signal settings
+    UI->>Config: Save named GitLab connection
+    User->>UI: Create team, set task-board scope + code connection, attach signal config groups
+    UI->>Config: Save team profile
 ```
 
 ---
@@ -1007,15 +1020,16 @@ sequenceDiagram
     participant Engine as Signal Engine
     participant Report as Report Generator
 
-    User->>UI: Select sprint/date range
+    User->>UI: Select team(s) and window
     UI->>Runner: Run report
-    Runner->>JiraConnector: Fetch work items
+    Runner->>Store: Resolve team's board scope + attached signal config groups
+    Runner->>JiraConnector: Fetch work items (team's scope)
     Runner->>GitLabConnector: Fetch merge requests
     JiraConnector-->>Normalizer: Jira data
     GitLabConnector-->>Normalizer: GitLab data
     Normalizer->>Store: Save normalized data
     Runner->>Store: Load normalized data
-    Runner->>Engine: Evaluate signals
+    Runner->>Engine: Evaluate the team's signals (union of groups)
     Engine-->>Runner: Findings
     Runner->>Store: Save report
     Runner->>Report: Build report view

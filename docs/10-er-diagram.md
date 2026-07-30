@@ -32,9 +32,9 @@ column set of any entity, see the matching section in [05-data-model.md §5](./0
 | `}o--o{` | many ↔ many (in MVP, materialized as UUID-array fields, not join tables) |
 
 > **Note on array relationships.** Several links (`sprint_ids`, `project_ids`, `board_ids`,
-> `repository_ids`, `connection_ids`, `linked_workitem_ids`) are stored as **UUID arrays** on the
-> owning row (SQLite JSON columns), not as separate join tables. They are drawn as many-to-many
-> for clarity but carry no association entity in MVP.
+> `repository_ids`, `connection_ids`, `signal_config_group_ids`, `signal_ids`, `linked_workitem_ids`)
+> are stored as **UUID arrays** on the owning row (SQLite JSON columns), not as separate join tables.
+> They are drawn as many-to-many for clarity but carry no association entity in MVP.
 
 ---
 
@@ -50,13 +50,11 @@ flowchart LR
     end
     subgraph Eval["Scoping, evaluation & config (§4)"]
         TEAMPROFILE --> EVALUATIONWINDOW --> REPORT --> SIGNALFINDING
-        SOURCECONNECTION
-        SIGNALCONFIG
+        SOURCECONNECTION --> SCOPEDEFINITION
+        TEAMPROFILE --> SIGNALCONFIGGROUP --> SIGNALDEFINITION
         SIGNALPACKHISTORY
     end
-    TEAMPROFILE -. scopes .-> PROJECT
-    TEAMPROFILE -. scopes .-> BOARD
-    TEAMPROFILE -. scopes .-> REPOSITORY
+    TEAMPROFILE -. board scope 0..1 .-> SCOPEDEFINITION
     TEAMPROFILE -. uses .-> SOURCECONNECTION
     WORKITEM -. evaluated by .-> REPORT
     MERGEREQUEST -. evaluated by .-> REPORT
@@ -222,20 +220,23 @@ erDiagram
 
 ## 4. Scoping, Evaluation & Configuration Domain
 
-Teams scope what a report sees; a report is the result of evaluating signals over an
-evaluation window. `SourceConnection`, `SignalConfig`, and `SignalPackHistory` are local
-application tables ([backlog M2-03/M2-18/M2-19](./backlog/M2-storage-config-ui.md)), not pulled
-from a source.
+A team carries up to two sources — a task-board scope (`0..1` Jira board via `scope_ids`) and a code
+source (a whole GitLab/GitHub connection via `code_connection_id`, `0..1`) — and attaches reusable
+signal config groups; a group bundles signals, and one signal may belong to many groups. A report is
+the result of evaluating a team's signals (the union across its attached groups) over an evaluation
+window, against the team's sources (a report run requires at least one). `SourceConnection` is created
+create-only on the Connections page and carries a required, workspace-unique `name`.
+`SourceConnection`, `ScopeDefinition`, `SignalConfigGroup`, `SignalDefinition`, and
+`SignalPackHistory` are local application tables
+([backlog M2-03/M2-18/M2-19](./backlog/M2-storage-config-ui.md)), not pulled from a source.
 
 ```mermaid
 erDiagram
     SOURCECONNECTION {
         uuid id PK
-        string connector_name "demo|jira|gitlab"
+        string name "required, unique per workspace"
+        string connector_name "jira|gitlab|github"
         json config "credentials masked on read"
-        array selected_project_ids
-        array selected_board_ids
-        array selected_repository_ids
         datetime created_at
     }
     TEAMPROFILE {
@@ -243,9 +244,9 @@ erDiagram
         string name
         text description
         array connection_ids
-        array project_ids
-        array board_ids
-        array repository_ids
+        array scope_ids "task-board scope: 0..1 board in MVP"
+        uuid code_connection_id FK "code source: whole connection, 0..1, nullable"
+        array signal_config_group_ids
         enum working_mode "scrum|kanban"
         int sprint_length_days
         array member_user_keys
@@ -275,6 +276,7 @@ erDiagram
         uuid report_id FK
         string signal_id
         string signal_name
+        string scope_name
         enum severity "info|warning|critical"
         enum confidence "high|medium|low"
         enum entity_type "workitem|mergerequest|sprint|repository"
@@ -286,13 +288,37 @@ erDiagram
         string source_link
         datetime created_at
     }
-    SIGNALCONFIG {
+    SCOPEDEFINITION {
         uuid id PK
-        string signal_id "catalog id"
+        uuid connection_id FK
+        string name
+        enum scope_type "project|board|repository|saved_filter|custom"
+        json external_ref
+        json capabilities
+        datetime created_at
+        datetime updated_at
+    }
+    SIGNALDEFINITION {
+        uuid id PK
+        string name
+        text description
+        string entity_type
+        json expression
+        json report_settings
         bool enabled
-        enum severity_override
-        json params
-        json scope
+        enum origin "system_template|user_created|imported"
+        string template_key
+        int version
+        datetime created_at
+        datetime updated_at
+    }
+    SIGNALCONFIGGROUP {
+        uuid id PK
+        string name
+        text description
+        array signal_ids
+        datetime created_at
+        datetime updated_at
     }
     SIGNALPACKHISTORY {
         uuid id PK
@@ -302,9 +328,10 @@ erDiagram
     }
 
     TEAMPROFILE }o--o{ SOURCECONNECTION : "uses (connection_ids)"
-    TEAMPROFILE }o--o{ PROJECT          : "scope (project_ids)"
-    TEAMPROFILE }o--o{ BOARD            : "scope (board_ids)"
-    TEAMPROFILE }o--o{ REPOSITORY       : "scope (repository_ids)"
+    SOURCECONNECTION ||--o{ SCOPEDEFINITION : "offers scopes"
+    TEAMPROFILE }o--o| SCOPEDEFINITION : "board scope (0..1)"
+    TEAMPROFILE }o--o{ SIGNALCONFIGGROUP : "attaches (signal_config_group_ids)"
+    SIGNALCONFIGGROUP }o--o{ SIGNALDEFINITION : "contains (signal_ids)"
     TEAMPROFILE ||--o{ EVALUATIONWINDOW : "scopes"
     EVALUATIONWINDOW }o--o| SPRINT      : "sprint window"
     EVALUATIONWINDOW ||--|| REPORT      : "produces"
@@ -318,14 +345,18 @@ erDiagram
 **Notes.**
 - `TeamProfile.working_mode` drives the default window type: **scrum → sprint**, **kanban →
   date_range**. Sprint-only signals are skipped on date-range runs (window-gating,
-  [09-functional-flows §10](./09-functional-flows.md#10-how-working-mode-shapes-signals-no-per-team-config)).
+  [09-functional-flows §10](./09-functional-flows.md#10-how-working-mode-shapes-signal-availability)).
 - `EvaluationWindow` requires `sprint_id` **xor** (`start`,`end`) per `window_type`
   ([data model §5.13](./05-data-model.md#513-evaluationwindow)).
 - `SignalFinding.entity_id` is **polymorphic** over `entity_type` (work item, MR, sprint, or
   repository); the four "about" relationships above are mutually exclusive per row.
 - `SourceConnection.config` holds credentials at rest (SQLite, masked on read,
   [ADR-0006](./ADRs/0006-token-storage.md)); it is the only place tokens live and is never
-  exported.
+  exported. `SourceConnection.name` is required and unique per workspace so multiple connections of
+  the same type (e.g. two Jira instances) are distinguishable. A connection stores **no** scope; the
+  team owns its task-board scope and its `code_connection_id`.
+- A `TeamProfile` may be **saved with no sources**; a **report run requires at least one** of its
+  task-board scope or `code_connection_id`. Signals whose source is absent are skipped with a note.
 - `Dashboard` is **not** an entity — it is derived by reading the latest `Report` per
   `TeamProfile` ([09-functional-flows §6](./09-functional-flows.md#6-flow-d--initial-sync--dashboard)).
 

@@ -51,7 +51,7 @@ def context(sprint_id: UUID | None = None) -> EvaluationContext:
 def project() -> Project:
     return Project(
         id=PROJECT_ID,
-        source=Source.DEMO,
+        source=Source.JIRA,
         external_id="PROJECT",
         key="RAD",
         name="Radar",
@@ -61,7 +61,7 @@ def project() -> Project:
 def board() -> Board:
     return Board(
         id=BOARD_ID,
-        source=Source.DEMO,
+        source=Source.JIRA,
         external_id="BOARD",
         project_id=PROJECT_ID,
         name="Board",
@@ -70,7 +70,7 @@ def board() -> Board:
 
 def sprint(name: str = "Sprint 1", start_date: datetime | None = None) -> Sprint:
     return Sprint(
-        source=Source.DEMO,
+        source=Source.JIRA,
         external_id=name,
         board_id=BOARD_ID,
         name=name,
@@ -87,6 +87,7 @@ def workitem(
     status: str = "In Progress",
     description: str | None = "Description",
     acceptance_criteria: str | None = "Given When Then",
+    labels: list[str] | None = None,
     parent_id: UUID | None = None,
     is_blocked: bool = False,
     sprint_ids: list[UUID] | None = None,
@@ -95,7 +96,7 @@ def workitem(
     updated_at: datetime | None = None,
 ) -> WorkItem:
     return WorkItem(
-        source=Source.DEMO,
+        source=Source.JIRA,
         external_id=key,
         project_id=PROJECT_ID,
         key=key,
@@ -104,6 +105,7 @@ def workitem(
         description=description,
         status=status,
         status_category=status_category,
+        labels=labels or [],
         parent_id=parent_id,
         acceptance_criteria=acceptance_criteria,
         is_blocked=is_blocked,

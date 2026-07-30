@@ -5,9 +5,9 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { SourceConnectionsPage } from "@/pages/SourceConnectionsPage"
 
-const demoConnector = {
-  name: "demo",
-  display_name: "Demo company",
+const jiraConnector = {
+  name: "jira",
+  display_name: "Jira (Cloud or Server)",
   config_schema: {
     type: "object",
     properties: {
@@ -19,21 +19,15 @@ const demoConnector = {
   capabilities: {
     provides_workitems: true,
     provides_sprints: true,
-    provides_mergerequests: true,
-    provides_repositories: true,
-    provides_reviews: true,
-    provides_comments: true,
+    provides_mergerequests: false,
+    provides_repositories: false,
+    provides_reviews: false,
+    provides_comments: false,
     provides_transitions: true,
     supports_incremental_fetch: false,
     supports_pagination_cursor: false,
     max_window_days: null,
   },
-}
-
-const jiraConnector = {
-  ...demoConnector,
-  name: "jira",
-  display_name: "Jira (Cloud or Server)",
 }
 
 const testResult = {
@@ -43,9 +37,9 @@ const testResult = {
   permissions: ["read"],
 }
 
-function jsonResponse(body: unknown): Response {
+function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
-    status: 200,
+    status,
     headers: { "Content-Type": "application/json" },
   })
 }
@@ -54,7 +48,7 @@ function mockApi(testHandler: () => Response = () => jsonResponse(testResult)) {
   return vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
     const url = typeof input === "string" ? input : input.toString()
     if (url.endsWith("/api/connectors")) {
-      return Promise.resolve(jsonResponse([demoConnector]))
+      return Promise.resolve(jsonResponse([jiraConnector]))
     }
     if (url.endsWith("/api/connections") && (init?.method ?? "GET") === "GET") {
       return Promise.resolve(jsonResponse([]))
@@ -88,23 +82,49 @@ afterEach(() => {
 })
 
 describe("SourceConnectionsPage", () => {
+  it("renders Jira as the default selected connector in the dropdown", async () => {
+    mockApi()
+    renderPage()
+
+    await screen.findByLabelText(/^Base URL/)
+    const select = screen.getByLabelText(/Source type/) as HTMLSelectElement
+    expect(select.value).toBe("jira")
+  })
+
+  it("lists all five source types in the dropdown with non-Jira ones disabled", async () => {
+    mockApi()
+    renderPage()
+
+    await screen.findByLabelText(/^Base URL/)
+    const options = screen.getAllByRole("option") as HTMLOptionElement[]
+    const optionMap = Object.fromEntries(options.map((o) => [o.value, o]))
+
+    expect(optionMap["jira"].disabled).toBe(false)
+    expect(optionMap["jira"].textContent).toBe("Jira")
+
+    for (const name of ["linear", "github_issues", "gitlab", "github"]) {
+      expect(optionMap[name].disabled).toBe(true)
+      expect(optionMap[name].textContent).toContain("coming soon")
+    }
+  })
+
   it("renders the connector form with a write-only secret field", async () => {
     mockApi()
     renderPage()
 
-    const token = (await screen.findByLabelText(/Token/)) as HTMLInputElement
+    const token = (await screen.findByLabelText(/^Token/)) as HTMLInputElement
     expect(token.type).toBe("password")
-    expect(screen.getByLabelText(/Base URL/)).toBeInTheDocument()
+    expect(screen.getByLabelText(/^Base URL/)).toBeInTheDocument()
   })
 
   it("shows the authenticated user after a successful test", async () => {
     mockApi()
     renderPage()
 
-    fireEvent.change(await screen.findByLabelText(/Base URL/), {
+    fireEvent.change(await screen.findByLabelText(/^Base URL/), {
       target: { value: "https://demo.invalid" },
     })
-    fireEvent.change(screen.getByLabelText(/Token/), { target: { value: "secret-token" } })
+    fireEvent.change(screen.getByLabelText(/^Token/), { target: { value: "secret-token" } })
     fireEvent.click(screen.getByRole("button", { name: "Test connection" }))
 
     expect(await screen.findByText(/Connected as Ada Lovelace/)).toBeInTheDocument()
@@ -121,10 +141,10 @@ describe("SourceConnectionsPage", () => {
     )
     renderPage()
 
-    fireEvent.change(await screen.findByLabelText(/Base URL/), {
+    fireEvent.change(await screen.findByLabelText(/^Base URL/), {
       target: { value: "https://demo.invalid" },
     })
-    fireEvent.change(screen.getByLabelText(/Token/), { target: { value: "rejected-token" } })
+    fireEvent.change(screen.getByLabelText(/^Token/), { target: { value: "rejected-token" } })
     fireEvent.click(screen.getByRole("button", { name: "Test connection" }))
 
     await waitFor(() => {
@@ -132,22 +152,55 @@ describe("SourceConnectionsPage", () => {
     })
   })
 
+  it("shows an explanation and suggestions for a coded test failure", async () => {
+    mockApi(() =>
+      jsonResponse({
+        ok: false,
+        detail: "Jira authentication failed",
+        user_display_name: null,
+        permissions: [],
+        code: "auth",
+      }),
+    )
+    renderPage()
+
+    fireEvent.change(await screen.findByLabelText(/^Base URL/), {
+      target: { value: "https://demo.invalid" },
+    })
+    fireEvent.change(screen.getByLabelText(/^Token/), { target: { value: "bad-token" } })
+    fireEvent.click(screen.getByRole("button", { name: "Test connection" }))
+
+    expect(await screen.findByText("The credentials were rejected by the source.")).toBeInTheDocument()
+    expect(
+      screen.getByText(/Check the token is correct and has not expired/),
+    ).toBeInTheDocument()
+  })
+
+  it("offers click-to-toggle help for the Jira Base URL and Token fields", async () => {
+    mockApi()
+    renderPage()
+
+    expect(await screen.findByRole("button", { name: "About Base URL" })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "About Token" }))
+
+    const helpLink = screen.getByRole("link", { name: /How to generate a Jira token/ })
+    expect(helpLink).toHaveAttribute("href", "/help/jira")
+  })
+
   it("omits unchanged write-only fields when editing a connection", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
       const url = typeof input === "string" ? input : input.toString()
       if (url.endsWith("/api/connectors")) {
-        return Promise.resolve(jsonResponse([demoConnector]))
+        return Promise.resolve(jsonResponse([jiraConnector]))
       }
       if (url.endsWith("/api/connections") && (init?.method ?? "GET") === "GET") {
         return Promise.resolve(
           jsonResponse([
             {
               id: "connection-1",
-              connector_name: "demo",
+              name: "Acme Jira",
+              connector_name: "jira",
               config: { base_url: "https://demo.invalid", token: "****5678" },
-              selected_project_ids: [],
-              selected_board_ids: [],
-              selected_repository_ids: [],
               created_at: "2026-06-01T10:00:00Z",
             },
           ]),
@@ -161,7 +214,7 @@ describe("SourceConnectionsPage", () => {
     renderPage()
 
     fireEvent.click(await screen.findByRole("button", { name: "Edit" }))
-    fireEvent.change(screen.getByLabelText(/Base URL/), {
+    fireEvent.change(screen.getByLabelText(/^Base URL/), {
       target: { value: "https://updated.invalid" },
     })
     fireEvent.click(screen.getByRole("button", { name: "Save connection" }))
@@ -177,67 +230,78 @@ describe("SourceConnectionsPage", () => {
     })
   })
 
-  it("loads Jira project and board choices and enables running the active sprint report", async () => {
+  it("disables the submit button when the connection name is empty", async () => {
+    mockApi()
+    renderPage()
+
+    await screen.findByLabelText(/^Base URL/)
+
+    const submitButton = screen.getByRole("button", { name: "Add connection" })
+    expect(submitButton).toBeDisabled()
+
+    fireEvent.change(screen.getByLabelText(/Connection name/), {
+      target: { value: "My Jira" },
+    })
+    expect(submitButton).not.toBeDisabled()
+
+    fireEvent.change(screen.getByLabelText(/Connection name/), {
+      target: { value: "" },
+    })
+    expect(submitButton).toBeDisabled()
+  })
+
+  it("shows a created connection in the list by its name", async () => {
+    const createdConnection = {
+      id: "new-connection",
+      name: "Prod Jira",
+      connector_name: "jira",
+      config: { base_url: "https://prod.invalid", token: "****" },
+      created_at: "2026-07-01T00:00:00Z",
+    }
+    let connectionsStore: typeof createdConnection[] = []
+
     vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
       const url = typeof input === "string" ? input : input.toString()
       if (url.endsWith("/api/connectors")) {
         return Promise.resolve(jsonResponse([jiraConnector]))
       }
       if (url.endsWith("/api/connections") && (init?.method ?? "GET") === "GET") {
-        return Promise.resolve(
-          jsonResponse([
-            {
-              id: "connection-1",
-              connector_name: "jira",
-              config: { base_url: "https://jira.invalid", token: "****5678" },
-              selected_project_ids: [],
-              selected_board_ids: [],
-              selected_repository_ids: [],
-              created_at: "2026-06-01T10:00:00Z",
-            },
-          ]),
-        )
+        return Promise.resolve(jsonResponse(connectionsStore))
       }
-      if (url.endsWith("/api/connections/connection-1/projects")) {
-        return Promise.resolve(
-          jsonResponse([
-            {
-              id: "project-1",
-              external_id: "10000",
-              key: "PLAT",
-              name: "Platform",
-            },
-          ]),
-        )
+      if (url.endsWith("/api/connections") && init?.method === "POST") {
+        connectionsStore = [createdConnection]
+        return Promise.resolve(jsonResponse(createdConnection, 201))
       }
-      if (url.endsWith("/api/connections/connection-1/projects/10000/boards")) {
-        return Promise.resolve(
-          jsonResponse([
-            {
-              id: "board-1",
-              external_id: "20000",
-              project_id: "project-1",
-              name: "Platform Scrum",
-              type: "scrum",
-            },
-          ]),
-        )
+      throw new Error(`unexpected fetch: ${init?.method ?? "GET"} ${url}`)
+    })
+
+    renderPage()
+
+    await screen.findByLabelText(/^Base URL/)
+    fireEvent.change(screen.getByLabelText(/Connection name/), {
+      target: { value: "Prod Jira" },
+    })
+    fireEvent.change(screen.getByLabelText(/^Base URL/), {
+      target: { value: "https://prod.invalid" },
+    })
+    fireEvent.change(screen.getByLabelText(/^Token/), { target: { value: "tok" } })
+    fireEvent.click(screen.getByRole("button", { name: "Add connection" }))
+
+    expect(await screen.findByText("Prod Jira")).toBeInTheDocument()
+  })
+
+  it("renders a duplicate-name API error near the form", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = typeof input === "string" ? input : input.toString()
+      if (url.endsWith("/api/connectors")) {
+        return Promise.resolve(jsonResponse([jiraConnector]))
       }
-      if (url.endsWith("/api/connections/connection-1/boards/20000/sprints")) {
+      if (url.endsWith("/api/connections") && (init?.method ?? "GET") === "GET") {
+        return Promise.resolve(jsonResponse([]))
+      }
+      if (url.endsWith("/api/connections") && init?.method === "POST") {
         return Promise.resolve(
-          jsonResponse([
-            {
-              id: "sprint-1",
-              external_id: "30000",
-              board_id: "board-1",
-              name: "Platform Sprint 12",
-              state: "active",
-              start_date: "2026-06-01T00:00:00Z",
-              end_date: "2026-06-15T00:00:00Z",
-              complete_date: null,
-              goal: null,
-            },
-          ]),
+          jsonResponse({ detail: "a connection named 'Duplicate' already exists" }, 422),
         )
       }
       throw new Error(`unexpected fetch: ${init?.method ?? "GET"} ${url}`)
@@ -245,9 +309,29 @@ describe("SourceConnectionsPage", () => {
 
     renderPage()
 
-    expect(await screen.findByText("Platform Scrum")).toBeInTheDocument()
-    expect(screen.getByText("Scrum · 14 days")).toBeInTheDocument()
-    expect(screen.getByText("Active sprint: Platform Sprint 12")).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "Run report" })).toBeEnabled()
+    await screen.findByLabelText(/^Base URL/)
+    fireEvent.change(screen.getByLabelText(/Connection name/), {
+      target: { value: "Duplicate" },
+    })
+    fireEvent.change(screen.getByLabelText(/^Base URL/), {
+      target: { value: "https://demo.invalid" },
+    })
+    fireEvent.change(screen.getByLabelText(/^Token/), { target: { value: "tok" } })
+    fireEvent.click(screen.getByRole("button", { name: "Add connection" }))
+
+    expect(
+      await screen.findByText(/already exists/i),
+    ).toBeInTheDocument()
+  })
+
+  it("has no project/board picker and no run-report control", async () => {
+    mockApi()
+    renderPage()
+
+    await screen.findByLabelText(/^Base URL/)
+
+    expect(screen.queryByLabelText(/Project/i)).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/Board/i)).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /Run report/i })).not.toBeInTheDocument()
   })
 })

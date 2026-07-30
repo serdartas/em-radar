@@ -12,9 +12,12 @@ class TeamProfileCreate(SQLModel):
     name: str
     description: str | None = None
     connection_ids: list[UUID] = Field(default_factory=list)
-    project_ids: list[UUID]
+    scope_ids: list[UUID] = Field(default_factory=list)
+    project_ids: list[UUID] = Field(default_factory=list)
     board_ids: list[UUID] = Field(default_factory=list)
-    repository_ids: list[UUID]
+    repository_ids: list[UUID] = Field(default_factory=list)
+    signal_config_group_ids: list[UUID] = Field(default_factory=list)
+    code_connection_id: UUID | None = None
     working_mode: WorkingMode = WorkingMode.SCRUM
     sprint_length_days: int | None = None
     member_user_keys: list[str] = Field(default_factory=list)
@@ -30,9 +33,12 @@ class TeamProfileUpdate(SQLModel):
     name: str | None = None
     description: str | None = None
     connection_ids: list[UUID] | None = None
+    scope_ids: list[UUID] | None = None
     project_ids: list[UUID] | None = None
     board_ids: list[UUID] | None = None
     repository_ids: list[UUID] | None = None
+    signal_config_group_ids: list[UUID] | None = None
+    code_connection_id: UUID | None = None
     working_mode: WorkingMode | None = None
     sprint_length_days: int | None = None
     member_user_keys: list[str] | None = None

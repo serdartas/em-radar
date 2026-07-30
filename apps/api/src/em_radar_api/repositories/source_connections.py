@@ -6,17 +6,31 @@ from uuid import UUID
 from pydantic import SecretStr
 from sqlmodel import Session, select
 
+from em_radar_api.connector_registry import get_connector_capabilities
 from em_radar_api.source_connections import (
     SourceConnectionCreate,
     SourceConnectionRead,
     SourceConnectionTable,
     SourceConnectionUpdate,
 )
+from em_radar_api.scope_definitions import ScopeDefinitionTable
 from em_radar_api.tables import TeamProfileTable
 from em_radar_core.connectors import ConnectorBase
 
 ConnectorT = TypeVar("ConnectorT", bound=ConnectorBase)
-CREDENTIAL_FIELD_NAMES = frozenset({"token", "password", "api_key", "secret", "authorization"})
+CREDENTIAL_FIELD_NAMES = frozenset(
+    {
+        "accesstoken",
+        "apikey",
+        "authorization",
+        "clientsecret",
+        "password",
+        "privatetoken",
+        "refreshtoken",
+        "secret",
+        "token",
+    }
+)
 SECRET_MARKER = "__em_radar_secret__"
 
 
@@ -24,9 +38,21 @@ class SourceConnectionInUse(ValueError):
     pass
 
 
+class SourceConnectionDuplicateName(ValueError):
+    pass
+
+
+class SourceConnectionInvalidName(ValueError):
+    pass
+
+
 def create_source_connection(
     session: Session, connection: SourceConnectionCreate
 ) -> SourceConnectionRead:
+    if _name_taken(session, connection.name):
+        raise SourceConnectionDuplicateName(
+            f"a connection named '{connection.name}' already exists"
+        )
     row = SourceConnectionTable.model_validate(connection)
     row.config = _stored_config(row.config)
     _write(session, row)
@@ -53,14 +79,29 @@ def update_source_connection(
         return None
 
     values = update.model_dump(exclude_unset=True)
+    if "name" in values and values["name"] is None:
+        raise SourceConnectionInvalidName("connection name cannot be set to null")
+    if "name" in values and _name_taken(session, values["name"], exclude_id=connection_id):
+        raise SourceConnectionDuplicateName(f"a connection named '{values['name']}' already exists")
     if "config" in values:
         stored_config = _stored_config(cast(Mapping[str, object], values["config"]))
         if values.get("connector_name", row.connector_name) == row.connector_name:
             values["config"] = {**row.config, **stored_config}
         else:
             values["config"] = stored_config
-    candidate = SourceConnectionTable.model_validate(row, update=values)
-    _validate_team_scopes(session, connection_id, candidate)
+    new_connector_name = values.get("connector_name", row.connector_name)
+    if new_connector_name != row.connector_name:
+        if _referencing_scopes(session, connection_id):
+            raise SourceConnectionInUse(
+                "source connection connector_name cannot change while scopes reference it"
+            )
+        if _teams_using_as_code_source(session, connection_id):
+            caps = get_connector_capabilities(str(new_connector_name))
+            if caps is None or not caps.provides_mergerequests:
+                raise SourceConnectionInUse(
+                    "source connection connector_name cannot change to a non-MR-capable connector"
+                    " while referenced as a team's code source"
+                )
     row.sqlmodel_update(values)
     _write(session, row)
     return _masked_read(row)
@@ -70,6 +111,8 @@ def delete_source_connection(session: Session, connection_id: UUID) -> bool:
     row = session.get(SourceConnectionTable, connection_id)
     if row is None:
         return False
+    if _referencing_scopes(session, connection_id):
+        raise SourceConnectionInUse("source connection is referenced by a scope definition")
     if _referencing_teams(session, connection_id):
         raise SourceConnectionInUse("source connection is referenced by a team")
     session.delete(row)
@@ -94,34 +137,11 @@ def _write(session: Session, row: SourceConnectionTable) -> None:
     session.refresh(row)
 
 
-def _validate_team_scopes(
-    session: Session,
-    connection_id: UUID,
-    candidate: SourceConnectionTable,
-) -> None:
-    for team in _referencing_teams(session, connection_id):
-        connections = [
-            candidate
-            if referenced_id == connection_id
-            else session.get(SourceConnectionTable, referenced_id)
-            for referenced_id in team.connection_ids
-        ]
-        scoped_ids = (
-            ("project_ids", team.project_ids, "selected_project_ids"),
-            ("board_ids", team.board_ids, "selected_board_ids"),
-            ("repository_ids", team.repository_ids, "selected_repository_ids"),
-        )
-        for field_name, values, connection_field in scoped_ids:
-            available = {
-                item
-                for connection in connections
-                if connection is not None
-                for item in getattr(connection, connection_field)
-            }
-            if not set(values).issubset(available):
-                raise SourceConnectionInUse(
-                    f"source connection update would invalidate team {field_name}"
-                )
+def _name_taken(session: Session, name: str, exclude_id: UUID | None = None) -> bool:
+    query = select(SourceConnectionTable).where(SourceConnectionTable.name == name)
+    if exclude_id is not None:
+        query = query.where(SourceConnectionTable.id != exclude_id)
+    return session.exec(query).first() is not None
 
 
 def _referencing_teams(session: Session, connection_id: UUID) -> list[TeamProfileTable]:
@@ -132,14 +152,24 @@ def _referencing_teams(session: Session, connection_id: UUID) -> list[TeamProfil
     ]
 
 
+def _teams_using_as_code_source(session: Session, connection_id: UUID) -> list[TeamProfileTable]:
+    return session.exec(
+        select(TeamProfileTable).where(TeamProfileTable.code_connection_id == connection_id)
+    ).all()
+
+
+def _referencing_scopes(session: Session, connection_id: UUID) -> list[ScopeDefinitionTable]:
+    return session.exec(
+        select(ScopeDefinitionTable).where(ScopeDefinitionTable.connection_id == connection_id)
+    ).all()
+
+
 def _masked_read(row: SourceConnectionTable) -> SourceConnectionRead:
     return SourceConnectionRead(
         id=row.id,
+        name=row.name,
         connector_name=row.connector_name,
         config=cast(dict[str, object], _mask_value(row.config)),
-        selected_project_ids=row.selected_project_ids,
-        selected_board_ids=row.selected_board_ids,
-        selected_repository_ids=row.selected_repository_ids,
         created_at=row.created_at,
     )
 
@@ -177,7 +207,7 @@ def _mask_value(value: object, field_name: str | None = None) -> object:
         return _mask_secret(value.get_secret_value())
     if isinstance(value, Mapping) and set(value) == {SECRET_MARKER}:
         return _mask_secret(str(value[SECRET_MARKER]))
-    if field_name is not None and field_name.lower() in CREDENTIAL_FIELD_NAMES:
+    if field_name is not None and is_credential_field_name(field_name):
         return _mask_secret(str(value))
     if isinstance(value, Mapping):
         return {str(key): _mask_value(item, str(key)) for key, item in value.items()}
@@ -190,3 +220,12 @@ def _mask_secret(secret: str) -> str:
     if len(secret) <= 4:
         return "****"
     return f"****{secret[-4:]}"
+
+
+def is_credential_field_name(field_name: str) -> bool:
+    normalized = "".join(character for character in field_name.casefold() if character.isalnum())
+    return (
+        normalized in CREDENTIAL_FIELD_NAMES
+        or normalized.endswith("token")
+        or "secret" in normalized
+    )

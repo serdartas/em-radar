@@ -25,6 +25,12 @@ from em_radar_core.models.evaluation import (
     TeamProfile,
 )
 from em_radar_core.models.planning import Board, Project, Sprint, User, WorkItem, WorkItemLink
+from em_radar_core.models.signals import (
+    ReportSettings,
+    SignalDefinition,
+    SignalOrigin,
+    SignalTargetScope,
+)
 
 __all__ = [
     "Board",
@@ -45,8 +51,12 @@ __all__ = [
     "ReportStatus",
     "Review",
     "ReviewDecision",
+    "ReportSettings",
     "Severity",
+    "SignalDefinition",
     "SignalFinding",
+    "SignalOrigin",
+    "SignalTargetScope",
     "Source",
     "Sprint",
     "SprintState",

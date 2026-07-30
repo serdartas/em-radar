@@ -10,7 +10,9 @@ from starlette.responses import Response
 from em_radar_api.connector_registry import create_connector
 from em_radar_api.db import get_session, get_write_session
 from em_radar_api.repositories.source_connections import (
+    SourceConnectionDuplicateName,
     SourceConnectionInUse,
+    SourceConnectionInvalidName,
     create_source_connection,
     delete_source_connection,
     get_source_connection,
@@ -25,9 +27,15 @@ from em_radar_api.source_connections import (
     SourceConnectionUpdate,
 )
 from em_radar_core.connectors import (
+    ConnectionErrorCode,
+    ConnectorAuthError,
     ConnectorBase,
     ConnectorConfigError,
+    ConnectorDataError,
     ConnectorError,
+    ConnectorNotFoundError,
+    ConnectorRateLimitedError,
+    ConnectorTransientError,
     WorkItemProvider,
 )
 from em_radar_core.models import Board, BoardType, Project, Sprint, SprintState
@@ -40,6 +48,14 @@ class ConnectionTestResponse(BaseModel):
     detail: str
     user_display_name: str | None
     permissions: list[str]
+    code: ConnectionErrorCode | None = None
+
+
+class SourceConnectionDraft(BaseModel):
+    """Request body for the draft connection test — no name required since nothing is persisted."""
+
+    connector_name: ConnectorName
+    config: dict[str, object] = {}
 
 
 class ProjectResponse(BaseModel):
@@ -95,7 +111,10 @@ def create_connection(
     connection: SourceConnectionCreate,
     session: Session = Depends(get_write_session),
 ) -> SourceConnectionRead:
-    return create_source_connection(session, connection)
+    try:
+        return create_source_connection(session, connection)
+    except SourceConnectionDuplicateName as error:
+        raise _connection_duplicate_name(error) from error
 
 
 @router.patch("/connections/{connection_id}", response_model=SourceConnectionRead)
@@ -106,6 +125,10 @@ def patch_connection(
 ) -> SourceConnectionRead:
     try:
         connection = update_source_connection(session, connection_id, update)
+    except SourceConnectionInvalidName as error:
+        raise _connection_invalid_name(error) from error
+    except SourceConnectionDuplicateName as error:
+        raise _connection_duplicate_name(error) from error
     except SourceConnectionInUse as error:
         raise _connection_conflict(error) from error
     if connection is None:
@@ -127,7 +150,7 @@ def delete_connection(
 
 
 @router.post("/connections/test", response_model=ConnectionTestResponse)
-async def test_connection_draft(connection: SourceConnectionCreate) -> ConnectionTestResponse:
+async def test_connection_draft(connection: SourceConnectionDraft) -> ConnectionTestResponse:
     return await _test_connector(connection.connector_name, connection.config)
 
 
@@ -146,7 +169,7 @@ async def test_existing_connection(
             lambda config: create_connector(connection.connector_name, config),
         )
     except ConnectorConfigError as error:
-        return _failed_test(str(error))
+        return _failed_test(str(error), _error_code(error))
     if connector is None:
         raise _connection_not_found()
     return await _test_connector_instance(connector)
@@ -159,9 +182,9 @@ async def list_connection_projects(
 ) -> list[ProjectResponse]:
     connector = _workitem_connector(session, connection_id)
     try:
-        return [
-            ProjectResponse.from_project(project) for project in await connector.list_projects()
-        ]
+        return [ProjectResponse.from_project(p) for p in await connector.list_projects()]
+    except ConnectorError as error:
+        raise HTTPException(status_code=_picker_status(error), detail=str(error)) from error
     finally:
         await connector.close()
 
@@ -177,9 +200,9 @@ async def list_connection_boards(
 ) -> list[BoardResponse]:
     connector = _workitem_connector(session, connection_id)
     try:
-        return [
-            BoardResponse.from_board(board) for board in await connector.list_boards(project_id)
-        ]
+        return [BoardResponse.from_board(b) for b in await connector.list_boards(project_id)]
+    except ConnectorError as error:
+        raise HTTPException(status_code=_picker_status(error), detail=str(error)) from error
     finally:
         await connector.close()
 
@@ -195,9 +218,9 @@ async def list_connection_sprints(
 ) -> list[SprintResponse]:
     connector = _workitem_connector(session, connection_id)
     try:
-        return [
-            SprintResponse.from_sprint(sprint) for sprint in await connector.list_sprints(board_id)
-        ]
+        return [SprintResponse.from_sprint(s) for s in await connector.list_sprints(board_id)]
+    except ConnectorError as error:
+        raise HTTPException(status_code=_picker_status(error), detail=str(error)) from error
     finally:
         await connector.close()
 
@@ -209,9 +232,7 @@ async def _test_connector(
     try:
         connector = create_connector(connector_name, config)
     except ConnectorConfigError as error:
-        return ConnectionTestResponse(
-            ok=False, detail=str(error), user_display_name=None, permissions=[]
-        )
+        return _failed_test(str(error), _error_code(error))
 
     return await _test_connector_instance(connector)
 
@@ -220,7 +241,7 @@ async def _test_connector_instance(connector: ConnectorBase) -> ConnectionTestRe
     try:
         return ConnectionTestResponse.model_validate(asdict(await connector.test_connection()))
     except ConnectorError as error:
-        return _failed_test(str(error))
+        return _failed_test(str(error), _error_code(error))
     finally:
         await connector.close()
 
@@ -255,13 +276,43 @@ def _workitem_connector(session: Session, connection_id: UUID) -> WorkItemProvid
     return connector
 
 
-def _failed_test(detail: str) -> ConnectionTestResponse:
+def _failed_test(detail: str, code: ConnectionErrorCode) -> ConnectionTestResponse:
     return ConnectionTestResponse(
         ok=False,
         detail=detail,
         user_display_name=None,
         permissions=[],
+        code=code,
     )
+
+
+def _error_code(error: ConnectorError) -> ConnectionErrorCode:
+    if isinstance(error, ConnectorAuthError):
+        return "auth"
+    if isinstance(error, ConnectorNotFoundError):
+        return "not_found"
+    if isinstance(error, ConnectorRateLimitedError):
+        return "rate_limited"
+    if isinstance(error, ConnectorTransientError):
+        return "transient"
+    if isinstance(error, ConnectorConfigError):
+        return "config"
+    if isinstance(error, ConnectorDataError):
+        return "data"
+    return "unknown"
+
+
+def _picker_status(error: ConnectorError) -> int:
+    code = _error_code(error)
+    if code == "auth":
+        return status.HTTP_401_UNAUTHORIZED
+    if code == "not_found":
+        return status.HTTP_404_NOT_FOUND
+    if code == "rate_limited":
+        return status.HTTP_429_TOO_MANY_REQUESTS
+    if code == "config":
+        return status.HTTP_422_UNPROCESSABLE_CONTENT
+    return status.HTTP_502_BAD_GATEWAY
 
 
 def _connection_not_found() -> HTTPException:
@@ -270,3 +321,11 @@ def _connection_not_found() -> HTTPException:
 
 def _connection_conflict(error: SourceConnectionInUse) -> HTTPException:
     return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error))
+
+
+def _connection_duplicate_name(error: SourceConnectionDuplicateName) -> HTTPException:
+    return HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error))
+
+
+def _connection_invalid_name(error: SourceConnectionInvalidName) -> HTTPException:
+    return HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error))

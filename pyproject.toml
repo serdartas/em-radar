@@ -1,7 +1,7 @@
 [project]
 name = "em-radar-core"
 version = "0.0.0"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.13"
 dependencies = [
     "httpx",
     "pyyaml",
@@ -9,7 +9,6 @@ dependencies = [
 ]
 
 [project.entry-points."em_radar.connectors"]
-demo = "em_radar_connector_demo:DemoConnector"
 jira = "em_radar_connector_jira:JiraConnector"
 
 [build-system]
@@ -28,7 +27,6 @@ dev = [
 [tool.setuptools.packages.find]
 where = [
     "packages/core/src",
-    "packages/connectors/demo/src",
     "packages/connectors/jira/src",
     "packages/config/src",
     "packages/normalizer/src",

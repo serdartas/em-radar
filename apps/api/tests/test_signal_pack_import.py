@@ -4,9 +4,175 @@ from sqlmodel import Session, select
 
 from em_radar_api.models.signal_pack_history import SignalPackHistory
 from em_radar_api.repositories.signal_configs import list_signal_configs, upsert_signal_config
+from em_radar_api.signal_config_groups import SignalConfigGroupTable
 from em_radar_api.signal_configs import SignalConfigUpsert
+from em_radar_api.signal_definitions import SignalDefinitionTable
 from em_radar_api.tables import ProjectTable, RepositoryTable
 from em_radar_core.models import Severity, Source
+
+DUPLICATE_SIGNAL_NAMES_PACK = """\
+apiVersion: emradar.dev/v1
+kind: SignalPack
+metadata:
+  name: duplicate-signals-pack
+  version: 1.0.0
+  description: Pack with two signals sharing the same name.
+spec:
+  export_type: private_backup
+  signals:
+    - name: My Signal
+      entity_type: issue
+      expression:
+        type: group
+        operator: all
+        conditions:
+          - field: labels
+            operator: contains
+            value: alpha
+      report_settings:
+        severity: warning
+        category: flow
+    - name: My Signal
+      entity_type: issue
+      expression:
+        type: group
+        operator: all
+        conditions:
+          - field: labels
+            operator: contains
+            value: beta
+      report_settings:
+        severity: critical
+        category: flow
+"""
+
+DUPLICATE_GROUP_NAMES_PACK = """\
+apiVersion: emradar.dev/v1
+kind: SignalPack
+metadata:
+  name: duplicate-groups-pack
+  version: 1.0.0
+  description: Pack with unique signal names but two groups sharing the same name.
+spec:
+  export_type: private_backup
+  signals:
+    - name: Signal Alpha
+      entity_type: issue
+      expression:
+        type: group
+        operator: all
+        conditions:
+          - field: labels
+            operator: contains
+            value: alpha
+      report_settings:
+        severity: warning
+        category: flow
+    - name: Signal Beta
+      entity_type: issue
+      expression:
+        type: group
+        operator: all
+        conditions:
+          - field: labels
+            operator: contains
+            value: beta
+      report_settings:
+        severity: warning
+        category: flow
+  groups:
+    - name: My Group
+      signals: [Signal Alpha]
+    - name: My Group
+      signals: [Signal Beta]
+"""
+
+VALID_DEFINITION_PACK = """\
+apiVersion: emradar.dev/v1
+kind: SignalPack
+metadata:
+  name: unique-signals-pack
+  version: 1.0.0
+  description: Pack with unique signal names.
+spec:
+  export_type: private_backup
+  signals:
+    - name: Signal Alpha
+      entity_type: issue
+      expression:
+        type: group
+        operator: all
+        conditions:
+          - field: labels
+            operator: contains
+            value: alpha
+      report_settings:
+        severity: warning
+        category: flow
+    - name: Signal Beta
+      entity_type: issue
+      expression:
+        type: group
+        operator: all
+        conditions:
+          - field: labels
+            operator: contains
+            value: beta
+      report_settings:
+        severity: warning
+        category: flow
+"""
+
+INVALID_EXPRESSION_PACK = """\
+apiVersion: emradar.dev/v1
+kind: SignalPack
+metadata:
+  name: invalid-expression-pack
+  version: 1.0.0
+  description: Pack with an invalid expression.
+spec:
+  export_type: private_backup
+  signals:
+    - name: Invalid Signal
+      entity_type: issue
+      expression:
+        type: group
+        operator: all
+        conditions:
+          - field: jira_private_priority
+            operator: is
+            value: High
+      report_settings:
+        severity: warning
+        category: flow
+"""
+
+GROUP_FAILURE_PACK = """\
+apiVersion: emradar.dev/v1
+kind: SignalPack
+metadata:
+  name: invalid-group-pack
+  version: 1.0.0
+  description: Pack with a group that duplicates one signal reference.
+spec:
+  export_type: private_backup
+  signals:
+    - name: Atomic Signal
+      entity_type: issue
+      expression:
+        type: group
+        operator: all
+        conditions:
+          - field: labels
+            operator: contains
+            value: alpha
+      report_settings:
+        severity: warning
+        category: flow
+  groups:
+    - name: Invalid Group
+      signals: [Atomic Signal, Atomic Signal]
+"""
 
 MINIMAL_PACK = """\
 apiVersion: emradar.dev/v1
@@ -120,6 +286,40 @@ def test_invalid_pack_is_rejected_without_state_change(
         assert list(session.exec(select(SignalPackHistory))) == []
 
 
+def test_definition_pack_rejects_invalid_expression_before_import(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+) -> None:
+    response = api_client.post(
+        "/api/signal-pack/import/apply",
+        json={"raw_yaml": INVALID_EXPRESSION_PACK},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "invalid-signal-pack"
+    with session_factory() as session:
+        assert list(session.exec(select(SignalDefinitionTable))) == []
+        assert list(session.exec(select(SignalConfigGroupTable))) == []
+        assert list(session.exec(select(SignalPackHistory))) == []
+
+
+def test_definition_pack_apply_rolls_back_when_late_group_write_fails(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+) -> None:
+    response = api_client.post(
+        "/api/signal-pack/import/apply",
+        json={"raw_yaml": GROUP_FAILURE_PACK},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "invalid-signal-pack"
+    with session_factory() as session:
+        assert list(session.exec(select(SignalDefinitionTable))) == []
+        assert list(session.exec(select(SignalConfigGroupTable))) == []
+        assert list(session.exec(select(SignalPackHistory))) == []
+
+
 def test_import_preview_warns_about_unknown_scope_targets(
     api_client: TestClient,
     session_factory: sessionmaker[Session],
@@ -127,7 +327,7 @@ def test_import_preview_warns_about_unknown_scope_targets(
     with session_factory() as session:
         session.add(
             ProjectTable(
-                source=Source.DEMO,
+                source=Source.JIRA,
                 external_id="known-project",
                 key="KNOWN",
                 name="Known project",
@@ -135,7 +335,7 @@ def test_import_preview_warns_about_unknown_scope_targets(
         )
         session.add(
             RepositoryTable(
-                source=Source.DEMO,
+                source=Source.JIRA,
                 external_id="known-repository",
                 name="Known repository",
                 full_path="known/repository",
@@ -206,3 +406,89 @@ def test_replace_all_resets_signals_not_in_pack(
         assert configs["blocked-without-update"].severity_override is None
         assert configs["blocked-without-update"].params == {"days_threshold": 3}
         assert not configs["stale-in-progress-work-item"].enabled
+
+
+def test_import_with_duplicate_signal_names_is_rejected_with_no_partial_import(
+    api_client: TestClient,
+) -> None:
+    response = api_client.post(
+        "/api/signal-pack/import/apply",
+        json={"raw_yaml": DUPLICATE_SIGNAL_NAMES_PACK},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "invalid-signal-pack"
+    assert "My Signal" in response.json()["detail"]["message"]
+    # No signals were persisted — no partial import occurred.
+    assert api_client.get("/api/signal-definitions").json() == []
+
+
+def test_preview_reports_intra_pack_duplicate_signal_names(
+    api_client: TestClient,
+) -> None:
+    response = api_client.post(
+        "/api/signal-pack/import",
+        json={"raw_yaml": DUPLICATE_SIGNAL_NAMES_PACK},
+    )
+
+    assert response.status_code == 200
+    preview = response.json()
+    assert preview["intra_pack_duplicate_signal_names"] == ["My Signal"]
+
+
+def test_import_with_duplicate_group_names_is_rejected_with_no_partial_import(
+    api_client: TestClient,
+) -> None:
+    response = api_client.post(
+        "/api/signal-pack/import/apply",
+        json={"raw_yaml": DUPLICATE_GROUP_NAMES_PACK},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "invalid-signal-pack"
+    assert "My Group" in response.json()["detail"]["message"]
+    # Signals were NOT persisted — the rejection happened before any DB write.
+    assert api_client.get("/api/signal-definitions").json() == []
+
+
+def test_preview_reports_intra_pack_duplicate_group_names(
+    api_client: TestClient,
+) -> None:
+    response = api_client.post(
+        "/api/signal-pack/import",
+        json={"raw_yaml": DUPLICATE_GROUP_NAMES_PACK},
+    )
+
+    assert response.status_code == 200
+    preview = response.json()
+    assert preview["intra_pack_duplicate_group_names"] == ["My Group"]
+
+
+def test_cancel_on_duplicate_name_pack_returns_preview_without_writing(
+    api_client: TestClient,
+) -> None:
+    response = api_client.post(
+        "/api/signal-pack/import/apply",
+        json={"raw_yaml": DUPLICATE_SIGNAL_NAMES_PACK, "conflict": "cancel"},
+    )
+
+    assert response.status_code == 200
+    preview = response.json()
+    assert preview["intra_pack_duplicate_signal_names"] == ["My Signal"]
+    # cancel never writes anything, even for valid packs.
+    assert api_client.get("/api/signal-definitions").json() == []
+
+
+def test_valid_definition_pack_with_unique_names_imports_successfully(
+    api_client: TestClient,
+) -> None:
+    response = api_client.post(
+        "/api/signal-pack/import/apply",
+        json={"raw_yaml": VALID_DEFINITION_PACK},
+    )
+
+    assert response.status_code == 200
+    definitions = api_client.get("/api/signal-definitions").json()
+    names = {d["name"] for d in definitions}
+    assert "Signal Alpha" in names
+    assert "Signal Beta" in names

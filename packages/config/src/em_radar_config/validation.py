@@ -11,6 +11,7 @@ from yaml.nodes import MappingNode
 
 from em_radar_config.catalog import SIGNAL_CATALOG
 from em_radar_config.models import FieldMappings, SignalPack, SignalScope
+from em_radar_core.connectors import SignalCapabilitySchema, SignalField
 from em_radar_core.models import Severity
 
 API_VERSION = "emradar.dev/v1"
@@ -18,7 +19,7 @@ PACK_KIND = "SignalPack"
 EM_RADAR_VERSION = "0.0.0"
 
 _CREDENTIAL_FIELDS = {"token", "password", "api_key", "secret", "authorization"}
-_EXECUTABLE_FIELDS = {"code", "command", "expression", "script", "template"}
+_EXECUTABLE_FIELDS = {"code", "command", "script"}
 _NAME_PATTERN = re.compile(r"^[a-z][a-z0-9-]{1,62}[a-z0-9]$")
 _SEMVER_PATTERN = re.compile(
     r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
@@ -71,6 +72,7 @@ class PackValidationContext:
     project_keys: frozenset[str] | None = None
     repository_paths: frozenset[str] | None = None
     field_mappings: FieldMappings | None = None
+    signal_schemas: tuple[SignalCapabilitySchema, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -92,7 +94,7 @@ def load_signal_pack(
     except ValidationError as exc:
         raise PackValidationError(f"Invalid signal pack structure: {exc}") from exc
 
-    _validate_pack(pack, validation_context.em_radar_version)
+    _validate_pack(pack, validation_context)
     return PackLoadResult(pack=pack, warnings=tuple(_collect_warnings(pack, validation_context)))
 
 
@@ -168,7 +170,7 @@ def _check_forbidden_content(value: object, path: tuple[str, ...] = ()) -> None:
             raise PackValidationError(f"{_format_path(path)} contains a remote URL")
 
 
-def _validate_pack(pack: SignalPack, em_radar_version: str) -> None:
+def _validate_pack(pack: SignalPack, context: PackValidationContext) -> None:
     if pack.api_version != API_VERSION:
         raise PackValidationError(f"apiVersion must be {API_VERSION}")
     if pack.kind != PACK_KIND:
@@ -178,22 +180,142 @@ def _validate_pack(pack: SignalPack, em_radar_version: str) -> None:
     _parse_semver(pack.metadata.version, "metadata.version")
     if pack.metadata.min_emradar_version is not None:
         minimum = _parse_semver(pack.metadata.min_emradar_version, "metadata.min_emradar_version")
-        running = _parse_semver(em_radar_version, "running EM Radar version")
+        running = _parse_semver(context.em_radar_version, "running EM Radar version")
         if _compare_semver(minimum, running) > 0:
             raise PackValidationError(
                 f"Pack requires EM Radar {pack.metadata.min_emradar_version} or newer"
             )
 
+    if pack.spec.export_type not in {"private_backup", "public_template"}:
+        raise PackValidationError("spec.export_type must be private_backup or public_template")
     for index, signal in enumerate(pack.spec.signals):
-        catalog_entry = SIGNAL_CATALOG.get(signal.id)
-        if catalog_entry is None:
-            raise PackValidationError(
-                f"spec.signals.{index}.id references unknown signal {signal.id}"
+        if signal.id is not None and signal.id in SIGNAL_CATALOG:
+            catalog_entry = SIGNAL_CATALOG[signal.id]
+            try:
+                catalog_entry.params_schema.model_validate(signal.params or {})
+            except ValidationError as exc:
+                raise PackValidationError(f"Invalid params for signal {signal.id}: {exc}") from exc
+        elif signal.expression is None:
+            raise PackValidationError(f"spec.signals.{index}.expression is required")
+        if signal.expression is not None:
+            _validate_signal_expression(
+                signal.expression,
+                signal.entity_type or "issue",
+                context.signal_schemas,
+                path=f"spec.signals.{index}.expression",
+                allow_missing_values=not signal.enabled,
             )
-        try:
-            catalog_entry.params_schema.model_validate(signal.params or {})
-        except ValidationError as exc:
-            raise PackValidationError(f"Invalid params for signal {signal.id}: {exc}") from exc
+
+    signal_names = {signal.name for signal in pack.spec.signals if signal.name is not None}
+    for group_index, group in enumerate(pack.spec.groups):
+        for signal_name in group.signals:
+            if signal_name not in signal_names:
+                raise PackValidationError(
+                    f"spec.groups.{group_index} references unknown signal {signal_name!r}"
+                )
+
+
+def _validate_signal_expression(
+    expression: Mapping[str, object],
+    entity_type: str,
+    schemas: tuple[SignalCapabilitySchema, ...],
+    *,
+    path: str,
+    allow_missing_values: bool,
+    depth: int = 0,
+) -> None:
+    if not schemas:
+        return
+    schema = next((schema for schema in schemas if entity_type in schema.entity_types), None)
+    if schema is None:
+        raise PackValidationError(f"{path} uses unsupported entity_type {entity_type!r}")
+    _validate_expression_node(
+        expression,
+        {field.key: field for field in schema.fields},
+        path=path,
+        allow_missing_values=allow_missing_values,
+        depth=depth,
+    )
+
+
+def _validate_expression_node(
+    expression: Mapping[str, object],
+    fields: Mapping[str, SignalField],
+    *,
+    path: str,
+    allow_missing_values: bool,
+    depth: int,
+) -> None:
+    if expression.get("type") == "group":
+        if depth > 1:
+            raise PackValidationError(f"{path} supports only one nested group")
+        if expression.get("operator") not in {"all", "any"}:
+            raise PackValidationError(f"{path}.operator must be all or any")
+        conditions = expression.get("conditions")
+        if not isinstance(conditions, list) or not conditions:
+            raise PackValidationError(f"{path}.conditions requires at least one condition")
+        for index, condition in enumerate(conditions):
+            if not isinstance(condition, Mapping):
+                raise PackValidationError(f"{path}.conditions.{index} must be an object")
+            _validate_expression_node(
+                condition,
+                fields,
+                path=f"{path}.conditions.{index}",
+                allow_missing_values=allow_missing_values,
+                depth=depth + 1,
+            )
+        return
+
+    field_key = expression.get("field")
+    operator = expression.get("operator")
+    if not isinstance(field_key, str) or not isinstance(operator, str):
+        raise PackValidationError(f"{path} requires field and operator")
+    field_schema = fields.get(field_key)
+    if field_schema is None:
+        raise PackValidationError(f"{path}.field {field_key!r} is not supported")
+    if operator not in field_schema.operators:
+        raise PackValidationError(f"{path}.operator {operator!r} is not valid for {field_key!r}")
+    if operator in {"is_empty", "is_not_empty"}:
+        return
+    if "value" not in expression:
+        if allow_missing_values:
+            return
+        raise PackValidationError(f"{path}.value is required for enabled signals")
+    _validate_condition_value(expression["value"], field_schema, operator, path)
+
+
+def _validate_condition_value(
+    value: object, field_schema: SignalField, operator: str, path: str
+) -> None:
+    if operator in {"is_any_of", "is_none_of", "contains_any", "does_not_contain_any"}:
+        if not isinstance(value, list) or not value:
+            raise PackValidationError(f"{path}.value must be a non-empty list")
+        return
+    if operator == "between":
+        if isinstance(value, list):
+            if len(value) != 2:
+                raise PackValidationError(f"{path}.value must contain exactly two values")
+            return
+        if isinstance(value, Mapping):
+            required_keys = {"start", "end"} if field_schema.type == "date" else {"min", "max"}
+            if not required_keys.issubset(value):
+                raise PackValidationError(
+                    f"{path}.value must contain {'/'.join(sorted(required_keys))}"
+                )
+            return
+        raise PackValidationError(f"{path}.value must be a range")
+    if field_schema.type in {"number", "sprint_relative_day"} and not isinstance(
+        value, (int, float)
+    ):
+        raise PackValidationError(f"{path}.value must be numeric")
+    if field_schema.type == "duration":
+        if isinstance(value, (int, float)):
+            return
+        if isinstance(value, Mapping) and isinstance(value.get("amount"), (int, float)):
+            unit = value.get("unit", "days")
+            if unit in {"hours", "days"}:
+                return
+        raise PackValidationError(f"{path}.value must be a duration")
 
 
 def _parse_semver(version: str, field_name: str) -> tuple[int, int, int, tuple[str, ...] | None]:
@@ -237,6 +359,8 @@ def _collect_warnings(
     if defaults is not None:
         warnings.extend(_scope_warnings(defaults.scope, context, "spec.defaults.scope"))
     for index, signal in enumerate(pack.spec.signals):
+        if signal.id is None or signal.id not in SIGNAL_CATALOG:
+            continue
         catalog_entry = SIGNAL_CATALOG[signal.id]
         effective_severity = signal.severity or (defaults.severity_override if defaults else None)
         if (

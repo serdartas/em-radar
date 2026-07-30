@@ -2,14 +2,14 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from uuid import UUID, uuid4
 
-from sqlalchemy import JSON, Enum
+from pydantic import field_validator
+from sqlalchemy import JSON, Enum, UniqueConstraint
 from sqlalchemy.engine import Dialect
 from sqlalchemy.types import TypeDecorator
 from sqlmodel import Field, SQLModel
 
 
 class ConnectorName(StrEnum):
-    DEMO = "demo"
     JIRA = "jira"
     GITLAB = "gitlab"
 
@@ -33,11 +33,16 @@ class UUIDListJSON(TypeDecorator[list[str]]):
 
 
 class SourceConnectionBase(SQLModel):
+    name: str = Field(min_length=1)
     connector_name: ConnectorName = Field(sa_type=CONNECTOR_NAME_TYPE)
     config: dict[str, object] = Field(default_factory=dict, sa_type=JSON)
-    selected_project_ids: list[UUID] = Field(default_factory=list, sa_type=UUIDListJSON)
-    selected_board_ids: list[UUID] = Field(default_factory=list, sa_type=UUIDListJSON)
-    selected_repository_ids: list[UUID] = Field(default_factory=list, sa_type=UUIDListJSON)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def strip_name(cls, v: object) -> object:
+        if isinstance(v, str):
+            return v.strip()
+        return v
 
 
 class SourceConnectionCreate(SourceConnectionBase):
@@ -45,11 +50,16 @@ class SourceConnectionCreate(SourceConnectionBase):
 
 
 class SourceConnectionUpdate(SQLModel):
+    name: str | None = Field(default=None, min_length=1)
     connector_name: ConnectorName | None = None
     config: dict[str, object] | None = None
-    selected_project_ids: list[UUID] | None = None
-    selected_board_ids: list[UUID] | None = None
-    selected_repository_ids: list[UUID] | None = None
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def strip_name(cls, v: object) -> object:
+        if isinstance(v, str):
+            return v.strip()
+        return v
 
 
 class SourceConnectionRead(SourceConnectionBase):
@@ -59,6 +69,7 @@ class SourceConnectionRead(SourceConnectionBase):
 
 class SourceConnectionTable(SourceConnectionBase, table=True):
     __tablename__ = "source_connection"
+    __table_args__ = (UniqueConstraint("name", name="uq_source_connection_name"),)
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

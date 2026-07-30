@@ -1,4 +1,5 @@
 from typing import Annotated, Literal
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -6,8 +7,10 @@ from sqlmodel import Session
 from starlette.responses import Response
 
 from em_radar_api.db import get_session, get_write_session
+from em_radar_api.repositories.signal_config_groups import get_signal_config_group
 from em_radar_api.repositories.signal_configs import list_signal_configs
-from em_radar_api.signal_pack_export import export_signal_pack
+from em_radar_api.repositories.signal_definitions import get_signal_definition
+from em_radar_api.signal_pack_export import export_signal_groups_pack, export_signal_pack
 from em_radar_api.signal_pack_import import (
     SignalPackImportPreview,
     apply_signal_pack_import,
@@ -26,19 +29,46 @@ PackName = Annotated[
 class SignalPackImportRequest(BaseModel):
     raw_yaml: str
     mode: Literal["additive", "replace_all"] = "additive"
+    conflict: Literal["skip", "overwrite", "keep_both", "cancel"] = "keep_both"
 
 
 @router.get("/signal-pack/export")
 def export_signal_pack_route(
     mode: Literal["minimal", "full"] = "minimal",
+    export_type: Literal["legacy", "private_backup", "public_template"] = "legacy",
+    group_ids: list[UUID] = Query(default=[]),
     name: PackName = None,
     session: Session = Depends(get_session),
 ) -> Response:
-    yaml_text = export_signal_pack(
-        list_signal_configs(session),
-        full=mode == "full",
-        name=name,
-    )
+    if export_type == "legacy":
+        yaml_text = export_signal_pack(
+            list_signal_configs(session),
+            full=mode == "full",
+            name=name,
+        )
+    else:
+        if not group_ids:
+            raise HTTPException(
+                status_code=422, detail="group_ids is required for this export type"
+            )
+        groups = []
+        for group_id in group_ids:
+            group = get_signal_config_group(session, group_id)
+            if group is None:
+                raise HTTPException(status_code=404, detail="signal config group not found")
+            groups.append(group)
+        definitions_by_id = {
+            signal_id: definition
+            for group in groups
+            for signal_id in group.signal_ids
+            if (definition := get_signal_definition(session, signal_id)) is not None
+        }
+        yaml_text = export_signal_groups_pack(
+            groups,
+            definitions_by_id,
+            export_type=export_type,
+            name=name,
+        )
     return Response(
         content=yaml_text,
         media_type="application/yaml",
@@ -46,7 +76,11 @@ def export_signal_pack_route(
     )
 
 
-@router.post("/signal-pack/import", response_model=SignalPackImportPreview)
+@router.post(
+    "/signal-pack/import",
+    response_model=SignalPackImportPreview,
+    response_model_exclude_defaults=True,
+)
 def preview_signal_pack_import_route(
     request: SignalPackImportRequest,
     session: Session = Depends(get_session),
@@ -61,7 +95,11 @@ def preview_signal_pack_import_route(
         raise _invalid_pack(error) from error
 
 
-@router.post("/signal-pack/import/apply", response_model=SignalPackImportPreview)
+@router.post(
+    "/signal-pack/import/apply",
+    response_model=SignalPackImportPreview,
+    response_model_exclude_defaults=True,
+)
 def apply_signal_pack_import_route(
     request: SignalPackImportRequest,
     session: Session = Depends(get_write_session),
@@ -71,6 +109,7 @@ def apply_signal_pack_import_route(
             session,
             request.raw_yaml,
             replace_all=request.mode == "replace_all",
+            conflict=request.conflict,
         )
     except PackValidationError as error:
         raise _invalid_pack(error) from error

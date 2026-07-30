@@ -1,26 +1,36 @@
 from collections.abc import AsyncIterator, Sequence
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Literal, Self
 from uuid import UUID
 
-from em_radar_connector_demo import DemoConnector
+from em_radar_connector_jira.connector import JiraConnector
 from em_radar_core.connectors import (
     ConnectorConfigError,
     ConnectorError,
+    MergeRequestProvider,
     MergeRequestScope,
+    ReviewProvider,
     TransitionProvider,
     WorkItemProvider,
     WorkItemScope,
 )
-from em_radar_core.evaluation import SignalConfig, SignalEvaluator
+from em_radar_core.evaluation import ScopeDescriptor, evaluate_signal_definition
 from em_radar_core.models import (
+    Board,
     Confidence,
     EntityType,
     EvaluationContext,
     EvaluationWindow,
+    MergeRequest,
+    Project,
     ReportStatus,
+    Repository,
+    Review,
     Severity,
     SignalFinding,
+    SignalDefinition,
+    SignalOrigin,
     Source,
     Sprint,
     SprintState,
@@ -31,10 +41,10 @@ from em_radar_core.models import (
     WorkItem,
     WorkingMode,
 )
-from em_radar_core.signals import SignalData, default_registry
+from em_radar_core.signals import SignalData
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, JsonValue, model_validator
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from em_radar_api.db import get_session, get_write_session
 from em_radar_api.connector_registry import create_connector
@@ -47,11 +57,13 @@ from em_radar_api.repositories.reports import (
     list_reports,
     save_report,
 )
-from em_radar_api.repositories.signal_configs import list_signal_configs
 from em_radar_api.repositories.source_connections import (
     get_source_connection,
     instantiate_connector,
 )
+from em_radar_api.scope_definitions import ScopeDefinitionTable, ScopeType
+from em_radar_api.signal_config_groups import SignalConfigGroupTable
+from em_radar_api.signal_definitions import SignalDefinitionTable
 from em_radar_api.source_connections import ConnectorName
 from em_radar_api.tables import (
     EvaluationWindowTable,
@@ -63,48 +75,23 @@ from em_radar_api.tables import (
 router = APIRouter()
 DEFAULT_KANBAN_REPORT_DAYS = 14
 
-
-class ReportWindowRequest(BaseModel):
-    window_type: WindowType
-    sprint_id: UUID | None = None
-    start: datetime | None = None
-    end: datetime | None = None
-
-    @model_validator(mode="after")
-    def validate_scope(self) -> Self:
-        if self.window_type is WindowType.SPRINT:
-            if self.sprint_id is None or self.start is not None or self.end is not None:
-                raise ValueError("sprint windows require only sprint_id")
-        elif self.sprint_id is not None or self.start is None or self.end is None:
-            raise ValueError("date-range windows require only start and end")
-        return self
-
-
-class JiraReportRequest(BaseModel):
-    connection_id: UUID
-    project_external_id: str
-    board_external_id: str
-    working_mode: WorkingMode
-    sprint_length_days: int | None = None
-
-    @model_validator(mode="after")
-    def validate_working_mode(self) -> Self:
-        if self.working_mode is WorkingMode.KANBAN and self.sprint_length_days is not None:
-            raise ValueError("sprint_length_days must be null for kanban reports")
-        return self
+# Entity types whose signals require a code (VCS) source.  Everything else is treated as
+# a board (task-tracker) signal.  Both the connector-capability spelling (`merge_request`,
+# the authoritative signal-pack value per data model 5.12B) and the canonical-model spelling
+# (`mergerequest`) are accepted so imported and canonical definitions classify identically.
+_CODE_ENTITY_TYPES: frozenset[str] = frozenset(
+    {"merge_request", "mergerequest", "repository"}
+)
 
 
 class ReportRunRequest(BaseModel):
-    connector: Literal["demo", "jira"]
-    window: ReportWindowRequest | None = None
-    jira: JiraReportRequest | None = None
+    connector: Literal["jira"]
+    team_profile_id: UUID | None = None
 
     @model_validator(mode="after")
     def validate_connector_scope(self) -> Self:
-        if self.connector == "jira" and self.jira is None:
-            raise ValueError("jira reports require jira scope")
-        if self.connector == "demo" and self.jira is not None:
-            raise ValueError("demo reports do not accept jira scope")
+        if self.connector == "jira" and self.team_profile_id is None:
+            raise ValueError("jira reports require a team_profile_id")
         return self
 
 
@@ -161,110 +148,111 @@ async def run_report(
     request: ReportRunRequest,
     session: Session = Depends(get_write_session),
 ) -> ReportDetailResponse:
-    if request.connector == "jira":
-        if request.jira is None:
-            raise HTTPException(status_code=422, detail="jira reports require jira scope")
-        return await _run_jira_report(request.jira, session)
-    return await _run_demo_report(request.window, session)
+    assert request.team_profile_id is not None  # enforced by model validator
+    return await _run_team_report(request.team_profile_id, session)
 
 
-async def _run_demo_report(
-    requested_window: ReportWindowRequest | None,
+@dataclass
+class _BoardFetchResult:
+    project: Project
+    board: Board
+    sprints: list[Sprint]
+    workitems: list[WorkItem]
+    transitions: list[Transition]
+    window: EvaluationWindow
+
+
+@dataclass
+class _CodeFetchResult:
+    repositories: list[Repository]
+    mergerequests: list[MergeRequest]
+    reviews: list[Review]
+
+
+async def _run_team_report(
+    team_profile_id: UUID,
     session: Session,
 ) -> ReportDetailResponse:
     started_at = datetime.now(timezone.utc)
-    connector = DemoConnector({})
+    team_row = session.get(TeamProfileTable, team_profile_id)
+    if team_row is None:
+        raise HTTPException(status_code=404, detail="team not found")
 
-    try:
-        users = await connector.list_users()
-        projects = await connector.list_projects()
-        boards = [
-            board
-            for project in projects
-            for board in await connector.list_boards(project.external_id)
-        ]
-        sprints = [
-            sprint for board in boards for sprint in await connector.list_sprints(board.external_id)
-        ]
-        repositories = await connector.list_repositories()
+    board_scope = _team_board_scope(session, team_row)
+    has_code_source = team_row.code_connection_id is not None
 
-        team = TeamProfile(
-            name="Demo team",
-            project_ids=[project.id for project in projects],
-            board_ids=[board.id for board in boards],
-            repository_ids=[repository.id for repository in repositories],
-            created_at=started_at,
-            updated_at=started_at,
+    # Require at least one source before running any evaluation.
+    if board_scope is None and not has_code_source:
+        raise HTTPException(
+            status_code=422,
+            detail="team has no source attached; attach a task board or a code source",
         )
-        window = _evaluation_window(requested_window, sprints, team.id)
 
-        workitems = await _collect(
-            connector.fetch_workitems(
-                WorkItemScope(
-                    project_external_ids=[project.external_id for project in projects],
-                    board_external_ids=[board.external_id for board in boards],
-                ),
-                window,
-            )
+    team = TeamProfile.model_validate(team_row, from_attributes=True)
+    all_definitions = _signal_definitions_for_team(session, team_row)
+    board_definitions, code_definitions = _partition_definitions_by_source(all_definitions)
+
+    # Fetch board data (project, board, sprints, workitems, transitions) when board scope present.
+    board_data: _BoardFetchResult | None = None
+    if board_scope is not None:
+        board_data = await _fetch_board_data(session, team, board_scope, started_at)
+
+    # Derive evaluation window from the board, or fall back to a 14-day date range for
+    # code-only teams.  Full working-mode window derivation for all source combinations
+    # is M6-02 and is out of scope here.
+    if board_data is not None:
+        window = board_data.window
+    else:
+        window = EvaluationWindow(
+            window_type=WindowType.DATE_RANGE,
+            start=started_at - timedelta(days=DEFAULT_KANBAN_REPORT_DAYS),
+            end=started_at,
+            team_profile_id=team.id,
         )
-        merge_requests = await _collect(
-            connector.fetch_mergerequests(
-                MergeRequestScope(
-                    repository_external_ids=[repository.external_id for repository in repositories],
-                    include_closed_unmerged=True,
-                ),
-                window,
-            )
-        )
-        reviews = await _collect(
-            connector.fetch_reviews([merge_request.external_id for merge_request in merge_requests])
-        )
-        transitions = await _collect(
-            connector.fetch_transitions(
-                "workitem", [workitem.external_id for workitem in workitems]
-            )
-        )
-        comments = [
-            *await _collect(
-                connector.fetch_comments(
-                    "workitem", [workitem.external_id for workitem in workitems]
-                )
-            ),
-            *await _collect(
-                connector.fetch_comments(
-                    "mergerequest",
-                    [merge_request.external_id for merge_request in merge_requests],
-                )
-            ),
-        ]
-    finally:
-        await connector.close()
+
+    # Fetch code data (repositories, merge requests, reviews) when code source is present.
+    code_data: _CodeFetchResult | None = None
+    if has_code_source and team_row.code_connection_id is not None:
+        code_data = await _fetch_code_data(session, team_row.code_connection_id, window)
+
+    board_workitems = board_data.workitems if board_data else []
+    board_transitions = board_data.transitions if board_data else []
+    code_mergerequests = code_data.mergerequests if code_data else []
+    code_reviews = code_data.reviews if code_data else []
 
     identity = persist_fetch(
         session,
-        users=users,
-        projects=projects,
-        boards=boards,
-        sprints=sprints,
-        workitems=workitems,
-        repositories=repositories,
-        mergerequests=merge_requests,
-        reviews=reviews,
-        transitions=transitions,
-        comments=comments,
+        users=(
+            _placeholder_jira_users(board_workitems, board_transitions)
+            + _placeholder_code_users(code_mergerequests, code_reviews)
+        ),
+        projects=[board_data.project] if board_data else [],
+        boards=[board_data.board] if board_data else [],
+        sprints=board_data.sprints if board_data else [],
+        workitems=board_workitems,
+        transitions=board_transitions,
+        repositories=code_data.repositories if code_data else [],
+        mergerequests=code_mergerequests,
+        reviews=code_reviews,
     )
-    session.add(_team_row(team))
-    session.commit()
     persisted_window = _persisted_window(window, identity.identity_map)
     session.add(EvaluationWindowTable(**persisted_window.model_dump()))
     session.commit()
-    signal_configs = _signal_configs(session)
+
+    skipped_signals = _skipped_signal_entries(
+        board_definitions=board_definitions,
+        code_definitions=code_definitions,
+        board_attached=board_scope is not None,
+        code_attached=has_code_source,
+    )
 
     report = create_report(
         session,
         ReportTable(
             evaluation_window_id=window.id,
-            signal_pack_snapshot=_signal_pack_snapshot(signal_configs),
+            signal_pack_snapshot=_team_signal_pack_snapshot(
+                team_row, all_definitions, skipped_signals
+            ),
             status=ReportStatus.PENDING,
             started_at=started_at,
         ),
@@ -273,22 +261,37 @@ async def _run_demo_report(
     save_report(session, report)
 
     try:
-        findings = SignalEvaluator().evaluate(
-            SignalData(
-                report_id=report.id,
-                projects=tuple(projects),
-                boards=tuple(boards),
-                sprints=tuple(sprints),
-                workitems=tuple(workitems),
-                repositories=tuple(repositories),
-                mergerequests=tuple(merge_requests),
-                reviews=tuple(reviews),
-                transitions=tuple(transitions),
-                comments=tuple(comments),
-            ),
-            EvaluationContext(now=started_at, window=window, team=team),
-            signal_configs,
+        signal_data = SignalData(
+            report_id=report.id,
+            projects=(board_data.project,) if board_data else (),
+            boards=(board_data.board,) if board_data else (),
+            sprints=tuple(board_data.sprints) if board_data else (),
+            workitems=tuple(board_workitems),
+            transitions=tuple(board_transitions),
+            repositories=tuple(code_data.repositories) if code_data else (),
+            mergerequests=tuple(code_mergerequests),
+            reviews=tuple(code_reviews),
         )
+        ctx = EvaluationContext(now=started_at, window=window, team=team)
+
+        # Evaluate board signals (workitem/sprint/issue entity types) when board source attached.
+        findings: list[SignalFinding] = []
+        if board_data is not None and board_scope is not None:
+            scope_descriptor = _scope_descriptor(board_scope)
+            for definition in board_definitions:
+                findings.extend(
+                    evaluate_signal_definition(
+                        definition,
+                        signal_data,
+                        ctx,
+                        JiraConnector.describe_signal_schema(),
+                        [scope_descriptor],
+                    )
+                )
+
+        # Code signals (mergerequest entity type) are evaluated when code source is attached.
+        # Full MR signal evaluation ships in M4; currently produces no findings.
+
         persisted_findings = [
             _persisted_finding(finding, identity.identity_map) for finding in findings
         ]
@@ -308,21 +311,23 @@ async def _run_demo_report(
     return ReportDetailResponse.from_report_with_findings(report, persisted_findings)
 
 
-async def _run_jira_report(
-    request: JiraReportRequest,
+async def _fetch_board_data(
     session: Session,
-) -> ReportDetailResponse:
-    started_at = datetime.now(timezone.utc)
-    connection = get_source_connection(session, request.connection_id)
+    team: TeamProfile,
+    board_scope: ScopeDefinitionTable,
+    started_at: datetime,
+) -> _BoardFetchResult:
+    """Fetch Jira board data (project, board, sprints, workitems, transitions) and derive window."""
+    connection = get_source_connection(session, board_scope.connection_id)
     if connection is None:
         raise HTTPException(status_code=404, detail="connection not found")
     if connection.connector_name != ConnectorName.JIRA:
-        raise HTTPException(status_code=400, detail="connection is not a Jira connection")
+        raise HTTPException(status_code=400, detail="team board scope is not a Jira connection")
 
     try:
         connector = instantiate_connector(
             session,
-            request.connection_id,
+            board_scope.connection_id,
             lambda config: create_connector("jira", config),
         )
     except ConnectorConfigError as error:
@@ -332,40 +337,18 @@ async def _run_jira_report(
     if not isinstance(connector, WorkItemProvider):
         raise HTTPException(status_code=400, detail="connection does not support Jira reports")
 
+    board_external_id = str(board_scope.external_ref.get("id"))
     try:
-        projects = [
-            project
-            for project in await connector.list_projects()
-            if project.external_id == request.project_external_id
-        ]
-        if not projects:
-            raise HTTPException(status_code=404, detail="Jira project not found")
-        boards = [
-            board
-            for board in await connector.list_boards(request.project_external_id)
-            if board.external_id == request.board_external_id
-        ]
-        if not boards:
+        project, board = await _find_jira_board(connector, board_external_id)
+        if project is None or board is None:
             raise HTTPException(status_code=404, detail="Jira board not found")
-        sprints = await connector.list_sprints(request.board_external_id)
-
-        team = TeamProfile(
-            name=f"{projects[0].key} Jira {request.working_mode.value}",
-            connection_ids=[request.connection_id],
-            project_ids=[projects[0].id],
-            board_ids=[boards[0].id],
-            repository_ids=[],
-            working_mode=request.working_mode,
-            sprint_length_days=request.sprint_length_days,
-            created_at=started_at,
-            updated_at=started_at,
-        )
-        window = _jira_evaluation_window(request, sprints, team.id, started_at)
+        sprints = await connector.list_sprints(board_external_id)
+        window = _jira_evaluation_window(team, sprints, team.id, started_at)
         workitems = await _collect(
             connector.fetch_workitems(
                 WorkItemScope(
-                    project_external_ids=[request.project_external_id],
-                    board_external_ids=[request.board_external_id],
+                    project_external_ids=[project.external_id],
+                    board_external_ids=[board_external_id],
                 ),
                 window,
             )
@@ -385,64 +368,59 @@ async def _run_jira_report(
     finally:
         await connector.close()
 
-    identity = persist_fetch(
-        session,
-        users=_placeholder_jira_users(workitems, transitions),
-        projects=projects,
-        boards=boards,
+    return _BoardFetchResult(
+        project=project,
+        board=board,
         sprints=sprints,
         workitems=workitems,
         transitions=transitions,
+        window=window,
     )
-    session.add(_team_row(team))
-    session.commit()
-    persisted_window = _persisted_window(window, identity.identity_map)
-    session.add(EvaluationWindowTable(**persisted_window.model_dump()))
-    session.commit()
-    signal_configs = _signal_configs(session)
 
-    report = create_report(
-        session,
-        ReportTable(
-            evaluation_window_id=window.id,
-            signal_pack_snapshot=_signal_pack_snapshot(signal_configs),
-            status=ReportStatus.PENDING,
-            started_at=started_at,
-        ),
-    )
-    report.status = ReportStatus.RUNNING
-    save_report(session, report)
+
+async def _fetch_code_data(
+    session: Session,
+    code_connection_id: UUID,
+    window: EvaluationWindow,
+) -> _CodeFetchResult:
+    """Fetch repositories, merge requests, and (if available) reviews from the code connection."""
+    code_connection = get_source_connection(session, code_connection_id)
+    if code_connection is None:
+        raise HTTPException(status_code=404, detail="code connection not found")
 
     try:
-        findings = SignalEvaluator().evaluate(
-            SignalData(
-                report_id=report.id,
-                projects=tuple(projects),
-                boards=tuple(boards),
-                sprints=tuple(sprints),
-                workitems=tuple(workitems),
-                transitions=tuple(transitions),
-            ),
-            EvaluationContext(now=started_at, window=window, team=team),
-            signal_configs,
+        code_connector = instantiate_connector(
+            session,
+            code_connection_id,
+            lambda config: create_connector(str(code_connection.connector_name), config),
         )
-        persisted_findings = [
-            _persisted_finding(finding, identity.identity_map) for finding in findings
-        ]
-        add_findings(session, persisted_findings)
-        report.status = ReportStatus.SUCCEEDED
-        report.finished_at = datetime.now(timezone.utc)
-        report.findings_count_by_severity = _counts_by_severity(findings)
-        save_report(session, report)
-    except Exception as error:
-        session.rollback()
-        report.status = ReportStatus.FAILED
-        report.finished_at = datetime.now(timezone.utc)
-        report.error = str(error)
-        save_report(session, report)
-        raise
+    except ConnectorConfigError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    if code_connector is None:
+        raise HTTPException(status_code=404, detail="code connection not found")
 
-    return ReportDetailResponse.from_report_with_findings(report, persisted_findings)
+    if not isinstance(code_connector, MergeRequestProvider):
+        # Connector registered but does not provide MR data; code signals produce no findings.
+        await code_connector.close()
+        return _CodeFetchResult(repositories=[], mergerequests=[], reviews=[])
+
+    try:
+        repositories = await code_connector.list_repositories()
+        mr_scope = MergeRequestScope(
+            repository_external_ids=[repo.external_id for repo in repositories]
+        )
+        mergerequests = await _collect(code_connector.fetch_mergerequests(mr_scope, window))
+        reviews = (
+            await _collect(code_connector.fetch_reviews([mr.external_id for mr in mergerequests]))
+            if isinstance(code_connector, ReviewProvider)
+            else []
+        )
+    except ConnectorError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    finally:
+        await code_connector.close()
+
+    return _CodeFetchResult(repositories=repositories, mergerequests=mergerequests, reviews=reviews)
 
 
 @router.get("/reports", response_model=list[ReportSummaryResponse])
@@ -463,29 +441,13 @@ async def get_report_endpoint(
     return ReportDetailResponse.from_report_with_findings(report, get_findings(session, report_id))
 
 
-def _evaluation_window(
-    requested: ReportWindowRequest | None,
-    sprints: list[Sprint],
-    team_id: UUID,
-) -> EvaluationWindow:
-    if requested is not None:
-        return EvaluationWindow(team_profile_id=team_id, **requested.model_dump())
-
-    active_sprint = next(sprint for sprint in sprints if sprint.state is SprintState.ACTIVE)
-    return EvaluationWindow(
-        window_type=WindowType.SPRINT,
-        sprint_id=active_sprint.id,
-        team_profile_id=team_id,
-    )
-
-
 def _jira_evaluation_window(
-    request: JiraReportRequest,
+    team: TeamProfile,
     sprints: list[Sprint],
     team_id: UUID,
     now: datetime,
 ) -> EvaluationWindow:
-    if request.working_mode is WorkingMode.KANBAN:
+    if team.working_mode is WorkingMode.KANBAN:
         return EvaluationWindow(
             window_type=WindowType.DATE_RANGE,
             start=now - timedelta(days=DEFAULT_KANBAN_REPORT_DAYS),
@@ -506,10 +468,6 @@ def _jira_evaluation_window(
     )
 
 
-def _team_row(team: TeamProfile) -> TeamProfileTable:
-    return TeamProfileTable.model_validate(team)
-
-
 def _persisted_window(window: EvaluationWindow, identity_map: dict[UUID, UUID]) -> EvaluationWindow:
     """Same window with its sprint reference resolved to the persisted internal id (the
     in-memory window keeps the connector sprint id so it lines up with in-memory work items)."""
@@ -528,42 +486,138 @@ def _persisted_finding(
     return SignalFindingTable(**data)
 
 
-def _signal_pack_snapshot(configs: Sequence[SignalConfig]) -> dict[str, object]:
-    configs_by_id = {config.signal_id: config for config in configs}
+def _partition_definitions_by_source(
+    definitions: list[SignalDefinition],
+) -> tuple[list[SignalDefinition], list[SignalDefinition]]:
+    """Split signal definitions into (board_signals, code_signals) by entity_type."""
+    board: list[SignalDefinition] = []
+    code: list[SignalDefinition] = []
+    for definition in definitions:
+        if definition.entity_type in _CODE_ENTITY_TYPES:
+            code.append(definition)
+        else:
+            # Default: treat unknown entity types as board signals so they participate
+            # in the board evaluation path rather than being silently dropped.
+            board.append(definition)
+    return board, code
+
+
+def _skipped_signal_entries(
+    *,
+    board_definitions: list[SignalDefinition],
+    code_definitions: list[SignalDefinition],
+    board_attached: bool,
+    code_attached: bool,
+) -> list[dict[str, object]]:
+    """Build skip-note entries for signal definitions whose required source is absent."""
+    entries: list[dict[str, object]] = []
+    if not board_attached:
+        for defn in board_definitions:
+            entries.append(
+                {"id": str(defn.id), "name": defn.name, "reason": "board source not attached"}
+            )
+    if not code_attached:
+        for defn in code_definitions:
+            entries.append(
+                {"id": str(defn.id), "name": defn.name, "reason": "code source not attached"}
+            )
+    return entries
+
+
+def _team_signal_pack_snapshot(
+    team_row: TeamProfileTable,
+    definitions: Sequence[SignalDefinition],
+    skipped_signals: Sequence[dict[str, object]] = (),
+) -> dict[str, object]:
     return {
         "schema_id": "emradar.dev/v1",
-        "signals": [
+        "signal_config_group_ids": [str(group_id) for group_id in team_row.signal_config_group_ids],
+        "signal_definitions": [
             {
-                "id": signal.id,
-                "name": signal.name,
-                "default_severity": signal.default_severity.value,
-                "enabled": config.enabled,
-                "severity": (config.severity or signal.default_severity).value,
-                "params": dict(config.params),
+                "id": str(definition.id),
+                "name": definition.name,
+                "entity_type": definition.entity_type,
+                "enabled": definition.enabled,
+                "origin": definition.origin.value,
+                "template_key": definition.template_key,
+                "version": definition.version,
             }
-            for signal in (default_registry.get(signal_id) for signal_id in default_registry.ids())
-            for config in [configs_by_id[signal.id]]
+            for definition in definitions
         ],
+        "skipped_signals": list(skipped_signals),
     }
 
 
-def _signal_configs(session: Session) -> list[SignalConfig]:
-    stored = {config.signal_id: config for config in list_signal_configs(session)}
-    configs: list[SignalConfig] = []
-    for signal_id in default_registry.ids():
-        stored_config = stored.get(signal_id)
-        if stored_config is None:
-            configs.append(SignalConfig(signal_id=signal_id))
-        else:
-            configs.append(
-                SignalConfig(
-                    signal_id=signal_id,
-                    enabled=stored_config.enabled,
-                    params=stored_config.params,
-                    severity=stored_config.severity_override,
-                )
-            )
-    return configs
+def _team_board_scope(session: Session, team_row: TeamProfileTable) -> ScopeDefinitionTable | None:
+    scopes = session.exec(
+        select(ScopeDefinitionTable).where(ScopeDefinitionTable.id.in_(team_row.scope_ids))
+    ).all()
+    return next((scope for scope in scopes if scope.scope_type is ScopeType.BOARD), None)
+
+
+async def _find_jira_board(
+    connector: WorkItemProvider, board_external_id: str
+) -> tuple[Project, Board] | tuple[None, None]:
+    for project in await connector.list_projects():
+        for board in await connector.list_boards(project.external_id):
+            if board.external_id == board_external_id:
+                return project, board
+    return None, None
+
+
+def _signal_definitions_for_team(
+    session: Session, team_row: TeamProfileTable
+) -> list[SignalDefinition]:
+    groups = session.exec(
+        select(SignalConfigGroupTable).where(
+            SignalConfigGroupTable.id.in_(team_row.signal_config_group_ids)
+        )
+    ).all()
+    ordered_ids: list[UUID] = []
+    seen: set[UUID] = set()
+    for group in groups:
+        for signal_id in group.signal_ids:
+            if signal_id not in seen:
+                seen.add(signal_id)
+                ordered_ids.append(signal_id)
+
+    rows = session.exec(
+        select(SignalDefinitionTable).where(SignalDefinitionTable.id.in_(ordered_ids))
+    ).all()
+    rows_by_id = {row.id: row for row in rows}
+    return [
+        _definition_from_row(rows_by_id[signal_id])
+        for signal_id in ordered_ids
+        if signal_id in rows_by_id and rows_by_id[signal_id].enabled
+    ]
+
+
+def _definition_from_row(row: SignalDefinitionTable) -> SignalDefinition:
+    return SignalDefinition(
+        id=row.id,
+        name=row.name,
+        description=row.description,
+        entity_type=row.entity_type,
+        expression=row.expression,
+        report_settings=row.report_settings,
+        enabled=row.enabled,
+        origin=SignalOrigin(row.origin),
+        template_key=row.template_key,
+        version=row.version,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+def _scope_descriptor(scope: ScopeDefinitionTable) -> ScopeDescriptor:
+    return ScopeDescriptor(
+        connector_id=str(scope.connection_id),
+        scope_id=str(scope.id),
+        scope_type=scope.scope_type.value,
+        name=scope.name,
+        external_ref=dict(scope.external_ref),
+        capabilities=tuple(scope.capabilities),
+    )
 
 
 def _placeholder_jira_users(
@@ -587,6 +641,32 @@ def _placeholder_jira_users(
             display_name="Unknown Jira user",
         )
         for user_id in sorted(user_ids)
+    ]
+
+
+def _placeholder_code_users(
+    mergerequests: Sequence[MergeRequest],
+    reviews: Sequence[Review],
+) -> list[User]:
+    """Placeholder User rows for MR authors and review reviewers.
+
+    MergeRequestTable.author_id is a required FK; users must be persisted before MRs.
+    """
+    author_sources: dict[UUID, Source] = {}
+    for mr in mergerequests:
+        author_sources[mr.author_id] = mr.source
+    default_source = mergerequests[0].source if mergerequests else Source.GITLAB
+    for review in reviews:
+        if review.reviewer_id not in author_sources:
+            author_sources[review.reviewer_id] = default_source
+    return [
+        User(
+            id=user_id,
+            source=source,
+            external_id=str(user_id),
+            display_name="Unknown code user",
+        )
+        for user_id, source in sorted(author_sources.items())
     ]
 
 

@@ -1,81 +1,79 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
-import { type SignalConfig } from "@/lib/signalConfigs"
 import { SignalSettingsPage } from "@/pages/SignalSettingsPage"
 
-const SIGNAL_IDS = [
-  "stale-in-progress-work-item",
-  "blocked-without-update",
-  "story-without-acceptance-criteria",
-  "story-without-parent-epic",
-  "epic-too-broad",
-  "epic-without-measurable-description",
-  "repeated-carry-over",
-  "sprint-scope-churn",
-  "mergerequest-waiting-too-long",
-  "mergerequest-without-linked-workitem",
-  "large-mergerequest-risk",
-  "failing-pipeline-too-long",
-  "merged-without-enough-approval",
+const connectors = [
+  {
+    name: "jira",
+    display_name: "Jira",
+    config_schema: { type: "object", properties: {} },
+    capabilities: {
+      provides_workitems: true,
+      provides_sprints: true,
+      provides_mergerequests: false,
+      provides_repositories: false,
+      provides_reviews: false,
+      provides_comments: false,
+      provides_transitions: true,
+      supports_incremental_fetch: true,
+      supports_pagination_cursor: false,
+      max_window_days: null,
+    },
+    signal_schema: {
+      connector_type: "jira",
+      entity_types: ["issue"],
+      scope_types: [],
+      fields: [
+        {
+          key: "age_in_current_status",
+          label: "Age in current status",
+          type: "duration",
+          operators: ["greater_than", "less_than"],
+          values: [],
+          value_provider: null,
+          availability: null,
+        },
+        {
+          key: "status_category",
+          label: "Status Category",
+          type: "enum",
+          operators: ["is", "is_not"],
+          values: ["todo", "in_progress", "done"],
+          value_provider: null,
+          availability: null,
+        },
+      ],
+    },
+  },
 ]
 
-function makeConfig(signalId: string): SignalConfig {
-  if (signalId === "stale-in-progress-work-item") {
-    return {
-      signal_id: signalId,
-      name: "Stale in-progress work item",
-      description: "Flags items stuck in progress.",
-      default_severity: "warning",
-      enabled: true,
-      severity_override: null,
-      params: { days_threshold: 14 },
-      params_schema: {
-        type: "object",
-        properties: {
-          days_threshold: { type: "integer", title: "Days Threshold", default: 7 },
-        },
-      },
-    }
-  }
-  return {
-    signal_id: signalId,
-    name: signalId,
-    description: `Description for ${signalId}.`,
-    default_severity: "info",
-    enabled: true,
-    severity_override: null,
-    params: {},
-    params_schema: { type: "object", properties: {} },
-  }
-}
-
-function jsonResponse(body: unknown): Response {
+function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
-    status: 200,
+    status,
     headers: { "Content-Type": "application/json" },
   })
 }
 
-function mockApi() {
+function mockApi(options: { duplicateName?: boolean } = {}) {
   return vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
     const url = typeof input === "string" ? input : input.toString()
     const method = init?.method ?? "GET"
-
-    if (url.endsWith("/api/signal-configs") && method === "GET") {
-      return Promise.resolve(jsonResponse(SIGNAL_IDS.map(makeConfig)))
+    if (url.endsWith("/api/signal-definitions") && method === "GET") {
+      return Promise.resolve(jsonResponse([]))
     }
-    if (url.endsWith("/stale-in-progress-work-item/reset") && method === "POST") {
-      const reset = makeConfig("stale-in-progress-work-item")
-      reset.params = { days_threshold: 7 }
-      return Promise.resolve(jsonResponse(reset))
+    if (url.endsWith("/api/connectors")) {
+      return Promise.resolve(jsonResponse(connectors))
     }
-    if (url.endsWith("/api/signal-configs/stale-in-progress-work-item") && method === "PATCH") {
-      const patched = makeConfig("stale-in-progress-work-item")
-      patched.params = JSON.parse(String(init?.body)).params
-      return Promise.resolve(jsonResponse(patched))
+    if (url.endsWith("/api/signal-definitions") && method === "POST") {
+      if (options.duplicateName) {
+        return Promise.resolve(
+          jsonResponse({ detail: { code: "conflict", message: "signal name must be unique" } }, 409),
+        )
+      }
+      return Promise.resolve(jsonResponse({ id: "signal-1", ...JSON.parse(String(init?.body)) }))
     }
     throw new Error(`unexpected fetch: ${method} ${url}`)
   })
@@ -94,60 +92,95 @@ function renderPage() {
   )
 }
 
+async function openForm() {
+  fireEvent.click(await screen.findByRole("button", { name: "Create new" }))
+  await screen.findByRole("button", { name: "Save signal" })
+}
+
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
 })
 
 describe("SignalSettingsPage", () => {
-  it("lists all 13 signals", async () => {
+  it("shows the create form without any template controls", async () => {
     mockApi()
     renderPage()
 
-    await screen.findByText("Stale in-progress work item")
-    expect(screen.getAllByRole("listitem")).toHaveLength(13)
+    await openForm()
+
+    expect(screen.queryByRole("button", { name: "Duplicate" })).not.toBeInTheDocument()
+    expect(screen.getByLabelText("Name")).toBeInTheDocument()
+    expect(screen.getByLabelText("Type")).toBeInTheDocument()
   })
 
-  it("issues a PATCH with the edited threshold", async () => {
+  it("adds a second rule joined by a uniform connector shown on both rows", async () => {
+    mockApi()
+    renderPage()
+    await openForm()
+
+    fireEvent.change(screen.getByLabelText("Add rule"), { target: { value: "OR" } })
+
+    // The first row connector now reflects the shared operator, the new last row offers add again.
+    expect((screen.getByLabelText("Connector 1") as HTMLSelectElement).value).toBe("OR")
+    expect(screen.getByLabelText("Add rule")).toBeInTheDocument()
+  })
+
+  it("saves a two-rule OR signal with operator any and two conditions", async () => {
     const fetchMock = mockApi()
     renderPage()
+    await openForm()
 
-    const input = (await screen.findByLabelText(/Days Threshold/)) as HTMLInputElement
-    fireEvent.change(input, { target: { value: "10" } })
-
-    const row = input.closest("li")
-    expect(row).not.toBeNull()
-    fireEvent.click(within(row as HTMLElement).getByRole("button", { name: "Save" }))
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "My signal" } })
+    fireEvent.change(screen.getByLabelText("Add rule"), { target: { value: "OR" } })
+    fireEvent.click(screen.getByRole("button", { name: "Save signal" }))
 
     await waitFor(() => {
       const call = fetchMock.mock.calls.find(
-        ([url, requestInit]) =>
-          String(url).endsWith("/api/signal-configs/stale-in-progress-work-item") &&
-          requestInit?.method === "PATCH",
+        ([url, init]) => String(url).endsWith("/api/signal-definitions") && init?.method === "POST",
       )
       expect(call).toBeTruthy()
       const body = JSON.parse(String((call?.[1] as RequestInit).body))
-      expect(body.params.days_threshold).toBe(10)
+      expect(body.name).toBe("My signal")
+      expect(body.expression.operator).toBe("any")
+      expect(body.expression.conditions).toHaveLength(2)
+      expect(body.report_settings.severity).toBe("warning")
     })
   })
 
-  it("restores the default when reset", async () => {
-    const fetchMock = mockApi()
+  it("does not exceed five rules", async () => {
+    mockApi()
     renderPage()
+    await openForm()
 
-    const input = (await screen.findByLabelText(/Days Threshold/)) as HTMLInputElement
-    expect(input.value).toBe("14")
+    for (let index = 0; index < 4; index += 1) {
+      fireEvent.change(screen.getByLabelText("Add rule"), { target: { value: "AND" } })
+    }
 
-    const row = input.closest("li")
-    fireEvent.click(within(row as HTMLElement).getByRole("button", { name: "Reset to default" }))
+    expect(screen.queryByLabelText("Add rule")).not.toBeInTheDocument()
+    expect(screen.getByText("Max 5")).toBeInTheDocument()
+  })
 
-    await waitFor(() => {
-      expect((screen.getByLabelText(/Days Threshold/) as HTMLInputElement).value).toBe("7")
-    })
-    expect(
-      fetchMock.mock.calls.some(([url, requestInit]) =>
-        String(url).endsWith("/stale-in-progress-work-item/reset") && requestInit?.method === "POST",
-      ),
-    ).toBe(true)
+  it("renders an enum value dropdown for enum fields", async () => {
+    mockApi()
+    renderPage()
+    await openForm()
+
+    fireEvent.change(screen.getByLabelText("Field"), { target: { value: "status_category" } })
+
+    const valueControl = screen.getByLabelText("Value") as HTMLSelectElement
+    expect(valueControl.tagName).toBe("SELECT")
+    expect(screen.getByRole("option", { name: "in_progress" })).toBeInTheDocument()
+  })
+
+  it("surfaces a duplicate-name conflict message", async () => {
+    mockApi({ duplicateName: true })
+    renderPage()
+    await openForm()
+
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Taken" } })
+    fireEvent.click(screen.getByRole("button", { name: "Save signal" }))
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("signal name must be unique")
   })
 })

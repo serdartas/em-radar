@@ -1,8 +1,8 @@
 # EM Radar — Signal Pack YAML Specification
 
-- **Status:** Draft v0.1
+- **Status:** Draft v0.3
 - **Schema version:** `emradar.dev/v1`
-- **Date:** 2026-06-01
+- **Date:** 2026-06-26
 - **Owner:** Serdar Tas
 - **Related:** [05-data-model.md](./05-data-model.md), [02-requirements.md](./02-requirements.md) §4.5
 
@@ -10,22 +10,35 @@
 
 This document specifies the YAML format used to describe **Signal Packs** in EM Radar.
 
-A Signal Pack is the unit of configuration shared between users and (later) the marketplace. The same format is used for:
+A Signal Pack is the import/export representation of one or more **Signal Config Groups**
+([data model §5.12C](./05-data-model.md#512c-signalconfiggroup)): named, reusable bundles of
+signals plus their configuration. A pack serializes every referenced signal **once** under
+`spec.signals` and lists the groups under `spec.groups`, where each group references its member
+signals **by name**. This lets several groups that share a signal export to a single file without
+duplicating the signal definition. The same format is used for:
 
-- The default pack bundled with the application.
-- User edits exported from the UI.
-- Community packs imported into the UI.
+- The default pack bundled with the application (seeds the default signal config group).
+- One or more groups exported together from the UI.
+- Community packs imported into the UI (each import may create several groups).
 - (Later) marketplace listings.
 
-The contract is: **what is imported in YAML can be exported in equivalent YAML**, modulo credentials and runtime-only state.
+The contract is: **what is imported in YAML can be exported in equivalent YAML**, modulo credentials
+and runtime-only state.
+
+A pack carries **only signals and their configuration**. It deliberately carries no source
+connections, no scopes, and no teams: scope is a property of the team a group is later attached to,
+resolved at report time, not stored on a signal. This keeps packs portable and safe to share —
+connectors provide access, teams own the board scope, and a pack is just the rules.
 
 ## 2. Core Concepts
 
-- **Pack.** A named, versioned bundle of signal configurations.
-- **Signal.** A built-in detector identified by a stable `id`. Has parameters with defaults. A pack overrides parameters and toggles enable/disable.
-- **Parameter.** A typed input to a signal (e.g. `days_threshold: 7`). Each signal documents its parameters and defaults.
+- **Pack.** A named, versioned bundle of signals and their configuration — the on-disk form of a Signal Config Group.
+- **Signal Config Group.** The in-app entity a pack maps to: a reusable bundle of signals, attached to any number of teams. See [data model §5.12C](./05-data-model.md#512c-signalconfiggroup).
+- **Template.** A built-in signal shipped with the application. A template seeds a signal in a group; it is configuration, not executable code. Built-in signals are catalogued in §12.
+- **Signal.** A named, structured rule expression over one entity type, carrying its own configuration (params, severity, enabled state). A signal is **scope-agnostic**: it is not assigned to any scope. Scope is resolved from the team at report time.
+- **Condition.** A field/operator/value predicate validated against the selected connector capability schema.
 - **Severity.** The importance level a finding from this signal should carry (`info`, `warning`, `critical`). Each signal declares a default; packs may override.
-- **Scope.** Optional filters limiting where the signal evaluates (e.g. only certain projects, repositories, or labels).
+- **Capability schema.** Connector metadata describing available entity types, fields, operators, value providers, and field availability constraints.
 
 ## 3. File Structure
 
@@ -43,20 +56,31 @@ metadata:
   homepage: https://github.com/example/scrum-team-health-pack
   tags: [scrum, jira, gitlab]
 spec:
-  defaults:
-    severity_override: null
+  export_type: public_template
   signals:
-    - id: stale-in-progress-work-item
+    - name: Stale in-progress work item
+      entity_type: issue
+      expression:
+        type: group
+        operator: all
+        conditions:
+          - field: status_category
+            operator: is
+            value: In Progress
+          - field: age_in_current_status
+            operator: greater_than
+            value: {amount: 7, unit: days}
+      report_settings:
+        severity: warning
+        category: flow
       enabled: true
-      severity: warning
-      params:
-        days_threshold: 7
-    - id: blocked-without-update
-      enabled: true
-      severity: critical
-      params:
-        days_threshold: 3
+      origin: system_template
+      template_key: stale-in-progress-work-item
 ```
+
+On import, this pack becomes a Signal Config Group named `scrum-team-health` containing one signal.
+The user then attaches the group to one or more teams; each team supplies the board scope at report
+time.
 
 The `apiVersion` and `kind` discriminator pattern is intentional: future kinds (e.g. `FieldMappingPack`, `ConnectorPreset`) will live alongside `SignalPack` under the same `emradar.dev/v1` umbrella.
 
@@ -97,78 +121,143 @@ Holds the actual configuration.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `defaults` | object | no | Pack-level defaults applied to every signal unless overridden. See §6. |
-| `signals` | array | yes | List of signal entries. See §7. |
-| `field_mappings` | object | no | Optional Jira/GitLab field-mapping hints. See §9. |
+| `export_type` | enum | yes | `private_backup` or `public_template`. Controls how aggressively org-specific condition values are scrubbed on export. See §15. |
+| `signals` | array | yes | The signal definitions referenced by the pack, each serialized once. Each is a scope-agnostic signal definition. See §9. |
+| `groups` | array | no | The signal config groups in the pack. Each entry references its member signals by name. See §7. When omitted, the pack is read as a single legacy group (back-compat). |
+| `field_mappings` | object | no | Optional Jira/GitLab field-mapping hints. See §11. |
 
-## 6. Pack-Level Defaults
+A pack does not carry `connectors`, `scopes`, or `teams` — see §6 and §7.
 
-```yaml
-spec:
-  defaults:
-    severity_override: warning      # forces every signal to this severity unless the signal itself sets one
-    scope:
-      project_keys: [ABC, XYZ]
-      repository_paths: [engineering/*]
-```
+### 5.5 `spec.groups[]` (optional, array)
 
-- `severity_override` (enum, optional): if set, all signals without their own `severity` inherit this. Useful for "strict" or "lenient" pack presets.
-- `scope` (object, optional): same shape as signal-level `scope` (§7.4). Applied to every signal unless that signal sets its own.
+Each entry describes one Signal Config Group:
 
-## 7. Signal Entries
-
-Each entry in `spec.signals` configures one built-in signal.
-
-```yaml
-- id: stale-in-progress-work-item
-  enabled: true
-  severity: warning
-  scope:
-    project_keys: [ABC]
-    workitem_types: [story, task, bug]
-  params:
-    days_threshold: 7
-    exclude_labels: [parked, on-hold]
-```
-
-### 7.1 `id` (required, string)
-
-Stable ID from the built-in signal catalog (§10). Unknown IDs are a validation error.
-
-### 7.2 `enabled` (required, boolean)
-
-If `false`, the signal is not evaluated. Disabled signals are still kept in the pack so users can re-enable without losing their parameter overrides.
-
-### 7.3 `severity` (optional, enum)
-
-`info`, `warning`, or `critical`. If omitted, falls back to `defaults.severity_override`, then to the signal's catalog default.
-
-### 7.4 `scope` (optional, object)
-
-All fields are optional; specifying none means "no scope restriction".
-
-| Field | Type | Applies to | Description |
+| Field | Type | Required | Description |
 |---|---|---|---|
-| `project_keys` | string[] | workitem signals | Restrict to Jira-style project keys. |
-| `repository_paths` | string[] (glob) | mergerequest signals | Restrict to repos by full path; supports `*` wildcards. |
-| `workitem_types` | enum[] | workitem signals | Restrict to specific types (see [data model §6.1](./05-data-model.md#61-workitemtype)). |
-| `labels` | string[] | workitem signals | Restrict to items carrying any of these labels. |
-| `exclude_labels` | string[] | workitem signals | Skip items carrying any of these labels. |
-| `branches` | string[] (glob) | mergerequest signals | Restrict by target branch. |
+| `name` | string | yes | Group name, unique in the local workspace (suffixed on collision when keeping both). |
+| `description` | string | no | Group description. |
+| `signals` | string[] | yes | Names of member signals, each of which must appear in `spec.signals`. |
 
-### 7.5 `params` (optional, object)
+A signal may be referenced by several groups; it is still serialized only once in `spec.signals`.
 
-A free-form object whose keys depend on the signal. Validated against the signal's declared parameter schema (§10). Unknown keys are a validation error.
+## 6. What a Pack Does Not Contain
 
-## 8. Severity Resolution Order
+A pack is the export of a Signal Config Group, and a group is pure signal membership. Packs
+therefore **never** carry:
 
-For a given signal, the effective severity is resolved as:
+- **Source connections.** Connectors provide access and live only in the local app, masked at rest
+  ([ADR-0006](./ADRs/0006-token-storage.md)). A pack contains no `base_url`, no `auth`, no
+  connector ids.
+- **Scopes.** Scope (a Jira board) is a property of the **team** a group is attached to, resolved
+  at report time — never stored on a signal or in a pack. There is no `scopes` block and no
+  `target_scopes` field.
+- **Teams.** Team membership and group↔team attachments are local configuration, not part of a
+  portable pack.
 
-1. Signal entry's `severity` field (if set).
-2. Pack `defaults.severity_override` (if set).
-3. Signal catalog default (always set).
+A signal does declare its `entity_type` (e.g. `issue`, `merge_request`); when a group is attached
+to a team, only signals whose entity type the team's scope can supply are evaluated.
 
-## 9. Field Mapping Block (Optional)
+## 7. Signal Config Group Mapping
+
+Import and export map a pack to one or more Signal Config Groups:
+
+- **Export.** The user selects one or more groups. Every signal across the selection is written
+  once to `spec.signals` (minus any scrubbed org-specific values for public exports), and each
+  group is written to `spec.groups` referencing its signals by name.
+- **Import.** A pack with `spec.groups` creates one Signal Config Group per entry, each containing
+  the `SignalDefinition`s named in its `signals` list. Name collisions (for signals and groups) are
+  resolved by the import conflict choice (§16). The user then attaches the new groups to teams; no
+  scope or connector mapping step is required.
+
+**Back-compat.** A pack with no `spec.groups` is read as a single legacy group named from
+`metadata.name` containing every entry in `spec.signals` — the pre-v0.3 shape. Such packs still
+import unchanged.
+
+Because a signal can belong to many groups, importing the same signal name in two separate imports
+yields distinct signal definitions (suffixed under "keep both"); packs do not share signal identity
+across installs.
+
+## 8. Signal Templates
+
+Built-in signals ship as **templates**: pre-written signal definitions catalogued in §12. A
+template is configuration, not executable code. Users may add a template to a group as-is, duplicate
+it into an editable signal (`origin: user_created`), disable it, or restore the built-in default. A
+template carries no scope — it is added to a group, and scope is resolved from the team later.
+
+## 9. Signal Definitions
+
+Each entry in `spec.signals` is a scope-agnostic signal. It carries its rule and configuration but
+no scope — scope is resolved from the team a group is attached to.
+
+```yaml
+- id: sig-stale-fraud-defense
+  name: Stale in-progress Scrum work
+  description: Finds issues that stayed in progress longer than expected.
+  entity_type: issue
+  expression:
+    type: group
+    operator: all
+    conditions:
+      - field: status_category
+        operator: is
+        value: In Progress
+      - field: age_in_current_status
+        operator: greater_than
+        value: {amount: 3, unit: days}
+  report_settings:
+    severity: warning
+    category: flow
+  enabled: true
+  origin: system_template
+  template_key: stale-in-progress-work-item
+```
+
+### 9.1 Signal Fields
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `id` | string | yes | Stable local signal id. |
+| `name` | string | yes | Human-readable name, unique in the local workspace. |
+| `description` | string | no | Shown in the builder and reports. |
+| `entity_type` | string | yes | Connector-provided entity type such as `issue` or `merge_request`. |
+| `expression` | object | yes | Rule expression. See §10. |
+| `report_settings` | object | yes | Severity, category, and optional message template. |
+| `enabled` | boolean | yes | Disabled signals are persisted but not evaluated. |
+| `origin` | enum | yes | `system_template`, `user_created`, or `imported`. |
+| `template_key` | string | no | Source template key when instantiated from a template. |
+
+## 10. Rule Expressions
+
+The MVP expression grammar is intentionally small:
+
+```yaml
+type: group
+operator: all # all | any
+conditions:
+  - field: status_category
+    operator: is
+    value: In Progress
+  - type: group
+    operator: any
+    conditions:
+      - field: priority
+        operator: is
+        value: High
+      - field: labels
+        operator: contains
+        value: customer-impact
+```
+
+Groups support `all` and `any`, with one level of nested grouping in MVP. Conditions use
+field/operator/value triples. Fields, operators, and values are validated against the selected
+connector capability schema.
+
+Time-based fields include created/updated/resolved dates, age since created/updated, and age in
+current status. Sprint-aware fields are evaluated only when the team's scope supplies sprint data
+(scrum boards); on date-range/kanban runs, sprint-only signals are skipped at report time
+([data model §6.7](./05-data-model.md#67-workingmode)).
+
+## 11. Field Mapping Block (Optional)
 
 Field mappings are technically separate from signals (they belong to connectors), but a pack may bundle a recommended mapping. The mapping block is **advisory**: the UI prompts the user to apply it; it is never silently merged.
 
@@ -183,91 +272,93 @@ spec:
       workitem_key_pattern: "[A-Z]+-\\d+"
 ```
 
-## 10. Built-in Signal Catalog (MVP)
+## 12. Built-in Signal Template Catalog (MVP)
 
-Each entry below lists the canonical `id`, default severity, default parameters, and the canonical evidence shape. These are the only signals available in MVP. User-defined declarative signals are out of MVP scope (see [requirements REQ-F-034](./02-requirements.md)).
+Each entry below lists the canonical template key, default severity, default condition values, and
+the canonical evidence shape. These templates seed the product and can be duplicated into editable
+signal definitions.
 
-### 10.1 `stale-in-progress-work-item`
+### 12.1 `stale-in-progress-work-item`
 - **Default severity:** `warning`
-- **Params:**
+- **Template defaults:**
   - `days_threshold` (integer, default `7`)
   - `exclude_labels` (string[], default `[]`)
 - **Evidence:** `{ days_idle, last_updated_at, threshold }`
 
-### 10.2 `blocked-without-update`
+### 12.2 `blocked-without-update`
 - **Default severity:** `critical`
-- **Params:**
+- **Template defaults:**
   - `days_threshold` (integer, default `3`)
 - **Evidence:** `{ days_blocked_idle, last_updated_at, threshold }`
 
-### 10.3 `story-without-acceptance-criteria`
+### 12.3 `story-without-acceptance-criteria`
 - **Default severity:** `warning`
-- **Params:** none
+- **Template defaults:** none
 - **Evidence:** `{ workitem_type, has_description }`
 
-### 10.4 `story-without-parent-epic`
+### 12.4 `story-without-parent-epic`
 - **Default severity:** `info`
-- **Params:** none
+- **Template defaults:** none
 - **Evidence:** `{ workitem_type }`
 
-### 10.5 `epic-too-broad`
+### 12.5 `epic-too-broad`
 - **Default severity:** `warning`
-- **Params:**
+- **Template defaults:**
   - `max_children` (integer, default `15`)
 - **Evidence:** `{ child_count, threshold }`
 
-### 10.6 `epic-without-measurable-description`
+### 12.6 `epic-without-measurable-description`
 - **Default severity:** `info`
-- **Params:**
+- **Template defaults:**
   - `min_description_length` (integer, default `100`)
 - **Evidence:** `{ description_length, threshold }`
 
-### 10.7 `repeated-carry-over`
+### 12.7 `repeated-carry-over`
 - **Default severity:** `warning`
-- **Params:**
+- **Template defaults:**
   - `min_sprint_count` (integer, default `2`)
 - **Evidence:** `{ sprint_count, sprint_names[] }`
 
-### 10.8 `sprint-scope-churn`
+### 12.8 `sprint-scope-churn`
 - **Default severity:** `warning`
-- **Params:**
+- **Template defaults:**
   - `warning_pct` (number, default `20.0`)
   - `critical_pct` (number, default `35.0`)
 - **Notes:** This signal escalates its own severity from `warning` to `critical` when `critical_pct` is reached. `severity` field in the pack acts as a ceiling.
 - **Evidence:** `{ original_count, added_count, churn_pct }`
 
-### 10.9 `mergerequest-waiting-too-long`
+### 12.9 `mergerequest-waiting-too-long`
 - **Default severity:** `warning`
-- **Params:**
+- **Template defaults:**
   - `days_threshold` (integer, default `3`)
 - **Evidence:** `{ age_days, threshold, last_review_at }`
 
-### 10.10 `mergerequest-without-linked-workitem`
+### 12.10 `mergerequest-without-linked-workitem`
 - **Default severity:** `warning`
-- **Params:**
+- **Template defaults:**
   - `workitem_key_pattern` (string, default `"[A-Z]+-\\d+"`)
 - **Evidence:** `{ checked_fields: [title, description, source_branch] }`
 
-### 10.11 `large-mergerequest-risk`
+### 12.11 `large-mergerequest-risk`
 - **Default severity:** `warning`
-- **Params:**
+- **Template defaults:**
   - `max_files` (integer, default `20`)
   - `max_changes` (integer, default `500`)
 - **Evidence:** `{ files_changed, additions, deletions, total_changes }`
 
-### 10.12 `failing-pipeline-too-long`
+### 12.12 `failing-pipeline-too-long`
 - **Default severity:** `warning`
-- **Params:**
+- **Template defaults:**
   - `days_threshold` (integer, default `1`)
 - **Evidence:** `{ pipeline_status, hours_failing }`
 
-### 10.13 `merged-without-enough-approval`
+### 12.13 `merged-without-enough-approval`
 - **Default severity:** `critical`
-- **Params:**
+- **Template defaults:**
   - `min_approvals` (integer, default `1`)
 - **Evidence:** `{ approval_count, threshold }`
 
-## 11. Validation Rules
+## 13. Validation Rules
 
 A pack is **rejected** at import time if any of the following are true:
 
@@ -275,20 +366,23 @@ A pack is **rejected** at import time if any of the following are true:
 2. `kind` is not `SignalPack`.
 3. `metadata.name` is missing or does not match the kebab-case pattern.
 4. `metadata.version` is not a valid semver string.
-5. Any signal entry references an `id` not present in the built-in catalog.
-6. Any signal entry includes `params` keys not declared for that signal.
-7. Any signal entry includes `params` whose types do not match the declared types.
+5. `spec.signals` is missing or empty.
+6. A signal expression uses a field unavailable for its connector type or entity type.
+7. A signal expression uses an operator invalid for the chosen field type.
 8. `min_emradar_version`, if set, is greater than the running EM Radar version.
 9. The YAML contains any field or section starting with `!`, `&`, `*`, or `<<` outside of standard YAML anchors and merge keys used safely.
 10. The YAML contains tagged constructors (`!!python/object` and similar). Only safe-load is permitted.
+11. A `spec.groups[]` entry references a signal name that does not appear in `spec.signals`.
 
 Soft validation **warnings** (import succeeds, UI shows a banner):
 
-- A signal's `severity` differs significantly from the catalog default (e.g. demoting a default-`critical` signal to `info`).
-- A `scope` filter targets a `project_key` or `repository_path` that does not currently exist in the user's connected sources.
+- A signal's `report_settings.severity` differs significantly from the template default (e.g. demoting a default-`critical` template to `info`).
 - A `field_mappings` block is present and differs from the user's existing mapping.
 
-## 12. Forbidden Content
+Name collisions are not warnings: they are surfaced in the import preview and resolved by the
+import conflict choice (§16).
+
+## 14. Forbidden Content
 
 The pack format is **declarative only**. Per [REQ-NF-012](./02-requirements.md), the following are explicitly forbidden:
 
@@ -297,30 +391,41 @@ The pack format is **declarative only**. Per [REQ-NF-012](./02-requirements.md),
 - References to remote URLs that EM Radar would fetch automatically.
 - Credentials of any kind. Imports containing fields named `token`, `password`, `api_key`, `secret`, `authorization` are rejected.
 
-## 13. Export Behavior
+## 15. Export Behavior
 
-When the user exports their current configuration:
+When the user exports a Signal Config Group:
 
-- The exported file is a complete, self-contained pack.
-- `metadata.name` defaults to `local-overrides-<timestamp>` unless the user names it.
-- Every signal that has been touched (enabled, disabled, parameter-overridden, severity-overridden) is included.
-- Untouched signals are **omitted** by default (a "minimal diff" export). A "full snapshot" export option includes every signal with its current effective values.
-- Credential fields are never included.
+- `metadata.name` defaults to the group's name unless the user renames it.
+- All of the group's signals are included with their configuration.
+- The user chooses `private_backup` or `public_template`:
+  - `private_backup` keeps org-specific condition values (e.g. concrete label or status names) verbatim — best for moving your own setup to another machine.
+  - `public_template` prompts the user to review and scrub org-specific condition values before sharing, so generic rules can be shared without leaking internal naming.
+- Credential fields are never included. Neither are connectors, scopes, or teams (§6).
 - Field mappings are included only if the user opts in.
 
-## 14. Import Behavior
+## 16. Import Behavior
 
 When the user imports a pack:
 
-- The pack is validated per §11 before any state changes.
-- A diff preview is shown: which signals will be enabled/disabled, which parameters will change.
-- The user explicitly confirms.
-- The import is **additive**: signals not mentioned in the imported pack keep their current local settings unless the user picks "replace all".
+- The pack is validated per §13 before any state changes.
+- A preview is shown: the resulting groups, their signals, any validation warnings, and the names
+  of signals and groups that **already exist** in the local workspace (clashes).
+- If there are clashes, the user picks **one** resolution applied to the whole import:
+  - **skip** — clashing signals and groups are not imported; a kept group that references an
+    already-present signal name wires to the existing signal.
+  - **overwrite** — clashing signals and groups are updated in place from the pack.
+  - **keep both** — clashing signals and groups are imported under a suffixed name (e.g. `name (2)`);
+    a kept group's references are rewired to the freshly suffixed signals.
+  - **cancel** — nothing is written.
+- With no clashes the import applies directly (equivalent to "keep both").
+- Import creates the groups from `spec.groups` (or a single legacy group when `spec.groups` is
+  absent — see §7). There is no connector or scope mapping step.
+- The user attaches the new groups to teams afterward; each team supplies the board scope at report time.
 - The original imported YAML is stored in the pack history table for round-trip export.
 
-## 15. Examples
+## 17. Examples
 
-### 15.1 Minimal pack (overrides one signal)
+### 17.1 Public template pack
 
 ```yaml
 apiVersion: emradar.dev/v1
@@ -330,14 +435,29 @@ metadata:
   version: 0.1.0
   description: Tighten MR review latency to 1 day.
 spec:
+  export_type: public_template
   signals:
-    - id: mergerequest-waiting-too-long
+    - name: Merge request waiting longer than 1 day
+      entity_type: merge_request
+      expression:
+        type: group
+        operator: all
+        conditions:
+          - field: state
+            operator: is
+            value: opened
+          - field: age_since_last_review_activity
+            operator: greater_than
+            value: {amount: 1, unit: days}
+      report_settings:
+        severity: warning
+        category: flow
       enabled: true
-      params:
-        days_threshold: 1
+      origin: system_template
+      template_key: mergerequest-waiting-too-long
 ```
 
-### 15.2 Scoped pack (platform team only)
+### 17.2 Private backup of a multi-signal group
 
 ```yaml
 apiVersion: emradar.dev/v1
@@ -345,44 +465,119 @@ kind: SignalPack
 metadata:
   name: platform-team-pack
   version: 1.0.0
-  description: Stricter rules for the Platform team's repos.
+  description: Stricter rules used by the Platform team.
 spec:
-  defaults:
-    scope:
-      repository_paths: [engineering/platform/*]
+  export_type: private_backup
   signals:
-    - id: mergerequest-waiting-too-long
+    - id: sig-platform-review
+      name: Platform MR waiting too long
+      entity_type: merge_request
+      expression:
+        type: group
+        operator: all
+        conditions:
+          - field: age_since_last_review_activity
+            operator: greater_than
+            value: {amount: 1, unit: days}
+      report_settings:
+        severity: critical
+        category: flow
       enabled: true
-      severity: critical
-      params:
-        days_threshold: 1
-    - id: large-mergerequest-risk
+      origin: user_created
+    - id: sig-platform-stale
+      name: Platform stale in-progress work
+      entity_type: issue
+      expression:
+        type: group
+        operator: all
+        conditions:
+          - field: status_category
+            operator: is
+            value: In Progress
+          - field: age_in_current_status
+            operator: greater_than
+            value: {amount: 5, unit: days}
+      report_settings:
+        severity: warning
+        category: flow
       enabled: true
-      params:
-        max_files: 10
-        max_changes: 300
+      origin: user_created
 ```
 
-### 15.3 Disabling a default signal
+On import this becomes a group `platform-team-pack` with two signals, ready to attach to any team.
+
+### 17.3 Disabled imported signal
 
 ```yaml
 apiVersion: emradar.dev/v1
 kind: SignalPack
 metadata:
-  name: no-epic-description-checks
+  name: partial-import
   version: 0.1.0
-  description: Our epics live in Confluence; skip description checks.
+  description: Example of a signal imported disabled (kept off until reviewed).
 spec:
+  export_type: private_backup
   signals:
-    - id: epic-without-measurable-description
+    - id: sig-disabled
+      name: Imported stale work signal
+      entity_type: issue
+      expression:
+        type: group
+        operator: all
+        conditions:
+          - field: status_category
+            operator: is
+            value: In Progress
+      report_settings:
+        severity: warning
+        category: flow
       enabled: false
+      origin: imported
 ```
 
-## 16. Forward Compatibility (Later)
+### 17.4 Multiple groups sharing a signal
+
+```yaml
+apiVersion: emradar.dev/v1
+kind: SignalPack
+metadata:
+  name: team-health-bundle
+  version: 1.0.0
+  description: Two groups that reuse one shared signal.
+spec:
+  export_type: private_backup
+  signals:
+    - name: Stale in-progress work
+      entity_type: issue
+      expression:
+        type: group
+        operator: all
+        conditions:
+          - field: status_category
+            operator: is
+            value: in_progress
+          - field: age_in_current_status
+            operator: greater_than
+            value: {amount: 5, unit: days}
+      report_settings:
+        severity: warning
+        category: flow
+      enabled: true
+      origin: user_created
+  groups:
+    - name: scrum-health
+      signals: [Stale in-progress work]
+    - name: flow-health
+      signals: [Stale in-progress work]
+```
+
+On import this creates two groups, `scrum-health` and `flow-health`, both wired to a single
+imported `Stale in-progress work` signal.
+
+## 18. Forward Compatibility (Later)
 
 The following are **not** in MVP but are reserved in the schema so they can be added without a `v2` bump:
 
-- `spec.custom_signals[]` for user-defined declarative signals. The grammar (likely a restricted expression language over the canonical model) will be specified in a separate ADR when this work begins. Until then, packs using `custom_signals` are rejected.
 - `spec.views[]` for named report views composed of signal subsets.
 - `metadata.signing` for marketplace signature metadata.
 

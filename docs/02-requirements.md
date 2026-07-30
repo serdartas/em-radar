@@ -43,7 +43,7 @@ The Engineering Manager can:
 
 * run EM Radar locally
 * connect Jira and GitLab
-* configure signal thresholds
+* configure scoped deterministic signals
 * run reports
 * inspect findings
 * export reports
@@ -102,8 +102,8 @@ The UI shall include at minimum:
 
 * onboarding/setup wizard (guides connection setup and team creation; see [09-functional-flows §3](./09-functional-flows.md#3-flow-a--first-run-onboarding-wizard))
 * dashboard (landing view showing the latest report per team)
-* source connections page
-* teams page (create/manage teams and their scope)
+* source connections page (create-only: named connections; no scope or report actions)
+* teams page (create/manage teams and their two sources: task-board scope + code connection)
 * signal settings page
 * report runner page
 * report results page
@@ -125,8 +125,9 @@ The system shall store local application data in SQLite by default.
 Stored data includes:
 
 * connector configuration
-* selected projects/boards/repositories
-* signal settings
+* team profiles, including each team's task-board scope, code connection, and attached signal config groups
+* scope definitions for selected boards (the code source is a whole connection, not a repository scope, in MVP)
+* signal definitions and signal config groups
 * report history
 * cached normalized source data
 * local user preferences
@@ -263,6 +264,29 @@ Acceptance criteria:
 * default pattern supports common Jira keys such as `ABC-123`
 * merge requests with detected keys are linked to matching WorkItems when available
 * merge requests without detected keys can be reported as findings
+
+---
+
+### REQ-F-017 — Named, Create-only Source Connections
+
+**MVP**
+
+The system shall let users create multiple named source connections, and the Source Connections page
+shall create/manage connections only.
+
+Each connection carries a user-provided **name** that is required and unique per workspace, so that
+multiple connections of the same source type (for example two Jira instances, or a contractor working
+across companies) are distinguishable. The Source Connections page creates, edits, tests, and deletes
+connections; it does not select projects, boards, or repositories and does not run reports — those are
+team concerns (REQ-F-041A, REQ-F-050).
+
+Acceptance criteria:
+
+* a connection has a required name that is unique within the workspace
+* a user can create several connections of the same source type with different names and credentials
+* the connection form tests the connection and saves only credentials + name (no scope)
+* the Source Connections page has no project/board/repository picker and no run-report action
+* connections are reusable across teams
 
 ---
 
@@ -461,21 +485,31 @@ Acceptance criteria:
 
 **MVP**
 
-The system shall provide built-in signals with configurable thresholds.
+The system shall provide built-in signals as editable templates backed by structured rule
+definitions.
 
 Users shall be able to:
 
+* add built-in templates to signal config groups
 * enable signals
 * disable signals
-* modify thresholds
-* modify severity where supported
+* duplicate signals
+* edit signal conditions, thresholds, logical grouping, severity, and report category
+* delete user-created or imported signals
 * reset signal settings to defaults
+
+Signals are **scope-agnostic**: a signal carries its rule and configuration but no target scope.
+Scope is resolved from the team at report time — a team owns a single Jira board scope, and a team
+runs the signals from its attached signal config groups (see REQ-F-041C). Signal configuration is
+global per signal; to run the same check with different thresholds, create two signals.
 
 Acceptance criteria:
 
 * signal settings can be changed through the UI
 * changes persist after restart
 * disabled signals are not evaluated
+* built-in templates can be duplicated and edited without changing the system default template
+* validation rejects duplicate signal names in the local workspace
 
 ---
 
@@ -524,13 +558,25 @@ Acceptance criteria:
 
 ### REQ-F-034 — User-defined Declarative Signals
 
-**Later**
+**MVP**
 
-The system should allow users to define custom declarative signals using configuration.
+The system shall allow users to create custom declarative signals through a constrained rule
+builder.
 
-This is not required for MVP.
+Custom signals must be structured data, not executable code. The MVP builder shall support:
 
-When implemented, custom signals must be declarative and must not execute arbitrary code.
+* field/operator/value conditions
+* AND/OR logical groups
+* one level of nested grouping
+* date and duration comparisons
+* sprint-aware conditions, evaluated only when the team's board scope supplies sprint data
+
+Acceptance criteria:
+
+* the UI only shows fields and operators exposed by the selected connector capability schema
+* custom signal definitions are persisted and evaluated deterministically
+* custom signal definitions can be exported and imported
+* arbitrary scripting or expression-language execution is rejected
 
 ---
 
@@ -554,16 +600,16 @@ This is not required for MVP.
 
 ## 4.5 Signal Configuration
 
-### REQ-F-040 — Default Signal Pack
+### REQ-F-040 — Default Signal Config Group
 
 **MVP**
 
-The system shall include a default signal pack.
+The system shall include a default signal config group.
 
 Acceptance criteria:
 
-* default pack is loaded on first startup
-* default pack enables enough signals to produce useful reports
+* the default group is loaded on first startup
+* the default group contains enough enabled signals to produce useful reports
 * default thresholds are documented
 
 ---
@@ -572,14 +618,88 @@ Acceptance criteria:
 
 **MVP**
 
-The system shall allow users to configure signals through the UI.
+The system shall allow users to configure signals and signal config groups through the UI.
 
 Acceptance criteria:
 
 * user can see available signals
 * user can enable or disable signals
-* user can edit thresholds
+* user can create, duplicate, edit, and delete user-created signals
+* user can edit conditions with field/operator/value controls
+* user can preview a signal before saving it
 * user can reset to defaults
+* the signal builder has no scope picker — signals are scope-agnostic
+
+---
+
+### REQ-F-041A — Team-owned Sources
+
+**MVP**
+
+The system shall store sources separately from connectors and signals, and attach them to a team. A
+team carries up to two sources: a **task-board source** (a Jira board, 0..1, stored as a
+`ScopeDefinition`) and a **code source** (a whole GitLab/GitHub connection, 0..1, stored as
+`TeamProfile.code_connection_id`). Both are resolved from the team at report time; signals never
+reference sources.
+
+The task-board source is chosen via a searchable project → board picker from connector-provided
+options. The code source attaches the whole connection — every repository the token can access is in
+scope; per-repository selection is a later phase. A team may be **saved with no sources**, but a
+**report run requires at least one source** (see REQ-F-050); signals whose source is absent are
+skipped with a note.
+
+Acceptance criteria:
+
+* connectors represent access to external systems, not signal applicability
+* users can select a team's board scope from connector-provided options (searchable project + board)
+* users can attach a whole GitLab/GitHub connection as the team's code source
+* a team can be saved with no sources; a report run is blocked when the team has no sources
+* a team's report runs against the team's attached sources
+* reports include the scope name for each finding
+
+---
+
+### REQ-F-041C — Reusable Signal Config Groups
+
+**MVP**
+
+The system shall provide reusable signal config groups: named bundles of signals that the user
+attaches to teams.
+
+A signal config group is many-to-many with both teams (one group may be attached to many teams) and
+signals (one signal may belong to many groups). A group carries no connector, scope, or credential.
+
+Acceptance criteria:
+
+* users can create, rename, and delete signal config groups
+* users can add and remove signals from a group; a signal may live in several groups
+* users can attach and detach groups from a team
+* a team's evaluated signals are the union of enabled signals across its attached groups
+* editing a group propagates to every team it is attached to
+
+---
+
+### REQ-F-041B — Connector Capability Schema
+
+**MVP**
+
+Each connector shall expose a capability schema used by the signal builder and importer.
+
+The schema shall describe:
+
+* supported entity types
+* supported scope types
+* supported fields
+* valid operators per field
+* static or dynamic value providers
+* field availability constraints, such as sprint-only fields
+
+Acceptance criteria:
+
+* the signal builder is generated from connector capabilities instead of hardcoding Jira-specific
+  behavior
+* invalid field/operator combinations are blocked before save
+* imported public templates are validated against the selected connector capabilities
 
 ---
 
@@ -587,13 +707,18 @@ Acceptance criteria:
 
 **MVP**
 
-The system shall allow users to export signal configuration as YAML.
+The system shall allow users to export a signal config group as YAML in two modes:
+
+* private backup or migration export
+* public template export
 
 Acceptance criteria:
 
-* exported YAML contains signal settings
+* a YAML export contains the group's signals and their report settings — no connectors, scopes, or teams
+* private backup export keeps organization-specific condition values (e.g. concrete label or status names)
+* public template export prompts the user to review and scrub organization-specific condition values
 * exported YAML contains no credentials
-* exported YAML can be stored in version control if the user chooses
+* public template exports can be stored in version control if the user chooses
 
 ---
 
@@ -601,11 +726,13 @@ Acceptance criteria:
 
 **MVP**
 
-The system shall allow users to import signal configuration from YAML.
+The system shall allow users to import private backup YAML and public template YAML.
 
 Acceptance criteria:
 
-* imported YAML updates signal settings
+* importing a YAML pack creates a new signal config group (name suffixed on collision)
+* the user attaches the new group to teams after import; no connector or scope mapping step is required
+* imports validate field/operator/value compatibility against connector capability schemas
 * invalid YAML is rejected with a clear error
 * credentials cannot be imported through signal config
 * user can review or confirm import before applying, if feasible
@@ -636,15 +763,17 @@ This is not required for MVP.
 
 **MVP**
 
-The system shall allow users to run a report for a selected sprint.
+The system shall allow users to run a sprint report for one or more selected teams.
 
 Acceptance criteria:
 
-* user can select a configured Jira board/project
-* user can select a sprint
+* user can select one or more teams
+* for each team, the system uses the team's attached sources — board scope + code connection — with no separate board picker
+* a team with no sources attached cannot run a report (the run is blocked with a clear message)
+* user can select a sprint (scrum teams default to the active sprint)
 * system fetches relevant Jira and GitLab data
-* system evaluates enabled signals
-* system displays report results
+* system evaluates each team's signals (the union across its attached signal config groups); signals whose source is absent are skipped
+* system displays report results per team
 
 ---
 
@@ -652,14 +781,16 @@ Acceptance criteria:
 
 **MVP**
 
-The system shall allow users to run a report for a custom date range.
+The system shall allow users to run a date-range report for one or more selected teams.
 
 Acceptance criteria:
 
-* user can select start and end date
+* user can select one or more teams and a start and end date
+* for each team, the system uses the team's attached sources (board scope + code connection)
+* a team with no sources attached cannot run a report
 * system fetches relevant Jira and GitLab data for that range
-* system evaluates enabled signals
-* system displays report results
+* system evaluates each team's signals (the union across its attached signal config groups)
+* system displays report results per team
 
 ---
 

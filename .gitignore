@@ -1,5 +1,8 @@
 # Git ignore for generated and local-only files
 
+# Agents
+.claude/
+
 # macOS
 .DS_Store
 
@@ -12,7 +15,6 @@ __pycache__/
 *$py.class
 .pytest_cache/
 .mypy_cache/
-.python-version
 venv/
 .venv/
 env/

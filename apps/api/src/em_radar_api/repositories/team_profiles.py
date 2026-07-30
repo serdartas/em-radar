@@ -4,6 +4,9 @@ from uuid import UUID
 from pydantic import ValidationError
 from sqlmodel import Session, select
 
+from em_radar_api.connector_registry import get_connector_capabilities
+from em_radar_api.scope_definitions import ScopeDefinitionTable, ScopeType
+from em_radar_api.signal_config_groups import SignalConfigGroupTable
 from em_radar_api.source_connections import SourceConnectionTable
 from em_radar_api.tables import EvaluationWindowTable, TeamProfileTable
 from em_radar_api.team_profiles import TeamProfileCreate, TeamProfileRead, TeamProfileUpdate
@@ -19,6 +22,8 @@ class TeamProfileInUse(ValueError):
 
 
 def create_team_profile(session: Session, team: TeamProfileCreate) -> TeamProfileRead:
+    derived_conn_ids = _derive_connection_ids(session, team.scope_ids, team.code_connection_id)
+    team = team.model_copy(update={"connection_ids": derived_conn_ids})
     _validate_team_profile(session, team)
     now = datetime.now(UTC)
     row = TeamProfileTable.model_validate(team, update={"created_at": now, "updated_at": now})
@@ -44,6 +49,17 @@ def update_team_profile(
         return None
 
     values = update.model_dump(exclude_unset=True)
+
+    # Always derive connection_ids from the team's actual sources so that changing the board
+    # scope or the code connection from any client never leaves stale IDs in the list.
+    effective_scope_ids = values.get("scope_ids", list(row.scope_ids or []))
+    effective_code_cid = (
+        values["code_connection_id"] if "code_connection_id" in values else row.code_connection_id
+    )
+    values["connection_ids"] = _derive_connection_ids(
+        session, effective_scope_ids, effective_code_cid
+    )
+
     try:
         candidate = TeamProfileCreate.model_validate(
             {
@@ -81,23 +97,66 @@ def _validate_team_profile(session: Session, team: TeamProfileCreate) -> None:
     if team.working_mode is WorkingMode.KANBAN and team.sprint_length_days is not None:
         raise InvalidTeamProfile("sprint_length_days must be null for kanban teams")
 
-    connections = session.exec(
-        select(SourceConnectionTable).where(SourceConnectionTable.id.in_(team.connection_ids))
-    ).all()
-    if len(connections) != len(set(team.connection_ids)):
-        raise InvalidTeamProfile("connection_ids must reference existing connections")
+    # Validate code_connection_id before connection_ids so its specific error takes precedence
+    # (code_connection_id is auto-merged into connection_ids before validation).
+    if team.code_connection_id is not None:
+        conn = session.get(SourceConnectionTable, team.code_connection_id)
+        if conn is None:
+            raise InvalidTeamProfile("code_connection_id must reference an existing connection")
+        caps = get_connector_capabilities(conn.connector_name)
+        if caps is None or not caps.provides_mergerequests:
+            raise InvalidTeamProfile(
+                "code_connection_id must reference a connection that provides merge-request data"
+            )
 
-    scoped_ids = (
-        ("project_ids", team.project_ids, "selected_project_ids"),
-        ("board_ids", team.board_ids, "selected_board_ids"),
-        ("repository_ids", team.repository_ids, "selected_repository_ids"),
-    )
-    for field_name, values, connection_field in scoped_ids:
-        available = {
-            item for connection in connections for item in getattr(connection, connection_field)
-        }
-        if not set(values).issubset(available):
-            raise InvalidTeamProfile(f"{field_name} must reference the selected connections")
+    scopes = session.exec(
+        select(ScopeDefinitionTable).where(ScopeDefinitionTable.id.in_(team.scope_ids))
+    ).all()
+    if len(scopes) != len(set(team.scope_ids)):
+        raise InvalidTeamProfile("scope_ids must reference existing scopes")
+    board_scope_ids = {scope.id for scope in scopes if scope.scope_type is ScopeType.BOARD}
+    if sum(scope_id in board_scope_ids for scope_id in team.scope_ids) > 1:
+        raise InvalidTeamProfile("scope_ids may contain at most one board scope")
+
+    if len(set(team.signal_config_group_ids)) != len(team.signal_config_group_ids):
+        raise InvalidTeamProfile("signal_config_group_ids must not contain duplicates")
+    groups = session.exec(
+        select(SignalConfigGroupTable).where(
+            SignalConfigGroupTable.id.in_(team.signal_config_group_ids)
+        )
+    ).all()
+    if len(groups) != len(set(team.signal_config_group_ids)):
+        raise InvalidTeamProfile(
+            "signal_config_group_ids must reference existing signal config groups"
+        )
+
+
+def _derive_connection_ids(
+    session: Session,
+    scope_ids: list[UUID],
+    code_connection_id: UUID | None,
+) -> list[UUID]:
+    """Compute connection_ids from the team's actual sources.
+
+    Collects connection_ids from each referenced scope (stable insertion order, deduped),
+    then appends the code connection if set and not already present.  Any connection_ids
+    value sent by the caller is ignored — the result is fully server-derived.
+    """
+    result: list[UUID] = []
+    seen: set[UUID] = set()
+    if scope_ids:
+        scopes = session.exec(
+            select(ScopeDefinitionTable).where(ScopeDefinitionTable.id.in_(scope_ids))
+        ).all()
+        scope_by_id = {s.id: s for s in scopes}
+        for sid in scope_ids:
+            scope = scope_by_id.get(sid)
+            if scope is not None and scope.connection_id not in seen:
+                seen.add(scope.connection_id)
+                result.append(scope.connection_id)
+    if code_connection_id is not None and code_connection_id not in seen:
+        result.append(code_connection_id)
+    return result
 
 
 def _write(session: Session, row: TeamProfileTable) -> None:

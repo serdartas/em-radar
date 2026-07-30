@@ -31,12 +31,62 @@ class Capabilities:
     max_window_days: int | None = None
 
 
+@dataclass(frozen=True)
+class ValueProvider:
+    type: str
+    source: str
+    depends_on: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class FieldAvailability:
+    requires_scope_capability: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class SignalField:
+    key: str
+    label: str
+    type: str
+    operators: tuple[str, ...]
+    values: tuple[object, ...] = ()
+    value_provider: ValueProvider | None = None
+    availability: FieldAvailability | None = None
+
+
+@dataclass(frozen=True)
+class SignalScopeType:
+    key: str
+    label: str
+    capabilities: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class SignalCapabilitySchema:
+    connector_type: str
+    entity_types: tuple[str, ...]
+    scope_types: tuple[SignalScopeType, ...]
+    fields: tuple[SignalField, ...]
+
+
+ConnectionErrorCode = Literal[
+    "auth",
+    "config",
+    "data",
+    "not_found",
+    "rate_limited",
+    "transient",
+    "unknown",
+]
+
+
 @dataclass
 class ConnectionTestResult:
     ok: bool
     detail: str
     user_display_name: str | None = None
     permissions: list[str] = field(default_factory=list)
+    code: ConnectionErrorCode | None = None
 
 
 @dataclass
@@ -153,6 +203,7 @@ class ConnectorDataError(ConnectorError):
 __all__ = [
     "Capabilities",
     "CommentProvider",
+    "ConnectionErrorCode",
     "ConnectionTestResult",
     "ConnectorAuthError",
     "ConnectorBase",
@@ -162,10 +213,15 @@ __all__ = [
     "ConnectorNotFoundError",
     "ConnectorRateLimitedError",
     "ConnectorTransientError",
+    "FieldAvailability",
     "MergeRequestProvider",
     "MergeRequestScope",
     "ReviewProvider",
+    "SignalCapabilitySchema",
+    "SignalField",
+    "SignalScopeType",
     "TransitionProvider",
+    "ValueProvider",
     "WorkItemProvider",
     "WorkItemScope",
 ]

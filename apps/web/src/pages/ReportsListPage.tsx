@@ -38,7 +38,7 @@ export function ReportsListPage() {
       )}
       {query.data && query.data.length === 0 && (
         <p className="rounded-lg border border-dashed p-8 text-center text-sm text-slate-500">
-          No reports yet. Run the demo report to create one.
+          No reports yet. Run a report to create one.
         </p>
       )}
       {query.data && query.data.length > 0 && (

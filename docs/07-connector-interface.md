@@ -91,6 +91,7 @@ A connector declares its capabilities so the engine can:
 - Decide which signals make sense to evaluate against a given source.
 - Skip signals whose required data is unavailable.
 - Surface a "what this connector can do" view in the UI.
+- Generate the signal builder without hardcoding source-specific fields in the frontend.
 
 ```python
 @dataclass(frozen=True)
@@ -113,6 +114,27 @@ The Jira connector returns capabilities like:
 The GitLab connector returns:
 `provides_mergerequests=True, provides_repositories=True, provides_reviews=True, supports_incremental_fetch=True`.
 
+### 5.1 Signal Builder Capability Schema
+
+In addition to coarse runtime capabilities, each connector exposes a structured schema for the
+signal builder and YAML importer.
+
+```python
+class ConnectorBase(Protocol):
+    def describe_signal_schema(self) -> SignalCapabilitySchema: ...
+```
+
+The schema includes:
+
+- supported entity types, such as `issue` or `merge_request`
+- supported scope types, such as Jira project, Jira board, saved filter, GitLab repository
+- field definitions with labels, data types, valid operators, and value providers
+- field availability constraints, such as sprint-only fields requiring a sprint-capable scope
+
+The UI must use this schema to render field/operator/value controls. The importer must use the
+same schema to validate public templates and private backup mappings before enabling imported
+signals.
+
 ## 6. Required Interfaces
 
 ### 6.1 `ConnectorBase` (always required)
@@ -127,6 +149,7 @@ class ConnectorBase(Protocol):
     def __init__(self, config: dict) -> None: ...
     async def test_connection(self) -> ConnectionTestResult: ...
     def describe_capabilities(self) -> Capabilities: ...
+    def describe_signal_schema(self) -> SignalCapabilitySchema: ...
     async def close(self) -> None: ...
 ```
 

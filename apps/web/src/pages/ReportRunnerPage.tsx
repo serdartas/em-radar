@@ -1,57 +1,124 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query"
+import { useState } from "react"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useNavigate } from "react-router-dom"
 
 import { Button } from "@/components/ui/button"
+import { Card, CardContent } from "@/components/ui/card"
 import { apiErrorMessage } from "@/lib/api"
-import { runDemoReport } from "@/lib/reports"
+import { runTeamReport, type ReportDetail } from "@/lib/reports"
+import { listTeams, type TeamProfile } from "@/lib/teams"
+
+/** A team with no board scope and no code connection has no sources and cannot run a report. */
+function teamHasNoSources(team: TeamProfile): boolean {
+  return team.scope_ids.length === 0 && !team.code_connection_id
+}
 
 export function ReportRunnerPage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const run = useMutation({
-    mutationFn: runDemoReport,
+  const teamsQuery = useQuery({ queryKey: ["teams"], queryFn: listTeams })
+  const [selectedTeamIds, setSelectedTeamIds] = useState<string[]>([])
+
+  const openReport = (report: ReportDetail) => {
+    void queryClient.invalidateQueries({ queryKey: ["reports"], exact: true })
+    navigate(`/reports/results/${report.id}`)
+  }
+
+  const teamRun = useMutation({
+    mutationFn: async (teamIds: string[]) => {
+      let last: ReportDetail | null = null
+      for (const teamId of teamIds) {
+        last = await runTeamReport(teamId)
+      }
+      return last
+    },
     onSuccess: (report) => {
-      void queryClient.invalidateQueries({ queryKey: ["reports"], exact: true })
-      navigate(`/reports/results/${report.id}`)
+      if (report) {
+        openReport(report)
+      }
     },
   })
 
+  const teams = teamsQuery.data ?? []
+  const running = teamRun.isPending
+
+  function toggleTeam(teamId: string) {
+    setSelectedTeamIds((current) =>
+      current.includes(teamId)
+        ? current.filter((id) => id !== teamId)
+        : [...current, teamId],
+    )
+  }
+
   return (
-    <section aria-labelledby="page-title">
-      <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight" id="page-title">
-            Report Runner
-          </h1>
-          <p className="mt-2 max-w-xl text-slate-600">
-            Run the deterministic demo report. The result is stored and opens automatically.
-          </p>
-        </div>
-        <Button disabled={run.isPending} onClick={() => run.mutate()} size="lg">
-          {run.isPending ? "Running demo report…" : "Run demo report"}
-        </Button>
+    <section aria-labelledby="page-title" className="space-y-6">
+      <header>
+        <h1 className="text-2xl font-semibold tracking-tight" id="page-title">
+          Report Runner
+        </h1>
+        <p className="mt-2 max-w-xl text-slate-600">
+          Run a report for one or more teams against each team&apos;s board scope and attached
+          signal config groups.
+        </p>
       </header>
 
-      <div aria-live="polite" className="mt-8 space-y-4">
-        {run.isPending && (
-          <p className="rounded-lg border p-8 text-center text-slate-500">
-            Evaluating demo data and saving the report…
-          </p>
-        )}
-        {run.isError && (
+      <Card>
+        <CardContent className="space-y-4 p-4">
+          <h2 className="text-lg font-semibold">Run for teams</h2>
+          {teamsQuery.isLoading ? (
+            <p className="text-sm text-slate-500">Loading teams...</p>
+          ) : teams.length === 0 ? (
+            <p className="text-sm text-slate-500">No teams yet. Create one on the Teams page.</p>
+          ) : (
+            <ul className="space-y-2">
+              {teams.map((team) => {
+                const noSources = teamHasNoSources(team)
+                return (
+                  <li key={team.id}>
+                    <label
+                      className={`flex items-center gap-3 rounded-md border px-3 py-2 text-sm${noSources ? " cursor-not-allowed opacity-60" : ""}`}
+                    >
+                      <input
+                        checked={selectedTeamIds.includes(team.id)}
+                        disabled={noSources}
+                        onChange={() => toggleTeam(team.id)}
+                        type="checkbox"
+                      />
+                      <span>{team.name}</span>
+                      {noSources && (
+                        <span className="ml-auto text-xs text-slate-400">
+                          no sources attached
+                        </span>
+                      )}
+                    </label>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+          <Button
+            disabled={running || selectedTeamIds.length === 0}
+            onClick={() => teamRun.mutate(selectedTeamIds)}
+          >
+            {teamRun.isPending ? "Running team reports…" : "Run team reports"}
+          </Button>
+        </CardContent>
+      </Card>
+
+      <div aria-live="polite" className="space-y-4">
+        {teamRun.isError && (
           <p className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-700" role="alert">
-            {apiErrorMessage(run.error, "The report run failed. Please try again.")}
+            {apiErrorMessage(teamRun.error, "The report run failed. Please try again.")}
           </p>
         )}
-        {run.isIdle && (
-          <p className="rounded-lg border border-dashed p-8 text-center text-slate-500">
-            No report has been run yet.{" "}
-            <Link className="font-medium text-blue-700 underline-offset-4 hover:underline" to="/reports/results">
-              Browse past reports
-            </Link>
-            .
-          </p>
-        )}
+        <p className="rounded-lg border border-dashed p-4 text-center text-slate-500">
+          <Link
+            className="font-medium text-blue-700 underline-offset-4 hover:underline"
+            to="/reports/results"
+          >
+            Browse past reports
+          </Link>
+        </p>
       </div>
     </section>
   )

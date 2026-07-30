@@ -1,10 +1,9 @@
-from uuid import uuid4
-
-from pydantic import SecretStr
 import pytest
+from pydantic import SecretStr
 from sqlmodel import SQLModel, Session, select
 
 from em_radar_api.db import create_db_engine
+from em_radar_api.repositories.scope_definitions import create_scope_definition
 from em_radar_api.repositories.source_connections import (
     SourceConnectionInUse,
     create_source_connection,
@@ -15,6 +14,7 @@ from em_radar_api.repositories.source_connections import (
     update_source_connection,
 )
 from em_radar_api.repositories.team_profiles import create_team_profile
+from em_radar_api.scope_definitions import ScopeDefinitionCreate, ScopeType
 from em_radar_api.source_connections import (
     ConnectorName,
     SourceConnectionCreate,
@@ -32,14 +32,12 @@ class RecordingConnector:
 def test_source_connection_crud_masks_credentials_but_instantiates_with_raw_config() -> None:
     engine = create_db_engine(":memory:")
     SQLModel.metadata.create_all(engine)
-    project_id = uuid4()
-    board_id = uuid4()
-    repository_id = uuid4()
 
     with Session(engine) as session:
         created = create_source_connection(
             session,
             SourceConnectionCreate(
+                name="Jira prod",
                 connector_name=ConnectorName.JIRA,
                 config={
                     "base_url": "https://jira.example.com",
@@ -47,19 +45,16 @@ def test_source_connection_crud_masks_credentials_but_instantiates_with_raw_conf
                     "nested": {"api_key": "abc"},
                     "credential_from_type": SecretStr("xyz"),
                 },
-                selected_project_ids=[project_id],
-                selected_board_ids=[board_id],
-                selected_repository_ids=[repository_id],
             ),
         )
 
+        assert created.name == "Jira prod"
         assert created.config == {
             "base_url": "https://jira.example.com",
             "token": "****5678",
             "nested": {"api_key": "****"},
             "credential_from_type": "****",
         }
-        assert created.selected_project_ids == [project_id]
         assert get_source_connection(session, created.id) == created
         assert list_source_connections(session) == [created]
 
@@ -77,14 +72,11 @@ def test_source_connection_crud_masks_credentials_but_instantiates_with_raw_conf
             SourceConnectionUpdate(
                 connector_name=ConnectorName.GITLAB,
                 config={"password": "new-password-abcdefgh"},
-                selected_project_ids=[],
             ),
         )
         assert updated is not None
         assert updated.connector_name is ConnectorName.GITLAB
         assert updated.config == {"password": "****efgh"}
-        assert updated.selected_project_ids == []
-        assert updated.selected_board_ids == [board_id]
 
         assert delete_source_connection(session, created.id)
         assert get_source_connection(session, created.id) is None
@@ -92,36 +84,35 @@ def test_source_connection_crud_masks_credentials_but_instantiates_with_raw_conf
         assert instantiate_connector(session, created.id, RecordingConnector) is None
 
 
-def test_source_connection_mutations_preserve_referencing_team_scope() -> None:
+def test_source_connection_referenced_by_team_cannot_be_deleted() -> None:
     engine = create_db_engine(":memory:")
     SQLModel.metadata.create_all(engine)
-    project_id = uuid4()
 
     with Session(engine) as session:
         connection = create_source_connection(
             session,
             SourceConnectionCreate(
+                name="Jira",
                 connector_name=ConnectorName.JIRA,
-                selected_project_ids=[project_id],
+            ),
+        )
+        # Create a scope for the connection, then a team whose connection_ids is derived
+        # from that scope.  This is the canonical way to reference a connection via a team
+        # after connection_ids became server-derived.
+        scope = create_scope_definition(
+            session,
+            ScopeDefinitionCreate(
+                connection_id=connection.id,
+                name="Board A",
+                scope_type=ScopeType.BOARD,
+                external_ref={"id": "1"},
+                capabilities=[],
             ),
         )
         create_team_profile(
             session,
-            TeamProfileCreate(
-                name="Platform",
-                connection_ids=[connection.id],
-                project_ids=[project_id],
-                repository_ids=[],
-            ),
+            TeamProfileCreate(name="Platform", scope_ids=[scope.id]),
         )
-
-        with pytest.raises(SourceConnectionInUse, match="update would invalidate team project_ids"):
-            update_source_connection(
-                session,
-                connection.id,
-                SourceConnectionUpdate(selected_project_ids=[]),
-            )
-        assert get_source_connection(session, connection.id) == connection
 
         updated = update_source_connection(
             session,
@@ -131,6 +122,7 @@ def test_source_connection_mutations_preserve_referencing_team_scope() -> None:
         assert updated is not None
         assert updated.config == {"base_url": "https://jira.example.com"}
 
-        with pytest.raises(SourceConnectionInUse, match="referenced by a team"):
+        # The scope references the connection; deletion is blocked at the scope level.
+        with pytest.raises(SourceConnectionInUse, match="referenced by a scope definition"):
             delete_source_connection(session, connection.id)
         assert get_source_connection(session, connection.id) == updated

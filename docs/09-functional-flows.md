@@ -17,9 +17,13 @@ spec, that change is called out in §12 (Model & Backlog Impact) rather than sil
 
 The four shaping decisions behind these flows:
 
-1. **Connection once, scope per team.** Source credentials are entered once as a reusable
-   *Connection*; each *Team* selects its own scope (board/projects/repos) from existing
-   connections.
+1. **Connections are created once and named; the team owns its sources; signals live in reusable
+   groups.** Source credentials are entered once as a reusable, **named** *Connection* on a
+   create-only Connections page (the name lets one instance be told from another — e.g. a contractor
+   with two Jira instances). A *Team* then attaches up to two sources: a **task-board source** (a Jira
+   board, 0..1) and a **code source** (a whole GitLab/GitHub connection, 0..1). Signals are bundled
+   into reusable *Signal Config Groups* that the EM attaches to teams; signals are never scoped
+   individually — a team's sources are resolved at report time.
 2. **Latest-report landing dashboard.** After setup, the landing page shows each team's most
    recent report (severity counts + top risks) with a refresh action. It reuses the report
    view; it is not a separate analytics product.
@@ -40,9 +44,12 @@ below are written source-agnostically so adding a source does not reshape them.
 | Concept | What it is | Storage | Notes |
 |---|---|---|---|
 | **EM (user)** | The single local user. | — | No multi-user/auth in MVP. |
-| **Connection** | One source instance + credentials (Jira Cloud URL + token; GitLab URL + token). | `SourceConnection` ([architecture §8.1](./03-architecture-overview.md#81-stored-data), M2-03) | Reusable across teams. Created once per source instance. |
-| **Team** | A named unit of work the EM manages. Carries scope + working mode. | `TeamProfile` ([data model §5.12](./05-data-model.md#512-teamprofile)) | First-class; multiple per install. See §12 for fields added by this doc. |
-| **Scope** | The slice of a connection a team uses: Jira project + board, GitLab repositories. | On `TeamProfile` (`project_ids`, `board_ids`, `repository_ids`) | A team may draw from more than one connection. |
+| **Connection** | One **named** source instance + credentials (Jira Cloud URL + token; GitLab URL + token). | `SourceConnection` ([architecture §8.1](./03-architecture-overview.md#81-stored-data), M2-03) | Reusable across teams. Created once per source instance on a create-only page. `name` is required and unique per workspace; the connection stores no scope. |
+| **Team** | A named unit of work the EM manages. Carries up to two sources + working mode. | `TeamProfile` ([data model §5.12](./05-data-model.md#512-teamprofile)) | First-class; multiple per install. Created with just a name; **saveable with no sources**. See §12 for fields added by this doc. |
+| **Task-board source** | The team's workflow board: a Jira board (later, other trackers). | `ScopeDefinition` (`scope_type = board`, [requirements REQ-F-041A](./02-requirements.md#req-f-041a--team-owned-sources)) | Owned by the **team** (0..1 board in MVP), chosen via a searchable project → board picker; resolved at report time. |
+| **Code source** | The team's code repository host: a whole GitLab/GitHub connection (all its repos in scope). | `TeamProfile.code_connection_id` ([data model §5.12](./05-data-model.md#512-teamprofile)) | Owned by the **team** (0..1 in MVP). Per-repository scoping is a later phase. |
+| **Signal** | A structured rule expression carrying its own configuration. | `SignalDefinition` ([signal spec §9](./06-signal-yaml-spec.md#9-signal-definitions)) | Scope-agnostic. Built-in signals are templates. Belongs to one or more signal config groups. |
+| **Signal Config Group** | A reusable, named bundle of signals (e.g. "Scrum signals"). | `SignalConfigGroup` ([data model §5.12C](./05-data-model.md#512c-signalconfiggroup)) | Many-to-many with teams and with signals. Attach a group to as many teams as you like. |
 | **Working mode** | `scrum` or `kanban`, plus sprint length for scrum. | On `TeamProfile` (`working_mode`, `sprint_length_days`) | Derived from the board; user-confirmable. |
 | **Report** | Result of evaluating signals for a team over a window. | `Report` + `SignalFinding` ([data model §5.14–5.15](./05-data-model.md#514-signalfinding)) | One per run; persisted; viewable offline. |
 | **Dashboard** | Landing view: latest report per team. | Derived (reads latest `Report` per team) | Not a new stored entity. |
@@ -81,15 +88,17 @@ of the Setup page ([requirements REQ-F-002](./02-requirements.md#req-f-002--loca
 **Steps.**
 
 1. **Welcome & privacy.** Plain-language local-first explainer (data/tokens/reports stay local,
-   no telemetry, read-only access). One "Get started" CTA. Also offers **"Try with demo data"**
-   to skip straight to a demo report ([roadmap M1](./08-mvp-roadmap.md#m1--canonical-model--demo-path-end-to-end)).
+   no telemetry, read-only access). One "Get started" CTA.
 2. **Add ticketing connection (Jira).** See [Flow B](#4-flow-b--connection-setup--token-guidance).
-   Required to run work-item signals.
+   Give it a **name**, enter credentials, test, and save. Required to run work-item signals.
 3. **Add code connection (GitLab).** See [Flow B](#4-flow-b--connection-setup--token-guidance).
-   Optional but recommended; merge-request signals need it.
-4. **Create team.** Ask for a **team name**. Creates a `TeamProfile`.
-5. **Scope the team.** See [Flow C](#5-flow-c--team-scope--working-mode-detection): pick a Jira
-   project + board, confirm the detected working mode/cadence, pick GitLab repositories.
+   Name it, test, save. Optional but recommended; merge-request signals need it.
+4. **Create team.** Ask for a **team name**. Creates a `TeamProfile` (which may be saved with no
+   sources yet).
+5. **Attach the team's sources.** See [Flow C](#5-flow-c--team-scope--working-mode-detection): choose
+   the **task-board source** (pick a Jira connection, then a project and board via searchable pickers)
+   and confirm the detected working mode/cadence, then choose the **code source** (attach a whole
+   GitLab/GitHub connection). Either may be left unset, but a report needs at least one.
 6. **Add another team?** If **yes**, return to step 4. Existing connections are **reused** (no
    token re-entry); the user may add a new connection if a team lives on a different instance.
    If **no**, continue.
@@ -105,26 +114,25 @@ sequenceDiagram
 
     U->>W: Get started
     W->>U: Privacy explainer
-    U->>W: Add Jira connection (url, email, token)
+    U->>W: Add Jira connection (name, url, email, token)
     W->>API: test_connection (Jira)
     API->>C: test_connection()
     C-->>API: ok (user, permissions)
-    API->>DB: save Connection (token stored locally, masked on read)
-    U->>W: Add GitLab connection (url, token)
+    API->>DB: save Connection (name unique; token stored locally, masked on read)
+    U->>W: Add GitLab connection (name, url, token)
     W->>API: test_connection (GitLab)
     API-->>W: ok
     W->>API: save Connection
     loop For each team
         U->>W: Team name
-        W->>API: create TeamProfile
-        W->>API: list_projects / list_boards
-        U->>W: pick project + board
+        W->>API: create TeamProfile (no sources yet)
+        W->>API: list_projects / list_boards (searchable)
+        U->>W: pick task-board source (project + board)
         W->>API: list_sprints(board)
         API-->>W: detected mode + cadence
         W->>U: Confirm "Scrum, 2 weeks" (or override)
-        W->>API: list_repositories
-        U->>W: pick repos
-        W->>API: save team scope + working_mode
+        U->>W: attach code source (whole GitLab connection)
+        W->>API: save team board scope + code_connection_id + working_mode
         W->>U: Add another team?
     end
     U->>W: Finish
@@ -139,11 +147,15 @@ step.
 
 ## 4. Flow B — Connection Setup & Token Guidance
 
-**Goal.** Establish a verified, reusable connection to a source, with safe token handling.
+**Goal.** Establish a verified, reusable, **named** connection to a source, with safe token handling.
+The Connections page is **create-only**: it creates, edits, tests, and deletes connections — it never
+picks projects, boards, or repositories and never runs a report (those belong to the Team, Flow C).
 
 **Steps.**
 
-1. **Pick a source.** The form is rendered from the connector's `config_schema`
+1. **Pick a source and name it.** Choose the source type, then give the connection a **name**
+   (required, unique per workspace — so two instances of the same source, e.g. two Jira tenants, are
+   distinguishable). The rest of the form is rendered from the connector's `config_schema`
    ([connector spec §4](./07-connector-interface.md#4-configuration)) via the connector
    registry (`GET /api/connectors`). Secret fields render as write-only password inputs.
 2. **Inline access guidance.** Per source, link to the minimum read-only scopes and how to
@@ -169,13 +181,17 @@ never a stack trace, never the token.
 
 ## 5. Flow C — Team Scope & Working-Mode Detection
 
-**Goal.** Bind a team to a concrete slice of its connections and establish how it works, with
-minimal questions.
+**Goal.** Give a team its two sources and establish how it works, with minimal questions. A team may
+be created and **saved with no sources**; sources are attached here on the Teams page. A **report run
+requires at least one source** (see [Flow E](#7-flow-e--generate--refresh-a-report)).
 
 **Steps.**
 
-1. **Pick Jira project + board.** From `list_projects` then `list_boards(project)`
+1. **Attach the task-board source.** Pick one of the team's ticketing connections (by name), then a
+   **project** and a **board** from **searchable** lists — `list_projects` then
+   `list_boards(project)`
    ([connector spec §6.2](./07-connector-interface.md#62-workitemprovider-jira-linear-github-issues)).
+   Stored as the team's `0..1` board scope (`ScopeDefinition`, `scope_type = board`).
 2. **Detect working mode + cadence.** On board selection, read `Board.type`
    (`scrum`/`kanban`/`other`, [data model §5.3](./05-data-model.md#53-board)) and the most
    recent closed/active sprints via `list_sprints` to infer **sprint length** from
@@ -185,31 +201,35 @@ minimal questions.
    - **Kanban detected (or no sprints):** show "Kanban"; default report window = **date range**
      (last `N` days, default 14).
    - User can **confirm or override** either field.
-3. **Pick GitLab repositories.** Multiselect from `list_repositories`
-   ([connector spec §6.3](./07-connector-interface.md#63-mergerequestprovider-gitlab-github-prs-bitbucket)).
+3. **Attach the code source.** Pick one of the team's code connections (GitLab/GitHub) by name. The
+   **whole connection** is attached (`TeamProfile.code_connection_id`) — every repository the token
+   can access is in scope; there is no per-repository picker in MVP. `list_repositories`
+   ([connector spec §6.3](./07-connector-interface.md#63-mergerequestprovider-gitlab-github-prs-bitbucket))
+   is resolved at report time.
 4. **Field mappings (defaults, advanced deferred).** Default Jira mappings are applied
    silently ([data model §8.1](./05-data-model.md#81-jira--workitem-defaults)); an "advanced
    field mapping" affordance exists but is optional (M3-05).
-5. **Persist** the scope + working mode on the `TeamProfile`.
+5. **Persist** the board scope, `code_connection_id`, and working mode on the `TeamProfile`. Any of
+   the sources may be left unset and saved.
 
 ```mermaid
 flowchart TD
-    A["Pick Jira project"] --> B["Pick board"]
+    A["Pick task-board connection + project<br/>(searchable)"] --> B["Pick board (searchable)"]
     B --> C{"Board.type + sprints?"}
     C -->|scrum + sprints| D["Mode=Scrum<br/>sprint_length from dates<br/>default window = active sprint"]
     C -->|kanban / no sprints| E["Mode=Kanban<br/>default window = date range (N days)"]
     D --> F["Confirm / override"]
     E --> F
-    F --> G["Pick GitLab repos"]
-    G --> H["Save TeamProfile scope + mode"]
+    F --> G["Attach code source<br/>(whole GitLab/GitHub connection)"]
+    G --> H["Save board scope + code_connection_id + mode"]
 ```
 
 **Why mode matters downstream.** Working mode sets the team's **default report window**, which
 in turn determines **which signals can fire**: sprint-only signals
 (`repeated-carry-over`, `sprint-scope-churn`) require a sprint window and are **skipped with a
 note** for date-range/Kanban runs, mirroring connector-capability skipping
-([connector spec §6.5](./07-connector-interface.md#65-transitionprovider-optional)). No
-per-team signal configuration is required for this — see §10.
+([connector spec §6.5](./07-connector-interface.md#65-transitionprovider-optional)). Which signals
+run is decided by the signal config groups attached to the team — see §10.
 
 ---
 
@@ -232,8 +252,10 @@ further clicks.
 3. **Normalize, persist, resolve identity.** Normalized entities are upserted by
    `(source, external_id)` to stable internal IDs, and cross-entity links (assignee, parent,
    sprint, MR↔WorkItem) are resolved ([data model §2, §7](./05-data-model.md#2-design-principles)).
-4. **Evaluate enabled signals** and persist a `Report` per team with
-   `findings_count_by_severity`.
+4. **Evaluate the team's signals** — the union of enabled signals across the team's attached signal
+   config groups, against the team's sources (its board scope and/or its code connection) — and
+   persist a `Report` per team with `findings_count_by_severity`. Signals whose source is not attached
+   are **skipped with a note** (window-/capability-gating, §10).
 5. **Land on the dashboard.**
 
 **Dashboard contents (MVP).** A card per team:
@@ -280,6 +302,10 @@ in MVP (trends/charts are a later phase, §11).
 
 **Goal.** Produce a fresh report on demand, from the dashboard or the Report Runner.
 
+**Precondition.** The team must have **at least one source** attached (task-board scope or code
+connection). A team with no sources can be selected but its run is blocked with a clear message
+pointing to Flow C; signals whose source is absent are skipped rather than failing the run.
+
 **Triggers.**
 
 - **Dashboard → Refresh:** re-runs the team's **default** window (active sprint or rolling
@@ -305,8 +331,8 @@ The wizard is first-run; these are the steady-state management flows.
 | Action | Where | Effect |
 |---|---|---|
 | **Add a team** | Teams page → "Add team" | Re-enters the team loop (Flow A steps 4–6), reusing connections. |
-| **Edit a team's scope/mode** | Team detail | Change board/repos or override working mode; next run uses it. |
-| **Add / edit / re-test a connection** | Connections page | Update URL/token; `test_connection` re-verifies; token stays masked. |
+| **Edit a team's sources/mode** | Team detail | Change the task-board scope or the code connection, or override working mode; next run uses it. |
+| **Add / edit / re-test a connection** | Connections page (create-only) | Update name/URL/token; `test_connection` re-verifies; token stays masked. No scope or report actions here. |
 | **Re-sync** | Dashboard/Team | Refetch + re-evaluate without changing config. |
 | **Delete a connection** | Connections page | Removes the connection **and its cached normalized data**; warns about teams that depend on it ([requirements REQ-NF-004](./02-requirements.md#req-nf-004--data-deletion), M7-05). |
 | **Delete a team** | Teams page | Removes the team, its scope, and its reports. |
@@ -317,35 +343,46 @@ All destructive actions require confirmation and never touch the source systems 
 
 ---
 
-## 9. Flow G — Signal Configuration & Import/Export
+## 9. Flow G — Signal Config Groups & Import/Export
 
-Steady-state, largely as already specified (M2-13):
+Steady-state signal configuration is organized around reusable **signal config groups**:
 
-- View all 13 catalog signals, enable/disable, edit thresholds and severity, reset per-signal
-  or all ([requirements REQ-F-031/041](./02-requirements.md#req-f-031--configurable-built-in-signals)).
-- Export current config as a self-contained YAML pack (no credentials); import with a validated
-  diff preview before applying ([signal spec §13–§14](./06-signal-yaml-spec.md#13-export-behavior)).
+- **Build signals.** View built-in signal templates and existing signals. Create a signal from
+  scratch, duplicate a template or existing signal, edit conditions, preview matches, save, disable,
+  or delete user-created signals
+  ([requirements REQ-F-031/041](./02-requirements.md#req-f-031--configurable-built-in-signals)).
+  Signals are **scope-agnostic** — there is no scope picker in the signal builder.
+- **Group signals.** Create a signal config group (e.g. "Scrum signals", "Kanban signals") and add
+  signals to it. A signal can belong to many groups.
+- **Attach groups to teams.** From a team, attach one or more groups. A group attached to two teams
+  is shared state: editing the group changes both teams' runs.
+- The builder is generated from connector capability schemas: the entity type decides available
+  fields, operators, values, and sprint-only conditions.
+- Export a group's YAML as either a private backup/migration file or a public template file; import
+  creates a new group, with validation before applying
+  ([signal spec §15–§16](./06-signal-yaml-spec.md#15-export-behavior)).
 
-**Scoping to teams.** Signal *applicability* per team is achieved through signal-pack **scope
-filters** (`project_keys`, `repository_paths`, etc., [signal spec §7.4](./06-signal-yaml-spec.md#74-scope-optional-object))
-combined with the team's window, **not** through separate per-team signal configs in MVP. See
-§10.
+**Signal applicability.** A team runs the union of signals across its attached groups, against the
+team's board scope. To give two teams different rules, attach different groups; to run the same
+check with different thresholds, create two signals (config is global per signal) and place each in
+the relevant group.
 
 ---
 
-## 10. How Working Mode Shapes Signals (no per-team config)
+## 10. How Working Mode Shapes Signal Availability
 
-A single global signal pack serves all teams. Per-team behavior emerges from two mechanisms:
+Working mode and scope capabilities shape which fields and signals are available:
 
 1. **Window-gating.** Sprint-only signals require a sprint window. A Kanban/date-range run skips
    them and records a one-line note in the report ("skipped: requires a sprint window"). This
    reuses the capability-skip pattern from
    [connector spec §6.5](./07-connector-interface.md#65-transitionprovider-optional).
-2. **Scope filters.** A team only evaluates entities within its scope (its projects/repos),
-   because the report runs against that team's `TeamProfile` scope and the pack's scope filters.
-
-This keeps MVP simple: no per-team threshold matrix. Per-team signal overrides are noted as a
-later enhancement (§11).
+2. **Scope capabilities.** Sprint fields such as `sprint_day` and `sprint_phase` evaluate only when
+   the team's board scope supplies sprint data (scrum boards). Kanban scopes still use aging and
+   status conditions.
+3. **Groups, not per-signal scopes.** Different teams get different rules by attaching different
+   signal config groups. This is how a support team can run a 3-day open-ticket group while a Scrum
+   team runs a stale-work group — the scope comes from each team's board, not from the signal.
 
 ---
 
@@ -357,7 +394,7 @@ later enhancement (§11).
   explicit refresh; cron-style refresh is later
   ([roadmap §5](./08-mvp-roadmap.md#5-out-of-mvp-backlog-phase-2)).
 - **GitHub and other sources** in onboarding (Phase 3).
-- **Per-team signal configuration / packs.** MVP uses one global pack + scope + window-gating.
+- **Deep arbitrary signal expression nesting.** MVP supports AND/OR and one nested group.
 - **Multi-source-per-capability teams** (e.g. two Jira instances feeding one team) beyond the
   basic "team may draw from more than one connection" already covered.
 - **Cross-source user identity resolution** beyond `member_user_keys`
@@ -372,11 +409,20 @@ for traceability; applying them is a separate step.
 
 **Data model ([05-data-model.md](./05-data-model.md)).**
 
-- Extend `TeamProfile` (§5.12) with: `board_ids: UUID[]` (scope), `working_mode: enum
-  {scrum, kanban}`, `sprint_length_days: int | null`, and explicit links to the connections it
-  uses (or derive via the contained project/repo ids).
+- Extend `TeamProfile` (§5.12) with: a single Jira board scope (0..1, via `scope_ids`),
+  `signal_config_group_ids: UUID[]` (attached groups), `working_mode: enum {scrum, kanban}`,
+  `sprint_length_days: int | null`, and explicit links to the connections it uses (or derive via
+  the contained project/repo ids).
+- Add the `SignalConfigGroup` entity (§5.12C) and remove `target_scopes` from `SignalDefinition`
+  (§5.12B): scope is resolved from the team, not stored on the signal.
 - Confirm `TeamProfile` is first-class and created during onboarding (supersedes the earlier
   "auto-seeded Default team" simplification).
+- Add a required, workspace-unique `name` to `SourceConnection`, and **remove connection-level
+  scope** (`selected_project_ids`, `selected_board_ids`, `selected_repository_ids`): the Connections
+  page is create-only and scope lives on the team ([backlog M3.4](./backlog/M3.4-connection-team-source-model)).
+- Add `TeamProfile.code_connection_id: UUID | null` (§5.12) for the team's whole-connection code
+  source; keep the board scope on `scope_ids`. A team may be saved with no sources; a report run
+  requires at least one.
 
 **UI pages ([architecture §12.1](./03-architecture-overview.md#121-mvp-ui-pages), backlog M2).**
 
@@ -390,8 +436,15 @@ for traceability; applying them is a separate step.
   **M2-18** (team profiles), **M2-19** (connector registry + `GET /api/connectors`). These flows
   expand **M2-18** from "default team" to "multi-team onboarding wizard + Teams page", and add a
   **Dashboard** ticket.
+- Milestone **M3.4** (connection & team source model) revises the already-implemented Connections and
+  Teams screens to this flow: named create-only connections, board scope + `code_connection_id` on the
+  team, and the save-without-source / report-requires-source rule. It supersedes the connection-level
+  scope introduced by the earlier M3 UI.
 - Report-runner tickets (M1-08, M3-06, M4-06, M6-02) pass a real `team_profile_id` and derive
-  the default window from the team's working mode.
+  the default window from the team's working mode; **M6-02** additionally blocks a run when the team
+  has no sources.
+- **M4-06** (GitLab connection UI) becomes create-and-test only (no repository picker, no run), and
+  **M4-12** (onboarding wizard) follows the two-source team model.
 - Engine gains **window-gating** of sprint-only signals (M5 area).
 
 **Requirements ([02-requirements.md](./02-requirements.md)).**

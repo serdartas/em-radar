@@ -42,13 +42,6 @@ export interface JiraSprintReportRequest {
   sprintLengthDays: number | null
 }
 
-export async function runDemoReport(): Promise<ReportDetail> {
-  return apiFetch<ReportDetail>("/reports/run", {
-    method: "POST",
-    body: JSON.stringify({ connector: "demo" }),
-  })
-}
-
 export async function runJiraSprintReport(
   request: JiraSprintReportRequest,
 ): Promise<ReportDetail> {
@@ -64,6 +57,13 @@ export async function runJiraSprintReport(
         sprint_length_days: request.sprintLengthDays,
       },
     }),
+  })
+}
+
+export async function runTeamReport(teamProfileId: string): Promise<ReportDetail> {
+  return apiFetch<ReportDetail>("/reports/run", {
+    method: "POST",
+    body: JSON.stringify({ connector: "jira", team_profile_id: teamProfileId }),
   })
 }
 

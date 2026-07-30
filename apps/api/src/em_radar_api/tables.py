@@ -4,7 +4,10 @@ from sqlalchemy import UniqueConstraint
 from sqlmodel import Field
 
 from em_radar_api.models.signal_pack_history import SignalPackHistory  # noqa: F401
+from em_radar_api.scope_definitions import ScopeDefinitionTable  # noqa: F401
+from em_radar_api.signal_config_groups import SignalConfigGroupTable  # noqa: F401
 from em_radar_api.signal_configs import SignalConfigTable  # noqa: F401
+from em_radar_api.signal_definitions import SignalDefinitionTable  # noqa: F401
 from em_radar_api.source_connections import SourceConnectionTable, UUIDListJSON  # noqa: F401
 
 from em_radar_core.models import (
@@ -119,9 +122,12 @@ class TeamProfileTable(TeamProfile, table=True):
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     connection_ids: list[UUID] = Field(default_factory=list, sa_type=UUIDListJSON)
-    project_ids: list[UUID] = Field(sa_type=UUIDListJSON)
+    scope_ids: list[UUID] = Field(default_factory=list, sa_type=UUIDListJSON)
+    project_ids: list[UUID] = Field(default_factory=list, sa_type=UUIDListJSON)
     board_ids: list[UUID] = Field(default_factory=list, sa_type=UUIDListJSON)
-    repository_ids: list[UUID] = Field(sa_type=UUIDListJSON)
+    repository_ids: list[UUID] = Field(default_factory=list, sa_type=UUIDListJSON)
+    signal_config_group_ids: list[UUID] = Field(default_factory=list, sa_type=UUIDListJSON)
+    code_connection_id: UUID | None = Field(default=None, foreign_key="source_connection.id")
 
 
 class EvaluationWindowTable(EvaluationWindow, table=True):

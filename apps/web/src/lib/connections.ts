@@ -2,22 +2,31 @@ import { apiFetch } from "@/lib/api"
 
 export interface SourceConnection {
   id: string
+  name: string
   connector_name: string
   config: Record<string, unknown>
-  selected_project_ids: string[]
-  selected_board_ids: string[]
-  selected_repository_ids: string[]
   created_at: string
 }
+
+export type ConnectionErrorCode =
+  | "auth"
+  | "config"
+  | "data"
+  | "not_found"
+  | "rate_limited"
+  | "transient"
+  | "unknown"
 
 export interface ConnectionTestResult {
   ok: boolean
   detail: string
   user_display_name: string | null
   permissions: string[]
+  code?: ConnectionErrorCode | null
 }
 
 export interface ConnectionDraft {
+  name: string
   connector_name: string
   config: Record<string, unknown>
 }

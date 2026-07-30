@@ -91,10 +91,12 @@ def persist_fetch(
                 identity_map[instance.id] = internal_id
             plan.append((table_cls, instance, internal_id))
 
+    persisted_ids = set(identity_map.values())
     session.exec(text("PRAGMA defer_foreign_keys=ON"))
     for table_cls, instance, internal_id in plan:
         data = instance.model_dump()
         resolve_references(table_cls, data, identity_map)
+        _drop_dangling_references(table_cls, data, persisted_ids)
         data["id"] = internal_id if internal_id is not None else _history_id(table_cls, data)
         session.merge(table_cls(**data))
     session.commit()
@@ -120,6 +122,27 @@ def _parents_first(instances: Sequence[SQLModel]) -> list[SQLModel]:
     for instance in instances:
         visit(instance)
     return ordered
+
+
+def _drop_dangling_references(
+    table_cls: type[SQLModel],
+    data: dict[str, object],
+    persisted_ids: set[UUID],
+) -> None:
+    """Null nullable foreign keys that point outside the persisted set.
+
+    A fetch may reference entities it did not include — a sprint-scoped report yields a story
+    whose parent epic is out of scope, for instance. Such a reference cannot satisfy its
+    foreign key, so a nullable one is dropped rather than failing the whole transaction. The
+    id scheme assigns fresh internal ids per entity, so a reference is resolvable only when its
+    target is part of this fetch; required references (e.g. ``project_id``) are always present.
+    """
+    for column in table_cls.__table__.columns:
+        if not column.foreign_keys or not column.nullable:
+            continue
+        value = data.get(column.name)
+        if isinstance(value, UUID) and value not in persisted_ids:
+            data[column.name] = None
 
 
 def _natural_key_id(session: Session, table_cls: type[SQLModel], instance: SQLModel) -> UUID | None:

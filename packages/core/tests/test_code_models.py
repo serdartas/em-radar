@@ -26,7 +26,7 @@ NOW = datetime(2026, 6, 10, tzinfo=timezone.utc)
 
 def merge_request(**overrides: object) -> MergeRequest:
     values: dict[str, object] = {
-        "source": Source.DEMO,
+        "source": Source.JIRA,
         "external_id": "mr-1",
         "repository_id": uuid4(),
         "iid": 1,
@@ -44,7 +44,7 @@ def merge_request(**overrides: object) -> MergeRequest:
 
 def test_valid_code_entities_can_be_constructed() -> None:
     repository = Repository(
-        source=Source.DEMO,
+        source=Source.JIRA,
         external_id="repo-1",
         name="em-radar",
         full_path="engineering/em-radar",
@@ -61,7 +61,7 @@ def test_valid_code_entities_can_be_constructed() -> None:
         decision=ReviewDecision.REQUESTED,
     )
     comment = Comment(
-        source=Source.DEMO,
+        source=Source.JIRA,
         external_id="comment-1",
         entity_type=EntityType.MERGEREQUEST,
         entity_id=mr.id,
@@ -99,7 +99,7 @@ def test_merge_request_array_defaults_are_independent_json_fields() -> None:
 @pytest.mark.parametrize("field_name", ["created_at", "updated_at"])
 def test_merge_request_requires_created_and_updated_timestamps(field_name: str) -> None:
     values: dict[str, object] = {
-        "source": Source.DEMO,
+        "source": Source.JIRA,
         "external_id": "mr-1",
         "repository_id": uuid4(),
         "iid": 1,
@@ -151,7 +151,7 @@ def test_history_entities_only_reference_supported_parent_types(
     values = (
         {
             **common,
-            "source": Source.DEMO,
+            "source": Source.JIRA,
             "external_id": "comment-1",
             "author_id": UUID(int=2),
             "created_at": NOW,

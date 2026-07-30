@@ -24,7 +24,7 @@ from em_radar_core.models import (
 
 def work_item(**overrides: object) -> WorkItem:
     values: dict[str, object] = {
-        "source": Source.DEMO,
+        "source": Source.JIRA,
         "external_id": "item-1",
         "project_id": uuid4(),
         "key": "DEMO-1",
@@ -42,17 +42,17 @@ def test_valid_planning_entities_can_be_constructed() -> None:
     board_id = uuid4()
     sprint_id = uuid4()
 
-    user = User(source=Source.DEMO, external_id="user-1", display_name="Demo User")
-    project = Project(source=Source.DEMO, external_id="project-1", key="DEMO", name="Demo")
+    user = User(source=Source.JIRA, external_id="user-1", display_name="Demo User")
+    project = Project(source=Source.JIRA, external_id="project-1", key="DEMO", name="Demo")
     board = Board(
-        source=Source.DEMO,
+        source=Source.JIRA,
         external_id="board-1",
         project_id=project_id,
         name="Delivery",
         type=BoardType.SCRUM,
     )
     sprint = Sprint(
-        source=Source.DEMO,
+        source=Source.JIRA,
         external_id="sprint-1",
         board_id=board_id,
         name="Sprint 1",
