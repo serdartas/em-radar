@@ -29,13 +29,15 @@ class SignalConfigGroupInUse(ValueError):
 def create_signal_config_group(
     session: Session,
     group: SignalConfigGroupCreate,
+    *,
+    commit: bool = True,
 ) -> SignalConfigGroupRead:
     _validate_signal_ids(session, group.signal_ids)
     now = datetime.now(UTC)
     row = SignalConfigGroupTable.model_validate(
         group, update={"created_at": now, "updated_at": now}
     )
-    _write(session, row)
+    _write(session, row, commit=commit)
     return SignalConfigGroupRead.model_validate(row)
 
 
@@ -56,6 +58,8 @@ def update_signal_config_group(
     session: Session,
     group_id: UUID,
     update: SignalConfigGroupUpdate,
+    *,
+    commit: bool = True,
 ) -> SignalConfigGroupRead | None:
     row = session.get(SignalConfigGroupTable, group_id)
     if row is None:
@@ -70,7 +74,7 @@ def update_signal_config_group(
         _validate_signal_ids(session, values["signal_ids"])
     row.sqlmodel_update(values)
     row.updated_at = datetime.now(UTC)
-    _write(session, row)
+    _write(session, row, commit=commit)
     return SignalConfigGroupRead.model_validate(row)
 
 
@@ -114,11 +118,15 @@ def _validate_signal_ids(session: Session, signal_ids: list[UUID]) -> None:
         raise InvalidSignalConfigGroup("signal_ids must reference existing signal definitions")
 
 
-def _write(session: Session, row: SignalConfigGroupTable) -> None:
+def _write(session: Session, row: SignalConfigGroupTable, *, commit: bool) -> None:
     try:
         session.add(row)
-        session.commit()
+        if commit:
+            session.commit()
+        else:
+            session.flush()
     except IntegrityError as error:
         session.rollback()
         raise DuplicateGroupName("group name must be unique") from error
-    session.refresh(row)
+    if commit:
+        session.refresh(row)

@@ -155,37 +155,50 @@ def _group_signal_entries(
     export_type: str,
 ) -> list[SignalEntry]:
     scrub = export_type == "public_template"
-    return [
-        SignalEntry(
-            name=definition.name,
-            description=definition.description,
-            entity_type=definition.entity_type,
-            expression=_scrub_expression(definition.expression) if scrub else definition.expression,
-            report_settings=definition.report_settings,
-            enabled=definition.enabled,
-            origin=definition.origin.value,
-            template_key=definition.template_key,
+    entries: list[SignalEntry] = []
+    for definition in definitions:
+        expression = definition.expression
+        scrubbed = False
+        if scrub:
+            expression, scrubbed = _scrub_expression(definition.expression)
+        entries.append(
+            SignalEntry(
+                name=definition.name,
+                description=definition.description,
+                entity_type=definition.entity_type,
+                expression=expression,
+                report_settings=definition.report_settings,
+                enabled=definition.enabled and not scrubbed,
+                origin=definition.origin.value,
+                template_key=definition.template_key,
+            )
         )
-        for definition in definitions
-    ]
+    return entries
 
 
-def _scrub_expression(expression: dict[str, object]) -> dict[str, object]:
+def _scrub_expression(expression: dict[str, object]) -> tuple[dict[str, object], bool]:
     """Strip org-specific condition values, keeping the field/operator structure so a
     public template documents what to configure without leaking tuned thresholds."""
     if expression.get("type") == "group":
         conditions = expression.get("conditions")
-        return {
-            **expression,
-            "conditions": [
+        scrubbed_conditions = (
+            [
                 _scrub_expression(condition)
                 for condition in conditions
                 if isinstance(condition, dict)
             ]
             if isinstance(conditions, list)
+            else []
+        )
+        return {
+            **expression,
+            "conditions": [condition for condition, _ in scrubbed_conditions]
+            if isinstance(conditions, list)
             else conditions,
-        }
-    return {key: value for key, value in expression.items() if key != "value"}
+        }, any(scrubbed for _, scrubbed in scrubbed_conditions)
+    return {
+        key: value for key, value in expression.items() if key != "value"
+    }, "value" in expression
 
 
 def _slugify(text: str) -> str | None:

@@ -148,3 +148,11 @@ def test_public_template_export_scrubs_org_specific_condition_values(
     assert _ORG_SPECIFIC_LABEL not in public_text
     # The field/operator structure is preserved so the template stays usable.
     assert "labels" in public_text
+    assert "enabled: false" in public_text
+
+    apply = api_client.post(
+        "/api/signal-pack/import/apply",
+        json={"raw_yaml": public_text, "mode": "additive", "conflict": "keep_both"},
+    )
+
+    assert apply.status_code == 200

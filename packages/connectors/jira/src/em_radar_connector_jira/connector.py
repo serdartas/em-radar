@@ -178,7 +178,6 @@ class JiraConnector:
                     value_provider=labels_provider,
                 ),
                 SignalField("issue_type", "Issue Type", "enum", ("is", "is_not", "is_any_of")),
-                SignalField("priority", "Priority", "enum", ("is", "is_not", "is_any_of")),
                 SignalField("assignee", "Assignee", "nullable", ("is_empty", "is_not_empty")),
                 SignalField(
                     "acceptance_criteria",

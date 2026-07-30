@@ -19,6 +19,7 @@ def test_signal_schema_contains_expected_jira_issue_fields_and_operators() -> No
     assert {"created_at", "updated_at", "resolved_at", "age_in_current_status"}.issubset(
         {field["key"] for field in schema["fields"]}
     )
+    assert "priority" not in {field["key"] for field in schema["fields"]}
 
 
 def test_sprint_fields_require_sprint_capability() -> None:

@@ -258,8 +258,6 @@ def _field_value(
         return _sprint_phase(workitem, data, ctx)
     if field_key == "sprint_count":
         return len(tuple(dict.fromkeys(workitem.sprint_ids)))
-    if field_key == "priority":
-        return None
     raise ExpressionValidationError(f"unsupported field: {field_key}")
 
 

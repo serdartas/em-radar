@@ -4,7 +4,9 @@ from sqlmodel import Session, select
 
 from em_radar_api.models.signal_pack_history import SignalPackHistory
 from em_radar_api.repositories.signal_configs import list_signal_configs, upsert_signal_config
+from em_radar_api.signal_config_groups import SignalConfigGroupTable
 from em_radar_api.signal_configs import SignalConfigUpsert
+from em_radar_api.signal_definitions import SignalDefinitionTable
 from em_radar_api.tables import ProjectTable, RepositoryTable
 from em_radar_core.models import Severity, Source
 
@@ -121,6 +123,57 @@ spec:
         category: flow
 """
 
+INVALID_EXPRESSION_PACK = """\
+apiVersion: emradar.dev/v1
+kind: SignalPack
+metadata:
+  name: invalid-expression-pack
+  version: 1.0.0
+  description: Pack with an invalid expression.
+spec:
+  export_type: private_backup
+  signals:
+    - name: Invalid Signal
+      entity_type: issue
+      expression:
+        type: group
+        operator: all
+        conditions:
+          - field: jira_private_priority
+            operator: is
+            value: High
+      report_settings:
+        severity: warning
+        category: flow
+"""
+
+GROUP_FAILURE_PACK = """\
+apiVersion: emradar.dev/v1
+kind: SignalPack
+metadata:
+  name: invalid-group-pack
+  version: 1.0.0
+  description: Pack with a group that duplicates one signal reference.
+spec:
+  export_type: private_backup
+  signals:
+    - name: Atomic Signal
+      entity_type: issue
+      expression:
+        type: group
+        operator: all
+        conditions:
+          - field: labels
+            operator: contains
+            value: alpha
+      report_settings:
+        severity: warning
+        category: flow
+  groups:
+    - name: Invalid Group
+      signals: [Atomic Signal, Atomic Signal]
+"""
+
 MINIMAL_PACK = """\
 apiVersion: emradar.dev/v1
 kind: SignalPack
@@ -230,6 +283,40 @@ def test_invalid_pack_is_rejected_without_state_change(
         configs = list_signal_configs(session)
         assert len(configs) == 1
         assert configs[0].params == {"days_threshold": 1}
+        assert list(session.exec(select(SignalPackHistory))) == []
+
+
+def test_definition_pack_rejects_invalid_expression_before_import(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+) -> None:
+    response = api_client.post(
+        "/api/signal-pack/import/apply",
+        json={"raw_yaml": INVALID_EXPRESSION_PACK},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "invalid-signal-pack"
+    with session_factory() as session:
+        assert list(session.exec(select(SignalDefinitionTable))) == []
+        assert list(session.exec(select(SignalConfigGroupTable))) == []
+        assert list(session.exec(select(SignalPackHistory))) == []
+
+
+def test_definition_pack_apply_rolls_back_when_late_group_write_fails(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+) -> None:
+    response = api_client.post(
+        "/api/signal-pack/import/apply",
+        json={"raw_yaml": GROUP_FAILURE_PACK},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "invalid-signal-pack"
+    with session_factory() as session:
+        assert list(session.exec(select(SignalDefinitionTable))) == []
+        assert list(session.exec(select(SignalConfigGroupTable))) == []
         assert list(session.exec(select(SignalPackHistory))) == []
 
 

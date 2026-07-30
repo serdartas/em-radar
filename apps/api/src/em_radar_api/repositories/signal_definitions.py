@@ -20,9 +20,11 @@ class DuplicateSignalName(ValueError):
 def create_signal_definition(
     session: Session,
     definition: SignalDefinitionCreate,
+    *,
+    commit: bool = True,
 ) -> SignalDefinitionRead:
     row = SignalDefinitionTable.model_validate(definition.model_dump(mode="json"))
-    _write(session, row)
+    _write(session, row, commit=commit)
     return SignalDefinitionRead.model_validate(row)
 
 
@@ -43,6 +45,8 @@ def update_signal_definition(
     session: Session,
     definition_id: UUID,
     update: SignalDefinitionUpdate,
+    *,
+    commit: bool = True,
 ) -> SignalDefinitionRead | None:
     row = session.get(SignalDefinitionTable, definition_id)
     if row is None:
@@ -52,7 +56,7 @@ def update_signal_definition(
     row.sqlmodel_update(values)
     row.version += 1
     row.updated_at = datetime.now(UTC)
-    _write(session, row)
+    _write(session, row, commit=commit)
     return SignalDefinitionRead.model_validate(row)
 
 
@@ -66,11 +70,15 @@ def delete_signal_definition(session: Session, definition_id: UUID) -> bool:
     return True
 
 
-def _write(session: Session, row: SignalDefinitionTable) -> None:
+def _write(session: Session, row: SignalDefinitionTable, *, commit: bool) -> None:
     try:
         session.add(row)
-        session.commit()
+        if commit:
+            session.commit()
+        else:
+            session.flush()
     except IntegrityError as error:
         session.rollback()
         raise DuplicateSignalName("signal name must be unique") from error
-    session.refresh(row)
+    if commit:
+        session.refresh(row)

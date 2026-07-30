@@ -24,6 +24,7 @@ from em_radar_api.signal_definitions import (
 )
 from em_radar_api.signal_configs import SignalConfigRead, SignalConfigTable, SignalConfigUpsert
 from em_radar_api.tables import ProjectTable, RepositoryTable
+from em_radar_connector_jira import JiraConnector
 from em_radar_config import (
     SIGNAL_CATALOG,
     PackGroupEntry,
@@ -116,9 +117,13 @@ def apply_signal_pack_import(
                 "Pack contains duplicate names within a single pack: "
                 + ", ".join(f"{n!r}" for n in duplicate_names)
             )
-        _import_definition_pack(session, result.pack, conflict)
-        session.add(SignalPackHistory(pack_name=result.pack.metadata.name, raw_yaml=raw_yaml))
-        session.commit()
+        try:
+            _import_definition_pack(session, result.pack, conflict)
+            session.add(SignalPackHistory(pack_name=result.pack.metadata.name, raw_yaml=raw_yaml))
+            session.commit()
+        except ValueError as error:
+            session.rollback()
+            raise PackValidationError(str(error)) from error
         return preview
     rows = {
         row.signal_id: row
@@ -283,18 +288,21 @@ def _import_definition_pack(session: Session, pack: SignalPack, conflict: Confli
                     session,
                     existing_id,
                     SignalDefinitionUpdate(**definition.model_dump()),
+                    commit=False,
                 )
                 name_to_id[source_name] = existing_id
                 continue
             new_name = _dedupe_name(source_name, used_signal_names)
             used_signal_names.add(new_name)
             created = create_signal_definition(
-                session, definition.model_copy(update={"name": new_name})
+                session,
+                definition.model_copy(update={"name": new_name}),
+                commit=False,
             )
             name_to_id[source_name] = created.id
         else:
             used_signal_names.add(source_name)
-            created = create_signal_definition(session, definition)
+            created = create_signal_definition(session, definition, commit=False)
             name_to_id[source_name] = created.id
 
     existing_groups = {row.name: row.id for row in session.exec(select(SignalConfigGroupTable))}
@@ -309,6 +317,7 @@ def _import_definition_pack(session: Session, pack: SignalPack, conflict: Confli
                     session,
                     existing_groups[group.name],
                     SignalConfigGroupUpdate(description=group.description, signal_ids=signal_ids),
+                    commit=False,
                 )
                 continue
             new_name = _dedupe_name(group.name, used_group_names)
@@ -318,6 +327,7 @@ def _import_definition_pack(session: Session, pack: SignalPack, conflict: Confli
                 SignalConfigGroupCreate(
                     name=new_name, description=group.description, signal_ids=signal_ids
                 ),
+                commit=False,
             )
         else:
             used_group_names.add(group.name)
@@ -326,6 +336,7 @@ def _import_definition_pack(session: Session, pack: SignalPack, conflict: Confli
                 SignalConfigGroupCreate(
                     name=group.name, description=group.description, signal_ids=signal_ids
                 ),
+                commit=False,
             )
 
 
@@ -383,4 +394,5 @@ def _validation_context(session: Session) -> PackValidationContext:
     return PackValidationContext(
         project_keys=frozenset(session.exec(select(ProjectTable.key))),
         repository_paths=frozenset(session.exec(select(RepositoryTable.full_path))),
+        signal_schemas=(JiraConnector.describe_signal_schema(),),
     )
