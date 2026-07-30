@@ -424,7 +424,7 @@ Scope:
 * Jira base URL
 * personal access token
 * connection test
-* project/board selection
+* team-level project/board selection (never stored on the connection)
 * sprint listing
 * issue fetching
 * epic/story relationship mapping
@@ -446,7 +446,7 @@ Scope:
 * GitLab base URL
 * personal access token
 * connection test
-* group/project selection
+* whole-connection attachment to a team (all accessible repositories)
 * merge request fetching
 * approval/reviewer metadata
 * pipeline status
@@ -781,7 +781,8 @@ Phase 1 is successful when:
 * sprint report works
 * date-range report works
 * at least 10 useful deterministic signals exist
-* scoped deterministic signal definitions can be configured from UI
+* deterministic signal definitions for work-tracking or code-repository entities can be configured
+  from the UI
 * report output is actionable
 * Markdown export works
 * credentials are handled safely

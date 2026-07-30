@@ -35,10 +35,16 @@ connectors provide access, teams own the board scope, and a pack is just the rul
 - **Pack.** A named, versioned bundle of signals and their configuration — the on-disk form of a Signal Config Group.
 - **Signal Config Group.** The in-app entity a pack maps to: a reusable bundle of signals, attached to any number of teams. See [data model §5.12C](./05-data-model.md#512c-signalconfiggroup).
 - **Template.** A built-in signal shipped with the application. A template seeds a signal in a group; it is configuration, not executable code. Built-in signals are catalogued in §12.
-- **Signal.** A named, structured rule expression over one entity type, carrying its own configuration (params, severity, enabled state). A signal is **scope-agnostic**: it is not assigned to any scope. Scope is resolved from the team at report time.
-- **Condition.** A field/operator/value predicate validated against the selected connector capability schema.
+- **Signal.** A named, structured rule expression over one signal entity type, carrying its own
+  configuration (params, severity, enabled state). In MVP, `issue` belongs to the work-tracking
+  domain and `merge_request` belongs to the code-repository domain. A signal selects neither a
+  connection nor a project, board, or repository; the team supplies compatible source data at
+  report time. Cross-domain signals are deferred until after MVP.
+- **Condition.** A field/operator/value predicate validated against capability schemas for the
+  signal's declared entity type.
 - **Severity.** The importance level a finding from this signal should carry (`info`, `warning`, `critical`). Each signal declares a default; packs may override.
-- **Capability schema.** Connector metadata describing available entity types, fields, operators, value providers, and field availability constraints.
+- **Capability schema.** Connector metadata describing available entity types, fields, operators,
+  value providers, and field availability constraints.
 
 ## 3. File Structure
 
@@ -122,7 +128,7 @@ Holds the actual configuration.
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `export_type` | enum | yes | `private_backup` or `public_template`. Controls how aggressively org-specific condition values are scrubbed on export. See §15. |
-| `signals` | array | yes | The signal definitions referenced by the pack, each serialized once. Each is a scope-agnostic signal definition. See §9. |
+| `signals` | array | yes | The signal definitions referenced by the pack, each serialized once and declaring one signal entity type. See §9. |
 | `groups` | array | no | The signal config groups in the pack. Each entry references its member signals by name. See §7. When omitted, the pack is read as a single legacy group (back-compat). |
 | `field_mappings` | object | no | Optional Jira/GitLab field-mapping hints. See §11. |
 
@@ -148,14 +154,15 @@ therefore **never** carry:
 - **Source connections.** Connectors provide access and live only in the local app, masked at rest
   ([ADR-0006](./ADRs/0006-token-storage.md)). A pack contains no `base_url`, no `auth`, no
   connector ids.
-- **Scopes.** Scope (a Jira board) is a property of the **team** a group is attached to, resolved
-  at report time — never stored on a signal or in a pack. There is no `scopes` block and no
-  `target_scopes` field.
+- **Team source selections.** A Jira project/board pair is a property of the **team** a group is
+  attached to, resolved at report time — never stored on a signal or in a pack. There is no
+  project, board, repository, or connection mapping block.
 - **Teams.** Team membership and group↔team attachments are local configuration, not part of a
   portable pack.
 
-A signal does declare its `entity_type` (e.g. `issue`, `merge_request`); when a group is attached
-to a team, only signals whose entity type the team's scope can supply are evaluated.
+A signal declares exactly one `entity_type` in MVP (`issue` for work tracking or `merge_request`
+for code repository). When a group is attached to a team, only signals whose entity type the
+team's attached sources can supply are evaluated.
 
 ## 7. Signal Config Group Mapping
 
@@ -186,8 +193,9 @@ template carries no scope — it is added to a group, and scope is resolved from
 
 ## 9. Signal Definitions
 
-Each entry in `spec.signals` is a scope-agnostic signal. It carries its rule and configuration but
-no scope — scope is resolved from the team a group is attached to.
+Each entry in `spec.signals` carries its rule and configuration for one signal entity type. It
+contains no connection, project, board, or repository selection; those are resolved from the team
+to which a group is attached.
 
 ```yaml
 - id: sig-stale-fraud-defense
@@ -219,7 +227,7 @@ no scope — scope is resolved from the team a group is attached to.
 | `id` | string | yes | Stable local signal id. |
 | `name` | string | yes | Human-readable name, unique in the local workspace. |
 | `description` | string | no | Shown in the builder and reports. |
-| `entity_type` | string | yes | Connector-provided entity type such as `issue` or `merge_request`. |
+| `entity_type` | string | yes | Exactly one signal entity type in MVP: `issue` (work tracking) or `merge_request` (code repository). |
 | `expression` | object | yes | Rule expression. See §10. |
 | `report_settings` | object | yes | Severity, category, and optional message template. |
 | `enabled` | boolean | yes | Disabled signals are persisted but not evaluated. |
@@ -367,7 +375,7 @@ A pack is **rejected** at import time if any of the following are true:
 3. `metadata.name` is missing or does not match the kebab-case pattern.
 4. `metadata.version` is not a valid semver string.
 5. `spec.signals` is missing or empty.
-6. A signal expression uses a field unavailable for its connector type or entity type.
+6. A signal expression uses a field unavailable for its declared entity type.
 7. A signal expression uses an operator invalid for the chosen field type.
 8. `min_emradar_version`, if set, is greater than the running EM Radar version.
 9. The YAML contains any field or section starting with `!`, `&`, `*`, or `<<` outside of standard YAML anchors and merge keys used safely.
