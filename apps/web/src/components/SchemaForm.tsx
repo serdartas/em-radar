@@ -183,13 +183,17 @@ interface FieldLabelProps {
 function FieldLabel({ help, htmlFor, label, property, required }: FieldLabelProps) {
   return (
     <div className="flex items-center gap-1.5">
-      <Label htmlFor={htmlFor}>
-        {label}
-        {required && <span className="ml-0.5 text-red-600"> *</span>}
-        {isSecret(property) && (
-          <span className="ml-2 text-xs font-normal text-slate-500">(write-only)</span>
-        )}
-      </Label>
+      <Label htmlFor={htmlFor}>{label}</Label>
+      {required && (
+        <span aria-hidden="true" className="text-red-600">
+          *
+        </span>
+      )}
+      {isSecret(property) && (
+        <span aria-hidden="true" className="text-xs font-normal text-slate-500">
+          (write-only)
+        </span>
+      )}
       {help && <InfoTooltip label={`About ${label}`}>{help}</InfoTooltip>}
     </div>
   )
