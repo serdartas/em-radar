@@ -436,9 +436,9 @@ def _date_range(value: object) -> tuple[datetime, datetime]:
 
 
 def _coerce_tz(observed: datetime, reference: datetime) -> datetime:
-    """Return observed with tzinfo matched to reference, preventing naive/aware TypeError."""
+    """Return observed as UTC-aware when naive, enabling comparison with a tz-aware reference."""
     if observed.tzinfo is None and reference.tzinfo is not None:
-        return observed.replace(tzinfo=reference.tzinfo)
+        return observed.replace(tzinfo=timezone.utc)
     return observed
 
 

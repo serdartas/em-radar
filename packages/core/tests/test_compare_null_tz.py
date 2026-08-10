@@ -70,3 +70,15 @@ def test_is_before_null_returns_false() -> None:
 def test_is_after_null_returns_false() -> None:
     """Null observed must return False for 'is_after' (numeric sprint-day style operator)."""
     assert _compare(None, "is_after", 0) is False
+
+
+def test_naive_observed_treated_as_utc_not_reference_tz() -> None:
+    """Naive observed (canonical UTC from SQLite round-trip) must be stamped UTC, not reference tz.
+
+    2024-03-01 00:00 UTC is after 2024-03-01T02:00:00+05:00 (≡ 2024-02-29 21:00 UTC).
+    If _coerce_tz copied +05:00 instead, observed would become 2024-03-01 00:00+05:00
+    (≡ 2024-02-29 19:00 UTC), flipping the comparison result.
+    """
+    reference_iso = "2024-03-01T02:00:00+05:00"
+    observed_naive = datetime(2024, 3, 1, 0, 0, 0)  # stored without tz by SQLite, canonical UTC
+    assert _compare(observed_naive, "after", reference_iso) is True
