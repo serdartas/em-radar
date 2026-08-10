@@ -25,6 +25,7 @@ from em_radar_core.connectors import (
     ValueProvider,
     WorkItemScope,
 )
+from em_radar_core.http_client import create_redacting_async_client
 from em_radar_core.models import (
     Board,
     BoardType,
@@ -104,9 +105,13 @@ class JiraConnector:
         except ValidationError as error:
             raise ConnectorConfigError("Invalid Jira connector config") from error
 
-        self._client = CLIENT_FACTORY(
+        token = self.config.token.get_secret_value()
+        auth_header = _authorization_header(self.config)
+        self._client = create_redacting_async_client(
+            client_factory=CLIENT_FACTORY,
+            sensitive_values=(token, auth_header),
             base_url=str(self.config.base_url),
-            headers={"Authorization": _authorization_header(self.config)},
+            headers={"Authorization": auth_header},
             verify=self.config.verify_tls,
         )
 
