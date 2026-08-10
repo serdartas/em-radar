@@ -475,22 +475,19 @@ def _code_fetch_window(
     """Derive a concrete DATE_RANGE window for MR fetch.
 
     SPRINT windows carry no date bounds; MR providers that date-filter on
-    window.start/window.end would receive None.  Convert to a DATE_RANGE backed
-    by the sprint's own dates; fall back to a 14-day lookback when the sprint
-    carries no dates.
+    window.start/window.end would receive None.  Convert to a DATE_RANGE starting
+    at the sprint's start_date and ending at the report snapshot time (started_at),
+    so MR activity after an overdue sprint's planned end is still captured.
+    Falls back to a 14-day lookback when the sprint has no start_date.
     """
     if window.window_type != WindowType.SPRINT:
         return window
     window_sprint = next((s for s in sprints if s.id == window.sprint_id), None)
-    if (
-        window_sprint is not None
-        and window_sprint.start_date is not None
-        and window_sprint.end_date is not None
-    ):
+    if window_sprint is not None and window_sprint.start_date is not None:
         return EvaluationWindow(
             window_type=WindowType.DATE_RANGE,
             start=window_sprint.start_date,
-            end=window_sprint.end_date,
+            end=started_at,
             team_profile_id=window.team_profile_id,
         )
     return EvaluationWindow(

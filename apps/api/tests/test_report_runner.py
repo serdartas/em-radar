@@ -176,7 +176,7 @@ def test_scrum_sprint_window_is_converted_to_date_range_for_mr_fetch(
     assert mr_window.start is not None
     assert mr_window.end is not None
     assert mr_window.start == _SPRINT_START
-    assert mr_window.end == _SPRINT_END
+    assert mr_window.end == _REPORT_STARTED_AT
 
 
 def test_sprint_without_dates_uses_fallback_lookback_window(
