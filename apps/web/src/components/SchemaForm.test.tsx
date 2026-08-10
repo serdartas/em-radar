@@ -209,4 +209,24 @@ describe("SchemaForm — allOf single-branch resolution", () => {
 
     expect(screen.getByLabelText("URL")).toBeInTheDocument()
   })
+
+  it("renders a password input when writeOnly is on the outer allOf wrapper", () => {
+    const schema: JsonSchema = {
+      type: "object",
+      properties: {
+        token: { writeOnly: true, allOf: [{ type: "string", title: "Token" }] },
+      },
+    }
+
+    render(
+      <SchemaForm
+        idPrefix="conn"
+        onChange={() => undefined}
+        schema={schema}
+        values={{}}
+      />,
+    )
+
+    expect(screen.getByLabelText("Token")).toHaveAttribute("type", "password")
+  })
 })
