@@ -282,7 +282,11 @@ def _compare(observed: object, operator: str, expected: object) -> bool:
         return observed is None or observed == "" or observed == []
     if operator == "is_not_empty":
         return not _compare(observed, "is_empty", expected)
-    if operator in {"greater_than", "less_than", "between", "before", "after"} and observed is None:
+    if (
+        operator
+        in {"greater_than", "less_than", "between", "before", "after", "is_before", "is_after"}
+        and observed is None
+    ):
         return False
     if operator in {"greater_than", "less_than"}:
         left = _numeric(observed)
@@ -435,8 +439,6 @@ def _coerce_tz(observed: datetime, reference: datetime) -> datetime:
     """Return observed with tzinfo matched to reference, preventing naive/aware TypeError."""
     if observed.tzinfo is None and reference.tzinfo is not None:
         return observed.replace(tzinfo=reference.tzinfo)
-    if observed.tzinfo is not None and reference.tzinfo is None:
-        return observed.replace(tzinfo=None)
     return observed
 
 

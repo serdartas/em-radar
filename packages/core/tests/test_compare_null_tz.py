@@ -60,3 +60,13 @@ def test_before_null_returns_false() -> None:
 def test_after_null_returns_false() -> None:
     """Null observed must return False for 'after'."""
     assert _compare(None, "after", "2024-01-01T00:00:00") is False
+
+
+def test_is_before_null_returns_false() -> None:
+    """Null observed must return False for 'is_before' (numeric sprint-day style operator)."""
+    assert _compare(None, "is_before", 10) is False
+
+
+def test_is_after_null_returns_false() -> None:
+    """Null observed must return False for 'is_after' (numeric sprint-day style operator)."""
+    assert _compare(None, "is_after", 0) is False
