@@ -381,6 +381,35 @@ def test_optional_real_jira_integration_is_env_gated() -> None:
     asyncio.run(run())
 
 
+def test_no_category_status_defaults_to_todo_and_page_is_not_dropped() -> None:
+    # Jira's built-in "No Category" (key="undefined", id=1) must not abort page processing.
+    status_no_category = {
+        "name": "Backlog",
+        "statusCategory": {"key": "undefined", "id": 1, "name": "No Category"},
+    }
+    result = jira_connector_module._status_category(status_no_category, [])
+    assert result is StatusCategory.TODO
+
+    # id=1 with no key also maps to TODO.
+    status_id_only = {
+        "name": "Backlog",
+        "statusCategory": {"id": 1, "name": "No Category"},
+    }
+    result_id_only = jira_connector_module._status_category(status_id_only, [])
+    assert result_id_only is StatusCategory.TODO
+
+
+def test_malformed_status_category_field_still_raises_data_error() -> None:
+    # A payload where statusCategory is not a mapping is genuinely malformed and must error.
+    status_missing = {"name": "Some Status"}
+    with pytest.raises(ConnectorDataError):
+        jira_connector_module._status_category(status_missing, [])
+
+    status_non_mapping = {"name": "Some Status", "statusCategory": "not-a-mapping"}
+    with pytest.raises(ConnectorDataError):
+        jira_connector_module._status_category(status_non_mapping, [])
+
+
 def _assert_workitem_invariants(workitem: WorkItem) -> None:
     assert workitem.parent_id != workitem.id
     if workitem.type is WorkItemType.EPIC:

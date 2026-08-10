@@ -859,7 +859,9 @@ def _status_category(
         return StatusCategory.IN_PROGRESS
     if normalized in {"done", "3"}:
         return StatusCategory.DONE
-    raise ConnectorDataError(f"Unsupported Jira status category: {normalized or '<missing>'}")
+    # Jira's built-in "No Category" (key="undefined", id=1) and any other unrecognised
+    # category default to TODO rather than aborting the page fetch.
+    return StatusCategory.TODO
 
 
 def _status_key(value: str) -> str:
