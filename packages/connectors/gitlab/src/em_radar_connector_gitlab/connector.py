@@ -63,7 +63,13 @@ class GitLabConnector:
         try:
             token_payload = await self._request_json("api/v4/personal_access_tokens/self")
             permissions = _permissions(token_payload)
-        except (ConnectorAuthError, ConnectorNotFoundError):
+        except (
+            ConnectorAuthError,
+            ConnectorNotFoundError,
+            ConnectorRateLimitedError,
+            ConnectorTransientError,
+            ConnectorDataError,
+        ):
             permissions = []
         return ConnectionTestResult(
             ok=True,
