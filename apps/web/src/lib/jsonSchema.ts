@@ -73,9 +73,8 @@ export function resolveProperty(
   }
 
   if (property.allOf?.length === 1) {
-    const resolved = resolveProperty(property.allOf[0], defs)
-    const { allOf: _allOf, ...outer } = property
-    return { ...resolved, ...outer }
+    const { allOf = [], ...outer } = property
+    return { ...resolveProperty(allOf[0], defs), ...outer }
   }
 
   return property
