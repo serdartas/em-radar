@@ -523,5 +523,4 @@ def test_config_pack_cancel_writes_nothing(
             "days_threshold": 99,
             "exclude_labels": [],
         }
-        # No history record must have been created.
         assert list(session.exec(select(SignalPackHistory))) == []
