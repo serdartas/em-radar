@@ -18,7 +18,7 @@ class _CredentialRedactionFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         message = record.getMessage()
         redacted = message
-        for value in self._sensitive_values:
+        for value in sorted(self._sensitive_values, key=len, reverse=True):
             redacted = redacted.replace(value, _REDACTED)
         if redacted != message:
             record.msg = redacted

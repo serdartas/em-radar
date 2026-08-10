@@ -134,9 +134,16 @@ def test_connection_does_not_log_token(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     token = "jira-token-1234"
+    auth_email = "jira.email@example.com"
+    authorization = "Basic amlyYS5lbWFpbEBleGFtcGxlLmNvbTpqaXJhLXRva2VuLTEyMzQ="
 
     async def run() -> None:
-        def handler(_: httpx.Request) -> httpx.Response:
+        def handler(request: httpx.Request) -> httpx.Response:
+            logging.getLogger("httpx").debug("authorization: %s", request.headers["authorization"])
+            logging.getLogger("httpx").debug("raw token: %s", token)
+            logging.getLogger("httpcore.connection").debug(
+                "child logger authorization: %s", request.headers["authorization"]
+            )
             return httpx.Response(401)
 
         monkeypatch.setattr(
@@ -148,7 +155,7 @@ def test_connection_does_not_log_token(
             {
                 "base_url": "https://jira.example.com",
                 "token": token,
-                "auth_email": "jira.email@example.com",
+                "auth_email": auth_email,
             }
         )
 
@@ -160,4 +167,10 @@ def test_connection_does_not_log_token(
 
     asyncio.run(run())
 
+    assert any("[REDACTED]" in record.getMessage() for record in caplog.records)
+    assert any(
+        record.name == "httpcore.connection" and "[REDACTED]" in record.getMessage()
+        for record in caplog.records
+    )
     assert all(token not in record.getMessage() for record in caplog.records)
+    assert all(authorization not in record.getMessage() for record in caplog.records)
