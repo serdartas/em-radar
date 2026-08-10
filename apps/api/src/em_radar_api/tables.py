@@ -105,6 +105,7 @@ class ReviewTable(Review, table=True):
 
 class CommentTable(Comment, table=True):
     __tablename__ = "comment"
+    __table_args__ = (UniqueConstraint("source", "external_id"),)
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     author_id: UUID = Field(foreign_key="user.id")
