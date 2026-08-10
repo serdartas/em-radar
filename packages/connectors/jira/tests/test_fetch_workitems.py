@@ -8,7 +8,7 @@ import pytest
 
 import em_radar_connector_jira.connector as jira_connector_module
 from em_radar_connector_jira.connector import JiraConnector
-from em_radar_core.connectors import ConnectorTransientError, WorkItemScope
+from em_radar_core.connectors import ConnectorNotFoundError, ConnectorTransientError, WorkItemScope
 from em_radar_core.models import (
     EvaluationWindow,
     StatusCategory,
@@ -129,7 +129,7 @@ def test_fetch_workitems_normalizes_fixture_issues(monkeypatch: pytest.MonkeyPat
 
     assert seen_jql == [
         'project in ("10000") AND issuetype in ("Epic", "Story", "Bug") '
-        'AND updated <= "2026-06-15 00:00"'
+        'AND updated >= "2026-06-01 00:00" AND updated <= "2026-06-15 00:00"'
     ]
 
 
@@ -287,6 +287,96 @@ def test_fetch_workitems_falls_back_to_classic_search_when_jql_missing(
     asyncio.run(run())
 
     assert seen_paths == ["/rest/api/2/search/jql", "/rest/api/2/search"]
+
+
+def test_fetch_workitems_date_range_jql_includes_lower_and_upper_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DATE_RANGE windows must emit both updated >= start and updated <= end in the JQL.
+
+    An absent lower bound would cause the connector to fetch all issues ever updated
+    before the end date, overwhelming the paginator and producing stale data.
+    """
+    seen_jql: list[str] = []
+
+    async def run() -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen_jql.append(request.url.params["jql"])
+            return httpx.Response(200, json={"issues": []})
+
+        monkeypatch.setattr(jira_connector_module, "CLIENT_FACTORY", _client_factory_for(handler))
+        connector = JiraConnector(
+            {
+                "base_url": "https://jira.example.com",
+                "token": "jira-token-1234",
+            }
+        )
+
+        await _collect(
+            connector.fetch_workitems(
+                WorkItemScope(project_external_ids=["10000"]),
+                _date_window(),
+            )
+        )
+        await connector.close()
+
+    asyncio.run(run())
+
+    assert len(seen_jql) == 1
+    assert 'updated >= "2026-06-01 00:00"' in seen_jql[0]
+    assert 'updated <= "2026-06-15 00:00"' in seen_jql[0]
+
+
+def test_fetch_workitems_mid_stream_404_raises_without_restarting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 404 on page 2+ must propagate as ConnectorNotFoundError.
+
+    It must not silently fall back to the legacy startAt=0 endpoint, which would
+    re-yield already-emitted page-1 issues as duplicates.
+    """
+    seen_paths: list[str] = []
+    yielded_before_error: list[WorkItem] = []
+
+    async def run() -> None:
+        call_count = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal call_count
+            call_count += 1
+            seen_paths.append(request.url.path)
+            if call_count == 1:
+                return httpx.Response(
+                    200,
+                    json={
+                        "issues": [_issue(issue_id="10001", key="ENG-1")],
+                        "nextPageToken": "page-2",
+                    },
+                )
+            return httpx.Response(404)
+
+        monkeypatch.setattr(jira_connector_module, "CLIENT_FACTORY", _client_factory_for(handler))
+        connector = JiraConnector(
+            {
+                "base_url": "https://jira.example.com",
+                "token": "jira-token-1234",
+            }
+        )
+
+        with pytest.raises(ConnectorNotFoundError):
+            async for item in connector.fetch_workitems(
+                WorkItemScope(project_external_ids=["10000"]),
+                _date_window(),
+            ):
+                yielded_before_error.append(item)
+
+        await connector.close()
+
+    asyncio.run(run())
+
+    assert seen_paths == ["/rest/api/2/search/jql", "/rest/api/2/search/jql"]
+    assert "/rest/api/2/search" not in seen_paths
+    assert [item.key for item in yielded_before_error] == ["ENG-1"]
 
 
 def test_fetch_workitems_wraps_http_errors(monkeypatch: pytest.MonkeyPatch) -> None:
