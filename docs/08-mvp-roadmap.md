@@ -145,7 +145,8 @@ Reference: [requirements §10 MVP Acceptance Checklist](./02-requirements.md#10-
   sprint-only availability constraints.
 - Update the signal settings UI into a constrained builder: create, duplicate, edit, disable, delete
   user-created signals, bundle them into signal config groups, and preview results before saving.
-- Represent the 8 Jira built-in signals as templates that can be instantiated and duplicated.
+- Represent the 8 default-pack Jira signals as declarative templates that can be instantiated,
+  duplicated, and recreated from scratch (no hardcoded signal logic).
 - Update YAML import/export to support private backup and public template modes.
 
 **Deliverables.** Real Jira UAT workflows can express team-specific rules such as Scrum stale-work
@@ -157,7 +158,7 @@ every Jira project or board.
 **Acceptance.**
 - A Jira connector exposes searchable project/board options for team configuration; one board
   `ScopeDefinition` stores both selected identities.
-- A built-in Jira template can be duplicated, edited into a custom work-tracking rule, previewed,
+- A default-pack Jira template can be duplicated, edited into a custom work-tracking rule, previewed,
   saved, and evaluated without selecting a connection, project, or board.
 - Signal-group exports contain definitions and report settings without connections, team source
   selections, or secrets.
@@ -165,9 +166,11 @@ every Jira project or board.
 
 ---
 
-### M4 — GitLab connector
+### M4 — GitLab connector (connector only, no signal creation)
 
-**Goal.** Real GitLab data flowing through the canonical pipeline.
+**Goal.** Real GitLab data flowing through the canonical pipeline. No signals are authored in this
+milestone — per the no-hardcoded-signals principle, code-source signals are declared as data in M5
+after the engine can evaluate merge requests.
 
 **Scope.**
 - GitLab connector implementing `ConnectorBase`, `MergeRequestProvider`, `ReviewProvider`.
@@ -177,44 +180,54 @@ every Jira project or board.
 - `test_connection`, `list_repositories`, `fetch_mergerequests`, `fetch_reviews`.
 - Workitem-key extraction from MR title, description, source branch.
 - MR-to-WorkItem linking when matching key exists in cached Jira data.
-- Implement the 5 GitLab signal templates and runnable signal definitions (catalog 12.9–12.13).
+- First-run onboarding wizard.
 
-**Deliverables.** A real GitLab project produces findings for all 5 MR signals. Linked WorkItem evidence appears in MR findings.
+**Deliverables.** A real GitLab project's merge-request data flows through the canonical pipeline;
+linked WorkItem evidence resolves. The 5 code-source signals are deferred to M5-14 (declarative).
 
-**Out of scope.** GitHub.
+**Out of scope.** GitHub. Any merge-request signal logic (declared as default-pack data in M5-14,
+after M5-10 adds MR evaluation).
 
 **Acceptance.**
 - Connect to a real GitLab instance with a personal access token.
 - Attach the whole GitLab connection to a team; all accessible repositories are included and the
   report runs without errors.
-- All 5 MR signals fire correctly against fixture data.
-- MR without `[A-Z]+-\d+` in any of (title, description, branch) is flagged by `mergerequest-without-linked-workitem`.
+- MRs normalize correctly and key-extraction/linking passes contract + normalization tests.
 
 ---
 
-### M5 — Signal engine (full MVP set)
+### M5 — Signal engine (full MVP set): generic, de-hardcoded, multi-entity
 
-**Goal.** Solidify the generic declarative engine: expression evaluation, capability validation,
-evidence structure, skipping, and performance.
+**Goal.** Complete the generic declarative engine and remove every hardcoded signal, then declare the
+remaining signals as data. This milestone is where "the signal engine is built" — no signal exists in
+code form after it.
 
 **Scope.**
 - Expression evaluation per [signal spec §10](./06-signal-yaml-spec.md#10-rule-expressions) across
-  Jira and GitLab entity types.
-- Each team's signals are resolved as the union of its attached signal config groups. Each signal
-  evaluates one MVP entity type, and the compatible source data comes from the team's project/board
-  scope or whole code connection.
-- Connector capability validation for fields, operators, values, and sprint-only availability.
-- Evidence payloads conform to the shapes documented in [signal spec §12](./06-signal-yaml-spec.md#12-built-in-signal-template-catalog-mvp).
+  Jira and GitLab entity types, including **merge-request (code) entity evaluation** so code signals
+  run through the same generic evaluator.
+- **Remove the per-signal hardcoding** still on the live path (the `sprint-scope-churn` delegation to
+  a Python class and per-template evidence) and **delete the dead hardcoded `Signal`-class stack**
+  left from M1/M3; evidence becomes expression-derived.
+- **Declarative default pack + single seeding path**; seed the 5 merge-request signals as declarative
+  default-pack definitions (the replacement for the removed M4 signal work).
+- Signal builder UI gains the `merge_request` entity type, so every code signal is recreatable in the
+  UI.
+- Each team's signals are the union of its attached signal config groups; each signal evaluates one
+  MVP entity type against the team's project/board scope or whole code connection.
+- Connector capability validation; expression-derived evidence conformance across all 13 signals.
 - Performance: meet [REQ-NF-020](./02-requirements.md#req-nf-020-local-mvp-performance) (60s for 500 work items + 300 MRs on a modern laptop).
 
-**Deliverables.** Engine satisfies the full signal catalog as declarative signal definitions, each
-built for one work-tracking or code-repository entity type and resolved per team via attached signal
-config groups. Performance budget met.
+**Deliverables.** A single generic engine interpreting declarative signal definitions only — no
+hardcoded signals ([REQ-F-036](./02-requirements.md#req-f-036--no-hardcoded-signals)). All 13 signals
+ship as default-pack data, each recreatable from the Signal Settings page. Performance budget met.
 
 **Acceptance.**
 - All 13 signals enabled, default pack, target data size, report completes in under 60 seconds.
+- No `template_key`-keyed evaluation/evidence branch and no `Signal`-subclass registry remain in the
+  codebase; the full default report is unchanged by their removal.
 - Expression, source-type compatibility, capability, and evidence conformance tests pass for every
-  signal template.
+  seeded signal.
 
 ---
 

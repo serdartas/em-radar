@@ -382,7 +382,7 @@ Steady-state signal configuration is organized around reusable **signal config g
 - **Build signals.** View built-in signal templates and existing signals. Create a signal from
   scratch, duplicate a template or existing signal, edit conditions, preview matches, save, disable,
   or delete user-created signals
-  ([requirements REQ-F-031/041](./02-requirements.md#req-f-031--configurable-built-in-signals)).
+  ([requirements REQ-F-031/041](./02-requirements.md#req-f-031--default-pack-signals-as-editable-definitions)).
   Each MVP signal selects one signal entity type: work tracking (`issue`) or code repository
   (`merge_request`). There is no connection, project, board, or repository picker in the builder.
 - **Group signals.** Create a signal config group (e.g. "Scrum signals", "Kanban signals") and add

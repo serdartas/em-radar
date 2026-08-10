@@ -55,10 +55,24 @@ A common internal schema (issues, sprints, merge/pull requests, reviews, comment
 ### 3. Signals
 The heart of the product. A signal is a **configurable rule** that inspects the normalized data and emits an observation (e.g. "3 MRs open > 5 days without review", "sprint scope grew 30% mid-sprint").
 
-- Signals are authored in **YAML** (declarative, reviewable, shareable).
-- They are **imported into a local database** on install/update.
-- **Export** writes them back out in the **same YAML format**. Round-trippable, no lock-in.
-- A set of **built-in, non-negotiable default signals** ships with the tool. Sensible defaults nobody should have to argue about (e.g. "MR open > N days with no review activity")..
+- Signals are **declarative structured data**, not code. A signal is a rule expression
+  (field / operator / value conditions combined with AND/OR groups) over one source domain.
+- **No signal is hard-coded.** Every signal — including the ones the app ships with — is a
+  definition the user can view, edit, disable, delete, or **recreate from scratch on the Signal
+  Settings page**. The engine has no privileged, code-backed signals; it only interprets these
+  definitions. There is nothing a shipped signal can do that a user-created one cannot.
+- Signals filter **canonical, connector-independent fields**. The two source domains — the
+  **task-board source** (work items) and the **code source** (merge/pull requests) — each expose a
+  fixed field set that a signal can filter on **regardless of which connector supplied the data**
+  (a `status_category` or "age in current status" condition means the same thing whether the source
+  is Jira, GitHub, or Linear).
+- Signals are authored in the UI and **round-trip through YAML** (declarative, reviewable,
+  shareable). They are **imported into a local database** on install/update, and **export** writes
+  them back out in the **same YAML format**. No lock-in.
+- The app ships with a **default signal pack**: a bundle of ready-made signal definitions —
+  combining task-board and code-source rules — seeded on first run so the tool is useful on day one.
+  These are sensible defaults, not fixed features: the same pack could be rebuilt by a user from the
+  Signal Settings page.
 
 ### 4. Signal Marketplace
 A public website acting as a catalog of community-contributed signal configurations.
@@ -100,7 +114,7 @@ The same core engine powers all three modes; deployment shape changes, the produ
 
 ## Openness Model
 
-- **Open source:** core signal engine, generic connectors (Jira, GitLab, …), default built-in signals, CLI, GUI shell, marketplace client.
+- **Open source:** core signal engine, generic connectors (Jira, GitLab, …), the default signal pack, CLI, GUI shell, marketplace client.
 - **Private / proprietary (optional):** company-specific adapters, internal signal packs, internal deployment glue.
 
 This lets companies adopt EM Radar without giving up internal customizations, and lets the community grow the open core without being gated by any single org.
@@ -110,8 +124,10 @@ This lets companies adopt EM Radar without giving up internal customizations, an
 ## Guiding Principles
 
 - **Local-first, private by default.** The EM owns their data.
-- **Signals as shareable content, not hard-coded logic.** YAML in, YAML out.
+- **Signals as shareable content, not hard-coded logic.** YAML in, YAML out. No signal is baked into
+  the engine; every signal is a declarative definition the user can recreate from the UI.
 - **Open core, private edges.** Anyone can extend; companies can keep their extensions internal.
 - **Two equal surfaces.** GUI and CLI are both first-class.
-- **Sensible defaults.** Built-in signals exist so the tool is useful on day one with zero configuration.
+- **Sensible defaults.** A default signal pack is seeded on first run so the tool is useful on day
+  one with zero configuration — and every signal in it is editable and recreatable, not fixed.
 - **No lock-in.** Everything imported can be exported in the same format.
