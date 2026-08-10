@@ -382,7 +382,11 @@ class JiraConnector:
             try:
                 payload = await self._request_json("rest/api/2/search/jql", params=page_params)
             except ConnectorNotFoundError:
-                # Jira Data Center/Server has no enhanced search; use classic pagination.
+                if sent_token is not None:
+                    # Pagination has already advanced past page 1; a mid-stream 404 must not
+                    # restart from startAt=0 and re-yield already-emitted issues.
+                    raise
+                # Jira Data Center/Server has no enhanced search endpoint; use classic pagination.
                 async for issue in self._request_paginated_issues_legacy(params=params):
                     yield issue
                 return
