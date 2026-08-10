@@ -492,3 +492,36 @@ def test_valid_definition_pack_with_unique_names_imports_successfully(
     names = {d["name"] for d in definitions}
     assert "Signal Alpha" in names
     assert "Signal Beta" in names
+
+
+def test_config_pack_cancel_writes_nothing(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+) -> None:
+    with session_factory() as session:
+        upsert_signal_config(
+            session,
+            SignalConfigUpsert(
+                signal_id="stale-in-progress-work-item",
+                enabled=True,
+                params={"days_threshold": 99},
+            ),
+        )
+
+    response = api_client.post(
+        "/api/signal-pack/import/apply",
+        json={"raw_yaml": MINIMAL_PACK, "conflict": "cancel"},
+    )
+
+    assert response.status_code == 200
+    with session_factory() as session:
+        configs = {config.signal_id: config for config in list_signal_configs(session)}
+        # The existing config must be untouched — cancel must not write anything.
+        assert configs["stale-in-progress-work-item"].enabled is True
+        # upsert normalizes params via the schema, so exclude_labels gets its default.
+        assert configs["stale-in-progress-work-item"].params == {
+            "days_threshold": 99,
+            "exclude_labels": [],
+        }
+        # No history record must have been created.
+        assert list(session.exec(select(SignalPackHistory))) == []

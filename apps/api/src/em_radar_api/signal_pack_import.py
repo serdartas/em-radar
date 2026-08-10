@@ -130,6 +130,8 @@ def apply_signal_pack_import(
         for row in session.exec(select(SignalConfigTable).order_by(SignalConfigTable.signal_id))
     }
     preview = _preview(result, rows, replace_all=replace_all)
+    if conflict == "cancel":
+        return preview
 
     if replace_all:
         for signal_id in SIGNAL_CATALOG:
