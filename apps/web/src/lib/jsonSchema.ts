@@ -65,7 +65,11 @@ export function resolveProperty(
 ): JsonSchemaProperty {
   if (property.$ref !== undefined) {
     const key = property.$ref.replace(/^#\/\$defs\//, "")
-    return defs[key] ?? property
+    // Merge reference-node annotations (e.g. writeOnly added by _schema_with_secret_flags)
+    // into the resolved definition so credential fields render as password inputs.
+    const merged = { ...(defs[key] ?? {}), ...property }
+    delete merged.$ref
+    return merged
   }
 
   if (property.allOf?.length === 1) {

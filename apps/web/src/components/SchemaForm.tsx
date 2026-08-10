@@ -164,7 +164,7 @@ function ObjectField({
             onChange={handleSubChange}
             property={subProperty}
             required={requiredSet.has(subKey)}
-            value={nestedValues[subKey] ?? subProperty.default}
+            value={subKey in nestedValues ? nestedValues[subKey] : subProperty.default}
           />
         ))}
       </div>
