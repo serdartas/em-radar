@@ -282,21 +282,32 @@ def _compare(observed: object, operator: str, expected: object) -> bool:
         return observed is None or observed == "" or observed == []
     if operator == "is_not_empty":
         return not _compare(observed, "is_empty", expected)
+    if operator in {"greater_than", "less_than", "between", "before", "after"} and observed is None:
+        return False
     if operator in {"greater_than", "less_than"}:
         left = _numeric(observed)
         right = _duration_days(expected)
         return left > right if operator == "greater_than" else left < right
     if operator == "between":
-        if isinstance(observed, datetime):
+        if isinstance(observed, datetime) or _is_date_range(expected):
+            if not isinstance(observed, datetime):
+                return False
             start, end = _date_range(value=expected)
-            return start <= observed <= end
+            obs = _coerce_tz(observed, start)
+            return start <= obs <= end
         left = _numeric(observed)
         low, high = _range(expected)
         return low <= left <= high
     if operator == "before":
-        return isinstance(observed, datetime) and observed < _date_value(expected)
+        if not isinstance(observed, datetime):
+            return False
+        ref = _date_value(expected)
+        return _coerce_tz(observed, ref) < ref
     if operator == "after":
-        return isinstance(observed, datetime) and observed > _date_value(expected)
+        if not isinstance(observed, datetime):
+            return False
+        ref = _date_value(expected)
+        return _coerce_tz(observed, ref) > ref
     if operator == "is_before":
         return _numeric(observed) < _numeric(expected)
     if operator == "is_after":
@@ -379,7 +390,7 @@ def _list(value: object) -> list[object]:
 
 def _numeric(value: object) -> float:
     if value is None:
-        return -1.0
+        raise ExpressionValidationError("cannot compare: field value is null")
     if isinstance(value, (int, float)):
         return float(value)
     raise ExpressionValidationError(f"{value!r} is not numeric")
@@ -418,6 +429,37 @@ def _date_range(value: object) -> tuple[datetime, datetime]:
     if isinstance(value, list) and len(value) == 2:
         return _date_value(value[0]), _date_value(value[1])
     raise ExpressionValidationError("date between expects start/end or two ISO datetimes")
+
+
+def _coerce_tz(observed: datetime, reference: datetime) -> datetime:
+    """Return observed with tzinfo matched to reference, preventing naive/aware TypeError."""
+    if observed.tzinfo is None and reference.tzinfo is not None:
+        return observed.replace(tzinfo=reference.tzinfo)
+    if observed.tzinfo is not None and reference.tzinfo is None:
+        return observed.replace(tzinfo=None)
+    return observed
+
+
+def _is_date_like(value: object) -> bool:
+    if isinstance(value, datetime):
+        return True
+    if isinstance(value, str):
+        try:
+            datetime.fromisoformat(value)
+            return True
+        except ValueError:
+            return False
+    return False
+
+
+def _is_date_range(value: object) -> bool:
+    """Return True when value describes a date range rather than a numeric range."""
+    if isinstance(value, list) and len(value) == 2:
+        return _is_date_like(value[0]) or _is_date_like(value[1])
+    if isinstance(value, dict):
+        candidate = value.get("start") or value.get("end") or value.get("min") or value.get("max")
+        return _is_date_like(candidate)
+    return False
 
 
 def _json_value(value: object) -> object:
