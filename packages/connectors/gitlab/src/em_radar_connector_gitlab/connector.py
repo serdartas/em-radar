@@ -58,12 +58,24 @@ class GitLabConnector:
 
     async def test_connection(self) -> ConnectionTestResult:
         user_payload = await self._request_json("api/v4/user")
-        token_payload = await self._request_json("api/v4/personal_access_tokens/self")
+        # Group/project tokens and older self-managed instances 401/403 or 404 on this endpoint.
+        # Authentication success is determined by /api/v4/user above; treat introspection as advisory.
+        try:
+            token_payload = await self._request_json("api/v4/personal_access_tokens/self")
+            permissions = _permissions(token_payload)
+        except (
+            ConnectorAuthError,
+            ConnectorNotFoundError,
+            ConnectorRateLimitedError,
+            ConnectorTransientError,
+            ConnectorDataError,
+        ):
+            permissions = []
         return ConnectionTestResult(
             ok=True,
             detail="Connected to GitLab",
             user_display_name=_display_name(user_payload),
-            permissions=_permissions(token_payload),
+            permissions=permissions,
         )
 
     @classmethod

@@ -85,6 +85,94 @@ def test_connection_success_returns_user_and_permissions(monkeypatch: pytest.Mon
     asyncio.run(run())
 
 
+def test_connection_succeeds_when_pat_introspection_is_forbidden(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token = "gitlab-token-1234"
+
+    async def run() -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path.endswith("/api/v4/user"):
+                return httpx.Response(200, json={"name": "GitLab User", "username": "gitlab-user"})
+            if request.url.path.endswith("/api/v4/personal_access_tokens/self"):
+                return httpx.Response(403)
+            raise AssertionError(f"unexpected path: {request.url.path}")
+
+        monkeypatch.setattr(
+            gitlab_connector_module,
+            "CLIENT_FACTORY",
+            _client_factory_for(handler),
+        )
+        connector = GitLabConnector({"base_url": "https://gitlab.example.com", "token": token})
+        result = await connector.test_connection()
+        await connector.close()
+
+        assert result.ok is True
+        assert result.user_display_name == "GitLab User"
+        assert result.permissions == []
+        assert result.detail == "Connected to GitLab"
+
+    asyncio.run(run())
+
+
+def test_connection_succeeds_when_pat_introspection_is_not_found(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token = "gitlab-token-1234"
+
+    async def run() -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path.endswith("/api/v4/user"):
+                return httpx.Response(200, json={"name": "GitLab User", "username": "gitlab-user"})
+            if request.url.path.endswith("/api/v4/personal_access_tokens/self"):
+                return httpx.Response(404)
+            raise AssertionError(f"unexpected path: {request.url.path}")
+
+        monkeypatch.setattr(
+            gitlab_connector_module,
+            "CLIENT_FACTORY",
+            _client_factory_for(handler),
+        )
+        connector = GitLabConnector({"base_url": "https://gitlab.example.com", "token": token})
+        result = await connector.test_connection()
+        await connector.close()
+
+        assert result.ok is True
+        assert result.user_display_name == "GitLab User"
+        assert result.permissions == []
+        assert result.detail == "Connected to GitLab"
+
+    asyncio.run(run())
+
+
+def test_connection_succeeds_when_pat_introspection_returns_server_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token = "gitlab-token-1234"
+
+    async def run() -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path.endswith("/api/v4/user"):
+                return httpx.Response(200, json={"name": "GitLab User", "username": "gitlab-user"})
+            if request.url.path.endswith("/api/v4/personal_access_tokens/self"):
+                return httpx.Response(500)
+            raise AssertionError(f"unexpected path: {request.url.path}")
+
+        monkeypatch.setattr(
+            gitlab_connector_module,
+            "CLIENT_FACTORY",
+            _client_factory_for(handler),
+        )
+        connector = GitLabConnector({"base_url": "https://gitlab.example.com", "token": token})
+        result = await connector.test_connection()
+        await connector.close()
+
+        assert result.ok is True
+        assert result.permissions == []
+
+    asyncio.run(run())
+
+
 def test_connection_raises_auth_error_on_401(monkeypatch: pytest.MonkeyPatch) -> None:
     token = "gitlab-token-1234"
 
