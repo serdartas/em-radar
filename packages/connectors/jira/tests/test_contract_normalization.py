@@ -381,8 +381,8 @@ def test_optional_real_jira_integration_is_env_gated() -> None:
     asyncio.run(run())
 
 
-def test_no_category_status_defaults_to_todo_and_page_is_not_dropped() -> None:
-    # Jira's built-in "No Category" (key="undefined", id=1) must not abort page processing.
+def test_no_category_status_category_helper_returns_todo() -> None:
+    # Jira's built-in "No Category" (key="undefined", id=1) maps to TODO at the helper level.
     status_no_category = {
         "name": "Backlog",
         "statusCategory": {"key": "undefined", "id": 1, "name": "No Category"},
@@ -397,6 +397,34 @@ def test_no_category_status_defaults_to_todo_and_page_is_not_dropped() -> None:
     }
     result_id_only = jira_connector_module._status_category(status_id_only, [])
     assert result_id_only is StatusCategory.TODO
+
+
+def test_no_category_issue_normalizes_to_todo_and_is_not_dropped_from_page() -> None:
+    # Exercise the full normalization path: an issue with "No Category" must produce a
+    # WorkItem (page not dropped) with status_category=TODO, not abort fetch_workitems.
+    issue_payload = {
+        "id": "99001",
+        "key": "ENG-99",
+        "self": "https://jira.example.com/rest/api/2/issue/99001",
+        "fields": {
+            "summary": "Issue with no status category",
+            "issuetype": {"name": "Task"},
+            "status": {
+                "name": "Backlog",
+                "statusCategory": {"key": "undefined", "id": 1, "name": "No Category"},
+            },
+            "project": {"id": "10000", "key": "ENG"},
+            "labels": [],
+            "components": [],
+        },
+    }
+    workitem = jira_connector_module._workitem_from_payload(
+        issue_payload,
+        "https://jira.example.com",
+        JiraFieldMappingConfig(),
+    )
+    assert workitem.status_category is StatusCategory.TODO
+    assert workitem.key == "ENG-99"
 
 
 def test_malformed_status_category_field_still_raises_data_error() -> None:
