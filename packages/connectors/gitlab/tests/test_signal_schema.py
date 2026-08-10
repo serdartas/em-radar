@@ -11,10 +11,10 @@ def _field(key: str) -> dict[str, object]:
 def test_connector_declares_expected_capabilities() -> None:
     capabilities = GitLabConnector.describe_capabilities()
 
-    assert capabilities.provides_mergerequests is True
+    assert capabilities.provides_mergerequests is False
     assert capabilities.provides_repositories is True
-    assert capabilities.provides_reviews is True
-    assert capabilities.supports_incremental_fetch is True
+    assert capabilities.provides_reviews is False
+    assert capabilities.supports_incremental_fetch is False
     assert capabilities.provides_workitems is False
     assert capabilities.provides_sprints is False
 

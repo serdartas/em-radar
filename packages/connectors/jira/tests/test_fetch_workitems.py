@@ -129,7 +129,7 @@ def test_fetch_workitems_normalizes_fixture_issues(monkeypatch: pytest.MonkeyPat
 
     assert seen_jql == [
         'project in ("10000") AND issuetype in ("Epic", "Story", "Bug") '
-        'AND updated >= "2026-06-01 00:00" AND updated <= "2026-06-15 00:00"'
+        'AND updated <= "2026-06-15 00:00"'
     ]
 
 
@@ -289,13 +289,14 @@ def test_fetch_workitems_falls_back_to_classic_search_when_jql_missing(
     assert seen_paths == ["/rest/api/2/search/jql", "/rest/api/2/search"]
 
 
-def test_fetch_workitems_date_range_jql_includes_lower_and_upper_bound(
+def test_fetch_workitems_date_range_jql_includes_upper_bound(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """DATE_RANGE windows must emit both updated >= start and updated <= end in the JQL.
+    """DATE_RANGE windows must emit updated <= end in the JQL.
 
-    An absent lower bound would cause the connector to fetch all issues ever updated
-    before the end date, overwhelming the paginator and producing stale data.
+    No lower bound is added — stale in-progress issues (e.g. updated 20+ days ago)
+    must not be excluded because signals like StaleInProgressSignal target them
+    intentionally.
     """
     seen_jql: list[str] = []
 
@@ -323,7 +324,7 @@ def test_fetch_workitems_date_range_jql_includes_lower_and_upper_bound(
     asyncio.run(run())
 
     assert len(seen_jql) == 1
-    assert 'updated >= "2026-06-01 00:00"' in seen_jql[0]
+    assert "updated >= " not in seen_jql[0]
     assert 'updated <= "2026-06-15 00:00"' in seen_jql[0]
 
 

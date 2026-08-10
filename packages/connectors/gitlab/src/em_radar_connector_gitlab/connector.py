@@ -82,10 +82,10 @@ class GitLabConnector:
     def describe_capabilities(cls) -> Capabilities:
         del cls
         return Capabilities(
-            provides_mergerequests=True,
+            provides_mergerequests=False,
             provides_repositories=True,
-            provides_reviews=True,
-            supports_incremental_fetch=True,
+            provides_reviews=False,
+            supports_incremental_fetch=False,
         )
 
     @classmethod

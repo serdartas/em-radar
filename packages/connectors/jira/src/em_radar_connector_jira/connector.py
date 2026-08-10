@@ -1140,9 +1140,8 @@ def _workitem_jql(scope: WorkItemScope, window: EvaluationWindow) -> str:
     if scope.workitem_types:
         clauses.append(f"issuetype in ({_jql_list(_jira_issue_type_names(scope.workitem_types))})")
     if window.window_type is WindowType.DATE_RANGE:
-        if window.start is None or window.end is None:
-            raise ConnectorDataError("Date-range window was missing start or end")
-        clauses.append(f'updated >= "{_jql_datetime(window.start)}"')
+        if window.end is None:
+            raise ConnectorDataError("Date-range window was missing end")
         clauses.append(f'updated <= "{_jql_datetime(window.end)}"')
     return " AND ".join(clauses) if clauses else "ORDER BY updated ASC"
 
