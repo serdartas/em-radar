@@ -34,11 +34,22 @@ connectors provide access, teams own the board scope, and a pack is just the rul
 
 - **Pack.** A named, versioned bundle of signals and their configuration — the on-disk form of a Signal Config Group.
 - **Signal Config Group.** The in-app entity a pack maps to: a reusable bundle of signals, attached to any number of teams. See [data model §5.12C](./05-data-model.md#512c-signalconfiggroup).
-- **Template.** A built-in signal shipped with the application. A template seeds a signal in a group; it is configuration, not executable code. Built-in signals are catalogued in §12.
-- **Signal.** A named, structured rule expression over one entity type, carrying its own configuration (params, severity, enabled state). A signal is **scope-agnostic**: it is not assigned to any scope. Scope is resolved from the team at report time.
-- **Condition.** A field/operator/value predicate validated against the selected connector capability schema.
+- **Template.** A pre-authored signal definition shipped with the application (the default pack). A template seeds a signal in a group; it is configuration, not executable code, and carries no privileged behavior — a user can recreate the same signal from scratch. Templates are catalogued in §12.
+- **Signal.** A named, structured rule expression over one signal entity type, carrying its own
+  configuration (params, severity, enabled state). In MVP, `issue` belongs to the work-tracking
+  domain — the **task-board source** — and `merge_request` belongs to the code-repository domain —
+  the **code source**. These entity types line up 1:1 with the two team sources of the same names
+  ([data model §5.12](./05-data-model.md#512-teamprofile)). A signal selects neither a connection nor
+  a project, board, or repository; the team supplies compatible source data at report time.
+  Cross-domain signals are deferred until after MVP.
+- **Condition.** A field/operator/value predicate validated against capability schemas for the
+  signal's declared entity type. Fields are **canonical and connector-independent**: a condition like
+  `status_category is In Progress` or `age_in_current_status > 7 days` means the same thing whatever
+  connector supplied the data (Jira today, GitHub or Linear later), because signals filter the
+  canonical model, never raw source payloads.
 - **Severity.** The importance level a finding from this signal should carry (`info`, `warning`, `critical`). Each signal declares a default; packs may override.
-- **Capability schema.** Connector metadata describing available entity types, fields, operators, value providers, and field availability constraints.
+- **Capability schema.** Connector metadata describing available entity types, fields, operators,
+  value providers, and field availability constraints.
 
 ## 3. File Structure
 
@@ -122,7 +133,7 @@ Holds the actual configuration.
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `export_type` | enum | yes | `private_backup` or `public_template`. Controls how aggressively org-specific condition values are scrubbed on export. See §15. |
-| `signals` | array | yes | The signal definitions referenced by the pack, each serialized once. Each is a scope-agnostic signal definition. See §9. |
+| `signals` | array | yes | The signal definitions referenced by the pack, each serialized once and declaring one signal entity type. See §9. |
 | `groups` | array | no | The signal config groups in the pack. Each entry references its member signals by name. See §7. When omitted, the pack is read as a single legacy group (back-compat). |
 | `field_mappings` | object | no | Optional Jira/GitLab field-mapping hints. See §11. |
 
@@ -148,14 +159,15 @@ therefore **never** carry:
 - **Source connections.** Connectors provide access and live only in the local app, masked at rest
   ([ADR-0006](./ADRs/0006-token-storage.md)). A pack contains no `base_url`, no `auth`, no
   connector ids.
-- **Scopes.** Scope (a Jira board) is a property of the **team** a group is attached to, resolved
-  at report time — never stored on a signal or in a pack. There is no `scopes` block and no
-  `target_scopes` field.
+- **Team source selections.** A Jira project/board pair is a property of the **team** a group is
+  attached to, resolved at report time — never stored on a signal or in a pack. There is no
+  project, board, repository, or connection mapping block.
 - **Teams.** Team membership and group↔team attachments are local configuration, not part of a
   portable pack.
 
-A signal does declare its `entity_type` (e.g. `issue`, `merge_request`); when a group is attached
-to a team, only signals whose entity type the team's scope can supply are evaluated.
+A signal declares exactly one `entity_type` in MVP (`issue` for work tracking or `merge_request`
+for code repository). When a group is attached to a team, only signals whose entity type the
+team's attached sources can supply are evaluated.
 
 ## 7. Signal Config Group Mapping
 
@@ -179,15 +191,18 @@ across installs.
 
 ## 8. Signal Templates
 
-Built-in signals ship as **templates**: pre-written signal definitions catalogued in §12. A
-template is configuration, not executable code. Users may add a template to a group as-is, duplicate
-it into an editable signal (`origin: user_created`), disable it, or restore the built-in default. A
-template carries no scope — it is added to a group, and scope is resolved from the team later.
+The default pack's signals ship as **templates**: pre-written signal definitions catalogued in §12. A
+template is configuration, not executable code, and has no privileged evaluation path — the engine
+runs it exactly as it runs a user-authored signal, so any template can be recreated from scratch in
+the builder. Users may add a template to a group as-is, duplicate it into an editable signal
+(`origin: user_created`), disable it, or restore the shipped default. A template carries no scope —
+it is added to a group, and scope is resolved from the team later.
 
 ## 9. Signal Definitions
 
-Each entry in `spec.signals` is a scope-agnostic signal. It carries its rule and configuration but
-no scope — scope is resolved from the team a group is attached to.
+Each entry in `spec.signals` carries its rule and configuration for one signal entity type. It
+contains no connection, project, board, or repository selection; those are resolved from the team
+to which a group is attached.
 
 ```yaml
 - id: sig-stale-fraud-defense
@@ -219,7 +234,7 @@ no scope — scope is resolved from the team a group is attached to.
 | `id` | string | yes | Stable local signal id. |
 | `name` | string | yes | Human-readable name, unique in the local workspace. |
 | `description` | string | no | Shown in the builder and reports. |
-| `entity_type` | string | yes | Connector-provided entity type such as `issue` or `merge_request`. |
+| `entity_type` | string | yes | Exactly one signal entity type in MVP: `issue` (work tracking) or `merge_request` (code repository). |
 | `expression` | object | yes | Rule expression. See §10. |
 | `report_settings` | object | yes | Severity, category, and optional message template. |
 | `enabled` | boolean | yes | Disabled signals are persisted but not evaluated. |
@@ -272,11 +287,18 @@ spec:
       workitem_key_pattern: "[A-Z]+-\\d+"
 ```
 
-## 12. Built-in Signal Template Catalog (MVP)
+## 12. Default Pack Signal Catalog (MVP)
+
+This is the catalog of signals in the **default pack** — the bundle seeded on first run. Each is a
+declarative signal definition, not a hardcoded engine check: it is expressed entirely in the rule
+grammar of §10 over the fields the connector capability schema exposes for its entity type. A user
+can duplicate, edit, delete, or **recreate any of these from scratch in the UI rule builder** — the
+"template" is just pre-authored seed content with no privileged behavior.
 
 Each entry below lists the canonical template key, default severity, default condition values, and
-the canonical evidence shape. These templates seed the product and can be duplicated into editable
-signal definitions.
+the canonical evidence shape. Because severity is a fixed per-signal value (§5), none of these
+signals escalates its own severity; a stricter tier is a second signal, which a user creates the same
+way.
 
 ### 12.1 `stale-in-progress-work-item`
 - **Default severity:** `warning`
@@ -322,9 +344,9 @@ signal definitions.
 ### 12.8 `sprint-scope-churn`
 - **Default severity:** `warning`
 - **Template defaults:**
-  - `warning_pct` (number, default `20.0`)
-  - `critical_pct` (number, default `35.0`)
-- **Notes:** This signal escalates its own severity from `warning` to `critical` when `critical_pct` is reached. `severity` field in the pack acts as a ceiling.
+  - `churn_pct` (number, default `20.0`)
+- **Notes:** Fixed severity, like every other signal — it does not self-escalate. To flag a stricter
+  tier (e.g. 35% → `critical`), create a second signal with a higher threshold in the builder.
 - **Evidence:** `{ original_count, added_count, churn_pct }`
 
 ### 12.9 `mergerequest-waiting-too-long`
@@ -367,7 +389,7 @@ A pack is **rejected** at import time if any of the following are true:
 3. `metadata.name` is missing or does not match the kebab-case pattern.
 4. `metadata.version` is not a valid semver string.
 5. `spec.signals` is missing or empty.
-6. A signal expression uses a field unavailable for its connector type or entity type.
+6. A signal expression uses a field unavailable for its declared entity type.
 7. A signal expression uses an operator invalid for the chosen field type.
 8. `min_emradar_version`, if set, is greater than the running EM Radar version.
 9. The YAML contains any field or section starting with `!`, `&`, `*`, or `<<` outside of standard YAML anchors and merge keys used safely.

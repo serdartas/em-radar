@@ -43,7 +43,7 @@ The Engineering Manager can:
 
 * run EM Radar locally
 * connect Jira and GitLab
-* configure scoped deterministic signals
+* configure deterministic signals for work-tracking or code-repository entities
 * run reports
 * inspect findings
 * export reports
@@ -56,7 +56,7 @@ The advanced user can:
 
 * inspect configuration files
 * import/export signal packs
-* contribute new built-in signals
+* author and contribute signal definitions for the default pack (declarative, not code)
 * develop additional connectors later
 
 ### 3.3 Enterprise Administrator
@@ -102,7 +102,8 @@ The UI shall include at minimum:
 
 * onboarding/setup wizard (guides connection setup and team creation; see [09-functional-flows §3](./09-functional-flows.md#3-flow-a--first-run-onboarding-wizard))
 * dashboard (landing view showing the latest report per team)
-* source connections page (create-only: named connections; no scope or report actions)
+* source connections page (connection management only: named access configuration; no scope or
+  report actions)
 * teams page (create/manage teams and their two sources: task-board scope + code connection)
 * signal settings page
 * report runner page
@@ -126,7 +127,8 @@ Stored data includes:
 
 * connector configuration
 * team profiles, including each team's task-board scope, code connection, and attached signal config groups
-* scope definitions for selected boards (the code source is a whole connection, not a repository scope, in MVP)
+* scope definitions for selected project/board pairs (the code source is a whole connection, not a
+  repository scope, in MVP)
 * signal definitions and signal config groups
 * report history
 * cached normalized source data
@@ -178,8 +180,8 @@ The Jira connector shall support:
 * Jira base URL configuration
 * personal access token or API token configuration
 * connection test
-* project selection
-* board selection where available
+* project listing for team source selection
+* board listing for team source selection where available
 * sprint listing where available
 * issue fetching
 * epic/story relationship mapping
@@ -188,7 +190,7 @@ The Jira connector shall support:
 Acceptance criteria:
 
 * user can connect to Jira
-* user can select a Jira project or board
+* user can select a Jira project and board while configuring a team
 * user can fetch issues for a sprint
 * user can fetch issues for a custom date range
 * fetched Jira issues are normalized into WorkItem objects
@@ -267,7 +269,7 @@ Acceptance criteria:
 
 ---
 
-### REQ-F-017 — Named, Create-only Source Connections
+### REQ-F-017 — Named Source Access Connections
 
 **MVP**
 
@@ -277,14 +279,17 @@ shall create/manage connections only.
 Each connection carries a user-provided **name** that is required and unique per workspace, so that
 multiple connections of the same source type (for example two Jira instances, or a contractor working
 across companies) are distinguishable. The Source Connections page creates, edits, tests, and deletes
-connections; it does not select projects, boards, or repositories and does not run reports — those are
-team concerns (REQ-F-041A, REQ-F-050).
+connections. A connection stores its name, connector type, and connector-defined access
+configuration only (for example URL, authentication fields, and TLS settings). It does not select
+or store projects, boards, repositories, or other discovered source data, and it does not run
+reports — those are team concerns (REQ-F-041A, REQ-F-050).
 
 Acceptance criteria:
 
 * a connection has a required name that is unique within the workspace
 * a user can create several connections of the same source type with different names and credentials
-* the connection form tests the connection and saves only credentials + name (no scope)
+* the connection form tests the connection and saves only its name, connector type, and
+  connector-defined access configuration
 * the Source Connections page has no project/board/repository picker and no run-report action
 * connections are reusable across teams
 
@@ -481,27 +486,32 @@ Acceptance criteria:
 
 ---
 
-### REQ-F-031 — Configurable Built-in Signals
+### REQ-F-031 — Default Pack Signals as Editable Definitions
 
 **MVP**
 
-The system shall provide built-in signals as editable templates backed by structured rule
-definitions.
+The signals the system ships with are the contents of a **default signal pack**: ordinary
+declarative signal definitions (structured field/operator/value rule expressions), seeded on first
+run. They are not hard-coded engine features — see [REQ-F-036](#req-f-036--no-hardcoded-signals).
 
 Users shall be able to:
 
-* add built-in templates to signal config groups
+* add shipped signals (or copies of them) to signal config groups
 * enable signals
 * disable signals
 * duplicate signals
 * edit signal conditions, thresholds, logical grouping, severity, and report category
-* delete user-created or imported signals
+* delete any signal, including a shipped default
+* recreate any shipped signal from scratch using the same rule builder
 * reset signal settings to defaults
 
-Signals are **scope-agnostic**: a signal carries its rule and configuration but no target scope.
-Scope is resolved from the team at report time — a team owns a single Jira board scope, and a team
-runs the signals from its attached signal config groups (see REQ-F-041C). Signal configuration is
-global per signal; to run the same check with different thresholds, create two signals.
+Signals do not select connections, projects, boards, or repositories. In MVP each signal declares
+one signal entity type: `issue` for the work-tracking domain or `merge_request` for the
+code-repository domain. The team supplies the compatible source at report time — one
+project/board pair for work tracking and/or one whole code connection — and runs the signals from
+its attached signal config groups (see REQ-F-041C). Signal configuration is global per signal; to
+run the same check with different thresholds, create two signals. A single signal combining both
+domains is deferred until after MVP.
 
 Acceptance criteria:
 
@@ -510,6 +520,7 @@ Acceptance criteria:
 * disabled signals are not evaluated
 * built-in templates can be duplicated and edited without changing the system default template
 * validation rejects duplicate signal names in the local workspace
+* validation requires exactly one supported entity type per MVP signal
 
 ---
 
@@ -517,7 +528,9 @@ Acceptance criteria:
 
 **MVP**
 
-The system shall include the following Jira/work-item signals:
+The default signal pack shall include the following task-board (work-item) signal definitions. These
+are declarative definitions seeded on first run, not engine-hardcoded checks; each can be edited,
+disabled, deleted, or recreated in the UI:
 
 1. stale in-progress work item
 2. blocked item without recent update
@@ -540,7 +553,9 @@ Acceptance criteria:
 
 **MVP**
 
-The system shall include the following GitLab/merge-request signals:
+The default signal pack shall include the following code-source (merge-request) signal definitions.
+As with the task-board signals, these are declarative definitions seeded on first run, not
+engine-hardcoded checks; each can be edited, disabled, deleted, or recreated in the UI:
 
 1. merge request waiting too long
 2. merge request without linked work item
@@ -573,7 +588,7 @@ Custom signals must be structured data, not executable code. The MVP builder sha
 
 Acceptance criteria:
 
-* the UI only shows fields and operators exposed by the selected connector capability schema
+* the UI only shows fields and operators available for the signal's selected entity type
 * custom signal definitions are persisted and evaluated deterministically
 * custom signal definitions can be exported and imported
 * arbitrary scripting or expression-language execution is rejected
@@ -598,19 +613,43 @@ This is not required for MVP.
 
 ---
 
+### REQ-F-036 — No Hardcoded Signals
+
+**MVP**
+
+No signal shall be hard-coded into the engine. Every signal — including every signal in the default
+pack — shall be a declarative definition the signal engine interprets, and shall be fully
+reproducible through the Signal Settings page.
+
+Acceptance criteria:
+
+* the signal engine contains no per-signal code path; it evaluates rule expressions generically
+* the default signal pack ships as declarative signal definitions (the same shape a user authors),
+  seeded into the local database on first run
+* every default-pack signal can be recreated from scratch in the rule builder using only fields,
+  operators, values, logical grouping, severity, and category available in the UI
+* the rule grammar and connector capability schemas are the single source of truth for what a signal
+  can express; a shipped signal has no capability a user-authored signal lacks
+* removing or editing a default-pack signal does not require a code change
+
+---
+
 ## 4.5 Signal Configuration
 
 ### REQ-F-040 — Default Signal Config Group
 
 **MVP**
 
-The system shall include a default signal config group.
+The system shall include a default signal config group, seeded from the bundled default signal pack.
+The group combines task-board and code-source signal definitions. Its signals are ordinary editable
+definitions, not fixed engine features (see [REQ-F-036](#req-f-036--no-hardcoded-signals)).
 
 Acceptance criteria:
 
-* the default group is loaded on first startup
+* the default group is loaded on first startup by seeding the default signal pack
 * the default group contains enough enabled signals to produce useful reports
 * default thresholds are documented
+* every signal in the default group is editable, deletable, and recreatable from the UI
 
 ---
 
@@ -628,7 +667,8 @@ Acceptance criteria:
 * user can edit conditions with field/operator/value controls
 * user can preview a signal before saving it
 * user can reset to defaults
-* the signal builder has no scope picker — signals are scope-agnostic
+* the signal builder has no connection, project, board, or repository picker
+* each MVP signal is built for one entity type in either the work-tracking or code-repository domain
 
 ---
 
@@ -643,15 +683,18 @@ team carries up to two sources: a **task-board source** (a Jira board, 0..1, sto
 reference sources.
 
 The task-board source is chosen via a searchable project → board picker from connector-provided
-options. The code source attaches the whole connection — every repository the token can access is in
-scope; per-repository selection is a later phase. A team may be **saved with no sources**, but a
-**report run requires at least one source** (see REQ-F-050); signals whose source is absent are
-skipped with a note.
+options. One board `ScopeDefinition` persists both selections in `external_ref`: the selected
+project identity and the selected board identity. Neither selection is stored on the
+`SourceConnection`. The code source attaches the whole connection — every repository the token can
+access is in scope; per-repository selection is a later phase. A team may be **saved with no
+sources**, but a **report run requires at least one source** (see REQ-F-050); signals whose source is
+absent are skipped with a note.
 
 Acceptance criteria:
 
 * connectors represent access to external systems, not signal applicability
 * users can select a team's board scope from connector-provided options (searchable project + board)
+* the team's board scope stores both project and board identity in one `ScopeDefinition.external_ref`
 * users can attach a whole GitLab/GitHub connection as the team's code source
 * a team can be saved with no sources; a report run is blocked when the team has no sources
 * a team's report runs against the team's attached sources
@@ -688,18 +731,21 @@ Each connector shall expose a capability schema used by the signal builder and i
 The schema shall describe:
 
 * supported entity types
-* supported scope types
 * supported fields
 * valid operators per field
 * static or dynamic value providers
 * field availability constraints, such as sprint-only fields
+
+Scope discovery for team configuration is provided separately by connector `list_*` methods; it is
+not part of signal applicability.
 
 Acceptance criteria:
 
 * the signal builder is generated from connector capabilities instead of hardcoding Jira-specific
   behavior
 * invalid field/operator combinations are blocked before save
-* imported public templates are validated against the selected connector capabilities
+* imported public templates are validated against the available capability schemas for their
+  declared entity type
 
 ---
 
@@ -1489,10 +1535,13 @@ Finding should include:
 
 Detect significant scope changes after sprint start.
 
-Default thresholds:
+Default threshold:
 
 * warning: 20% added after sprint start
-* critical: 35% added after sprint start
+
+The default pack ships this as a single signal with a fixed severity, so it stays expressible in the
+standard rule grammar (no self-escalating severity). An EM who wants a stricter tier simply creates a
+second signal (e.g. 35% → critical) in the builder — exactly as any user would.
 
 Finding should include:
 
@@ -1756,10 +1805,11 @@ The MVP is ready when all of the following are true:
 * [ ] Jira connector works
 * [ ] GitLab connector works
 * [ ] Canonical model is implemented
-* [ ] Signal engine runs without source-specific dependencies
-* [ ] At least 8 Jira/work-item signals exist
-* [ ] At least 5 GitLab/merge-request signals exist
+* [ ] Signal engine runs without source-specific dependencies and has no per-signal hardcoded logic
+* [ ] Default pack ships at least 8 task-board (Jira/work-item) signal definitions
+* [ ] Default pack ships at least 5 code-source (GitLab/merge-request) signal definitions
 * [ ] Signals are configurable from UI
+* [ ] Every default-pack signal can be recreated from scratch in the UI rule builder
 * [ ] Sprint report works
 * [ ] Date-range report works
 * [ ] Markdown export works

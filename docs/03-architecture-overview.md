@@ -397,9 +397,12 @@ For enterprise or multi-user deployment
 
 The storage layer stores:
 
-* source connection metadata (a required, unique name + credentials; no scope)
-* team profiles, including each team's task-board scope, code connection, and attached signal config groups
-* scope definitions for selected boards (the code source is attached as a whole connection, not a repository scope, in MVP)
+* source connection metadata (connector type, required unique name, and connector-defined access
+  configuration; no discovered scope)
+* team profiles, including each team's project/board scope, code connection, and attached signal
+  config groups
+* board scope definitions whose external reference contains both selected project and board identity
+  (the code source is attached as a whole connection, not a repository scope, in MVP)
 * signal definitions and signal config groups
 * field mappings
 * normalized source data cache
@@ -457,12 +460,12 @@ This allows non-coding EMs to configure the system through the UI.
 
 Configuration includes:
 
-* scope definitions (a team's board scope)
+* scope definitions (a team's selected project/board pair)
 * signal definitions and signal config groups
 * signal expressions and report settings
 * Jira field mappings
 * GitLab key extraction pattern
-* team profiles (board scope + attached signal config groups)
+* team profiles (project/board scope + code connection + attached signal config groups)
 * report preferences
 
 ---
@@ -472,9 +475,13 @@ Configuration includes:
 On first startup:
 
 1. EM Radar loads the bundled default signal pack into a default signal config group.
-2. The defaults are seeded into the local database.
-3. The user can modify settings through the UI.
+2. The defaults are seeded into the local database as ordinary declarative signal definitions.
+3. The user can modify settings through the UI — including editing, deleting, or recreating any
+   default signal.
 4. Changes persist locally.
+
+The default pack is data, not code. It carries no privileged signal: everything it seeds is the same
+declarative shape a user authors in the rule builder (see §10.1).
 
 ---
 
@@ -525,6 +532,12 @@ The signal engine is not responsible for:
 * sending Slack/Teams messages
 * calling LLM providers directly
 
+**No hardcoded signals.** The engine has no per-signal code path. It evaluates rule expressions
+generically against canonical fields, so every signal — including those in the default pack — is a
+declarative definition it interprets, never compiled-in logic. Adding, editing, or removing a signal
+is a data change, not a code change. This is the architectural counterpart to
+[REQ-F-036](./02-requirements.md#req-f-036--no-hardcoded-signals).
+
 ---
 
 ### 10.2 Signal Evaluation Flow
@@ -542,8 +555,8 @@ sequenceDiagram
 
     User->>UI: Select team(s) and window
     UI->>Runner: Start report
-    Runner->>Store: Resolve team's board scope + attached signal config groups
-    Runner->>Connector: Fetch source data (team's scope)
+    Runner->>Store: Resolve team's project/board scope + whole code connection + signal groups
+    Runner->>Connector: Fetch source data (team-owned sources)
     Connector->>Normalizer: Return raw/semi-normalized data
     Normalizer->>Store: Save normalized data
     Runner->>Store: Load normalized data
@@ -567,7 +580,8 @@ Merge request flow
 Source-linking quality
 ```
 
-Initial signals:
+Default pack contents (declarative signal definitions seeded on first run, each editable and
+recreatable in the UI — not engine-hardcoded checks):
 
 * stale in-progress work item
 * blocked item without recent update
@@ -668,13 +682,13 @@ Report Results
 Settings / Privacy
 ```
 
-The Source Connections page is **create-only**: it creates, edits, tests, and deletes named source
-connections (name + credentials) and nothing else — no project/board/repository selection and no
-report run. The Teams page is where a team's two sources are attached — the task-board scope (a Jira
-board, via a searchable project → board picker) and the code source (a whole GitLab/GitHub
-connection) — and signal config groups are attached. A team may be saved with no sources, but a
-report run requires at least one. The Signals & Config Groups page is where signals are built and
-bundled into reusable groups.
+The Source Connections page manages named source access only: it creates, edits, tests, and deletes
+connections containing the connector type, name, and connector-defined access configuration. It has
+no project/board/repository selection and no report run. The Teams page is where a team's two
+sources are attached — the task-board source (one Jira project/board pair, persisted together in a
+board `ScopeDefinition`) and the code source (a whole GitLab/GitHub connection) — and signal config
+groups are attached. A team may be saved with no sources, but a report run requires at least one.
+The Signals & Config Groups page is where signals are built and bundled into reusable groups.
 
 The Setup page is an onboarding wizard that guides connection setup and team creation; the
 Dashboard is the post-setup landing showing the latest report per team. See
@@ -689,7 +703,7 @@ The UI is responsible for:
 * guiding first-time setup
 * collecting Jira/GitLab connection settings
 * testing source connections
-* setting a team's board scope and attaching signal config groups
+* setting a team's project/board scope and attaching signal config groups
 * creating, editing, previewing, importing, and exporting signals and signal config groups
 * running reports
 * displaying findings
@@ -982,6 +996,11 @@ These are not part of MVP.
 
 ### 18.1 First-time Setup Flow
 
+Connection setup and team source selection are separate persisted operations. Creating a connection
+never asks for or stores a project, board, or repository.
+
+#### 18.1.1 Connection Setup
+
 ```mermaid
 sequenceDiagram
     participant User
@@ -1000,8 +1019,29 @@ sequenceDiagram
     UI->>GitLab: Test GitLab connection
     GitLab-->>UI: Success
     UI->>Config: Save named GitLab connection
-    User->>UI: Create team, set task-board scope + code connection, attach signal config groups
+    Note over UI,Config: Connections now contain access configuration only
+```
+
+#### 18.1.2 Team Source Setup
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant UI
+    participant Config as Config Store
+    participant Jira
+
+    User->>UI: Create team
     UI->>Config: Save team profile
+    User->>UI: Select named Jira connection
+    UI->>Jira: List projects
+    User->>UI: Select project
+    UI->>Jira: List boards for project
+    User->>UI: Select board
+    UI->>Config: Save one board scope with project + board identity
+    User->>UI: Select whole GitLab connection
+    User->>UI: Attach signal config groups
+    UI->>Config: Update team profile
 ```
 
 ---
@@ -1022,9 +1062,9 @@ sequenceDiagram
 
     User->>UI: Select team(s) and window
     UI->>Runner: Run report
-    Runner->>Store: Resolve team's board scope + attached signal config groups
-    Runner->>JiraConnector: Fetch work items (team's scope)
-    Runner->>GitLabConnector: Fetch merge requests
+    Runner->>Store: Resolve team's project/board scope + whole code connection + signal groups
+    Runner->>JiraConnector: Fetch work items (team's project + board)
+    Runner->>GitLabConnector: Fetch merge requests (all accessible repositories)
     JiraConnector-->>Normalizer: Jira data
     GitLabConnector-->>Normalizer: GitLab data
     Normalizer->>Store: Save normalized data

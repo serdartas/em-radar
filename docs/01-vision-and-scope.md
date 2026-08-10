@@ -85,13 +85,29 @@ This enables the same engine to work with multiple tools and allows companies to
 
 ### 3.4 Configurable signals
 
+Signals are **declarative definitions, never hard-coded logic.** Every signal is a structured rule
+expression (field/operator/value conditions combined with AND/OR groups) over one source domain, and
+the engine only interprets these definitions — it contains no privileged, code-backed signal.
+
+This is a load-bearing invariant: **every signal, including every signal in the default pack, can be
+recreated from scratch on the Signal Settings page.** There is nothing a shipped signal can do that a
+user cannot build. The signals the app ships with are the *contents of a default pack*, not fixed
+features of the engine.
+
 EMs should be able to:
 
+* create a signal from scratch through the rule builder
+* duplicate, edit, or delete any signal, including the shipped defaults
 * enable or disable signals
-* modify thresholds
-* tune severity
+* modify thresholds and the field/operator/value conditions that make up a signal
+* combine conditions with AND/OR grouping
+* tune severity and report category
 * import/export signal configurations
 * eventually share reusable signal packs with the community
+
+Signals filter **canonical, connector-independent fields**. The **task-board source** (work items)
+and the **code source** (merge/pull requests) each expose a fixed field set that a signal can filter
+on regardless of which connector supplied the data.
 
 Configuration should be editable through the UI, not only through files.
 
@@ -298,8 +314,8 @@ Phase 1 includes:
 * Jira connector MVP
 * GitLab connector MVP
 * source connector framework
-* deterministic signal engine
-* configurable built-in signals
+* deterministic signal engine that interprets declarative signal definitions (no hard-coded signals)
+* a default signal pack of ready-made, fully editable signal definitions
 * reusable signal config groups attached to teams
 * sprint report
 * date-range report
@@ -424,7 +440,7 @@ Scope:
 * Jira base URL
 * personal access token
 * connection test
-* project/board selection
+* team-level project/board selection (never stored on the connection)
 * sprint listing
 * issue fetching
 * epic/story relationship mapping
@@ -446,7 +462,7 @@ Scope:
 * GitLab base URL
 * personal access token
 * connection test
-* group/project selection
+* whole-connection attachment to a team (all accessible repositories)
 * merge request fetching
 * approval/reviewer metadata
 * pipeline status
@@ -561,7 +577,9 @@ Examples:
 
 ### 9.3 Signal
 
-A rule or detector that identifies a possible risk, smell, or condition worth attention.
+A declarative rule that identifies a possible risk, smell, or condition worth attention. A signal is
+structured data (a field/operator/value expression over one source domain), not code, and is fully
+authored and recreatable from the Signal Settings page.
 
 Examples:
 
@@ -618,9 +636,11 @@ EM Radar should use a hybrid configuration model.
 
 ### Default Configuration
 
-Default signals and thresholds are bundled with the app.
+A **default signal pack** — a bundle of ready-made signal definitions with their thresholds — is
+bundled with the app. Every signal in it is an ordinary declarative definition, editable and
+recreatable from the UI; none is hard-coded into the engine.
 
-On first startup, the app seeds the local database with default configuration.
+On first startup, the app seeds the local database with this default pack as configuration.
 
 ---
 
@@ -781,7 +801,8 @@ Phase 1 is successful when:
 * sprint report works
 * date-range report works
 * at least 10 useful deterministic signals exist
-* scoped deterministic signal definitions can be configured from UI
+* deterministic signal definitions for work-tracking or code-repository entities can be configured
+  from the UI
 * report output is actionable
 * Markdown export works
 * credentials are handled safely

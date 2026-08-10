@@ -278,12 +278,15 @@ Used directly by *repeated carry-over*, *sprint scope churn*, and *blocked witho
 
 ### 5.12A ScopeDefinition
 
-A subset of data inside a source connection. Scopes are selected from connector-provided options and
-attached to a team. In MVP a `ScopeDefinition` is used for the team's **task-board source** (a team
-owns `0..1` scope of `scope_type = board`); the **code source** is attached as a *whole connection*
-(`TeamProfile.code_connection_id`), not a `repository` scope. The `repository`, `project`,
-`saved_filter`, and `custom` scope types are reserved for finer-grained scoping in a later phase.
-Signals never reference scopes — scope is resolved from the team at report time.
+A team-owned selection within an external system that a source connection can access. Scopes are
+selected from connector-provided options and attached to a team; they are separate records, not
+connection configuration. In MVP a `ScopeDefinition` is used for the team's **task-board source**
+(a team owns `0..1` scope of `scope_type = board`). That one scope stores both the selected project identity
+and selected board identity in `external_ref`; the project is not a second scope. The **code source**
+is attached as a *whole connection* (`TeamProfile.code_connection_id`), not a `repository` scope.
+The `repository`, `project`, `saved_filter`, and `custom` scope types are reserved for finer-grained
+scoping in a later phase. Signals never reference scopes — the team supplies source data at report
+time.
 
 | Field | Type | Nullable | Description |
 |---|---|---|---|
@@ -291,13 +294,13 @@ Signals never reference scopes — scope is resolved from the team at report tim
 | `connection_id` | UUID | no | FK to `SourceConnection`. |
 | `name` | string | no | Human-readable name shown in team setup and reports. |
 | `scope_type` | enum | no | `project`, `board`, `repository`, `saved_filter`, `custom`. |
-| `external_ref` | JSON | no | Source reference: type, id, key, and name where available. |
+| `external_ref` | JSON | no | For an MVP board scope, contains nested `project` and `board` identities, each with source IDs and available key/name metadata. |
 | `capabilities` | string[] | no | Scope capabilities such as `sprint`, `kanban`, `statuses`, `labels`. |
 | `created_at` | timestamp | no | |
 | `updated_at` | timestamp | no | |
 
-Scopes do not contain credentials. A connector grants access; a team's scope defines where inside
-that connector the team's report runs.
+Scopes do not contain credentials. A connector grants access; a team's board scope records the
+project/board pair inside that connector where the team's work-tracking report runs.
 
 ### 5.12B SignalDefinition
 
@@ -308,7 +311,7 @@ A persisted runnable signal or template-derived signal. It is structured data, n
 | `id` | UUID | no | |
 | `name` | string | no | Unique within the local workspace. |
 | `description` | text | yes | |
-| `entity_type` | string | no | Connector capability entity type, such as `issue` or `merge_request`. |
+| `entity_type` | string | no | Canonical entity type. In MVP, `issue` is work tracking and `merge_request` is code repository. |
 | `expression` | JSON | no | Rule expression tree from the signal YAML spec. |
 | `report_settings` | JSON | no | Severity, category, and optional message template. |
 | `enabled` | boolean | no | Disabled signals are stored but not evaluated. |
@@ -318,15 +321,25 @@ A persisted runnable signal or template-derived signal. It is structured data, n
 | `created_at` | timestamp | no | |
 | `updated_at` | timestamp | no | |
 
-A `SignalDefinition` is **scope-agnostic**: it carries the rule and its configuration (params,
-severity, enabled state) but not a target scope. Scope is resolved from the team at report time —
-see §5.12D and [09-functional-flows §10](./09-functional-flows.md#10-how-working-mode-shapes-signal-availability).
+A `SignalDefinition` carries the rule and its configuration (params, severity, enabled state), but
+never a connection, project, board, or repository selection. In MVP it evaluates exactly one
+signal entity type in either the work-tracking or code-repository domain. The team supplies the
+compatible source data at report time — see §5.12D and
+[09-functional-flows §10](./09-functional-flows.md#10-how-working-mode-shapes-signal-availability).
+A signal that combines work-tracking and code-repository conditions is deferred until after MVP.
 A signal's configuration is **global**: the same signal evaluates identically wherever it is used.
 To run the same kind of check with different thresholds (e.g. Scrum vs Kanban staleness), create
 two separate signals.
 
 The signal engine evaluates `SignalDefinition` rows against canonical models only. It never reads
 raw connector payloads or executes user-provided code.
+
+**No hardcoded signals.** `origin = system_template` rows (the default pack) use the exact same
+structure as `user_created` rows — the engine has no separate, compiled-in evaluation path for shipped
+signals. Every default-pack signal is therefore recreatable from scratch in the UI rule builder, and
+its `expression` filters only canonical, connector-independent fields (§4–§6), so it means the same
+thing regardless of which connector supplied the data. See
+[02-requirements REQ-F-036](./02-requirements.md#req-f-036--no-hardcoded-signals).
 
 ### 5.12C SignalConfigGroup
 
@@ -359,7 +372,7 @@ A user-defined grouping that scopes a report. Created locally in EM Radar; not p
 | `name` | string | no | |
 | `description` | text | yes | |
 | `connection_ids` | UUID[] | no | Source connections this team draws from (its task-board connection and its code connection). Default `[]`. |
-| `scope_ids` | UUID[] | no | The team's **task-board source**: a scope of `scope_type = board`. In MVP a team has **0..1 board** scope, resolved at report time. Default `[]`. |
+| `scope_ids` | UUID[] | no | The team's **task-board source**: **0..1** scope of `scope_type = board`; its `external_ref` stores both selected project and board identity. Default `[]`. |
 | `code_connection_id` | UUID | yes | The team's **code source**: a whole GitLab/GitHub `SourceConnection` (all repositories it can access are in scope). `0..1` per team; null when no code source is attached. Per-repository scoping is a later phase (§5.12A). |
 | `signal_config_group_ids` | UUID[] | no | Signal config groups attached to this team. A team's signals are the union of all signals in its attached groups. Default `[]`. |
 | `working_mode` | enum | no | `scrum` or `kanban`. See §6.7. Derived from the selected board, user-confirmable. Default `scrum`. |
@@ -370,10 +383,11 @@ A user-defined grouping that scopes a report. Created locally in EM Radar; not p
 
 A `TeamProfile` is first-class and created during onboarding (one or more per install). It is created
 with just a name and may be **saved with no sources attached**. A team carries up to two sources: a
-**task-board source** (a Jira/workflow board, via `scope_ids`, `0..1`) and a **code source** (a whole
-GitLab/GitHub connection, via `code_connection_id`, `0..1`). Both are resolved from the team at report
-time, together with its signals (the union of the signals in its attached `SignalConfigGroup`s) —
-signals are never scoped individually.
+**task-board source** (one Jira/workflow project and board persisted in one board scope, via
+`scope_ids`, `0..1`) and a **code source** (a whole GitLab/GitHub connection, via
+`code_connection_id`, `0..1`). Both are resolved from the team at report time, together with its
+signals (the union of the signals in its attached `SignalConfigGroup`s). Signals select an entity
+type, never a team source or source-internal scope.
 
 A team may be saved without sources, but a **report run requires at least one source**; signals whose
 source is absent are skipped with a note, reusing the connector-capability skip pattern

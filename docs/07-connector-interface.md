@@ -25,6 +25,11 @@ If you can implement the interfaces in §6 and register your connector per §11,
 
 ## 3. Connector Lifecycle
 
+Connection management and team source selection are separate lifecycles. A saved connection
+contains only its name, connector type, and connector-defined access configuration.
+
+### 3.1 Connection Lifecycle
+
 ```mermaid
 sequenceDiagram
     participant User
@@ -42,22 +47,40 @@ sequenceDiagram
     Connector->>Source: ping API
     Source-->>Connector: 200 OK
     Connector-->>UI: ConnectionTestResult(ok=true, ...)
-    UI->>Connector: list_projects()
-    Connector-->>UI: [Project, Project, ...]
-    User->>UI: Pick projects to track
-    UI->>Storage: persist connection + selections
-    Note over UI,Connector: Later, on report run:
-    UI->>Connector: fetch_workitems(scope, window)
-    Connector->>Source: paginated API calls
-    Connector-->>UI: WorkItem objects (normalized)
+    UI->>Storage: persist connection access configuration
+    Note over UI,Storage: No project, board, or repository selection is stored
 ```
 
-The lifecycle methods are:
+### 3.2 Team Source Selection Lifecycle
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant TeamUI as Team setup
+    participant Connector
+    participant Storage
+
+    User->>TeamUI: Select saved Jira connection
+    TeamUI->>Connector: list_projects()
+    Connector-->>TeamUI: [Project, Project, ...]
+    User->>TeamUI: Select project
+    TeamUI->>Connector: list_boards(project)
+    Connector-->>TeamUI: [Board, Board, ...]
+    User->>TeamUI: Select board
+    TeamUI->>Storage: persist team board scope (project + board identity)
+    User->>TeamUI: Select saved GitLab/GitHub connection
+    TeamUI->>Storage: attach whole code connection to team
+```
+
+Later, the report runner resolves those team-owned sources before calling connector `fetch_*`
+methods.
+
+The connector lifecycle methods are:
 
 1. **`instantiate(config)`**: construct with a validated config dict.
 2. **`test_connection()`**: verify the credentials work; return a structured result.
 3. **`describe_capabilities()`**: declare what the connector supports.
-4. **`list_*`**: enumerate sources of work (projects, boards, repositories).
+4. **`list_*`**: enumerate source options for team configuration (projects, boards, repositories).
 5. **`fetch_*`**: pull data for the chosen scope and evaluation window.
 6. **`close()`**: release HTTP clients and any open resources.
 
@@ -127,13 +150,16 @@ class ConnectorBase(Protocol):
 The schema includes:
 
 - supported entity types, such as `issue` or `merge_request`
-- supported scope types, such as Jira project, Jira board, saved filter, GitLab repository
 - field definitions with labels, data types, valid operators, and value providers
 - field availability constraints, such as sprint-only fields requiring a sprint-capable scope
 
+In MVP each signal declares one of those entity types. `issue` represents the work-tracking domain
+and `merge_request` represents the code-repository domain; connector instance and team source
+selection are not signal fields. Cross-domain signals are deferred until after MVP.
+
 The UI must use this schema to render field/operator/value controls. The importer must use the
-same schema to validate public templates and private backup mappings before enabling imported
-signals.
+same schema to validate imported signals before enabling them. Project and board discovery for team
+configuration uses `list_projects` and `list_boards`; it is not signal configuration.
 
 ## 6. Required Interfaces
 
@@ -184,12 +210,15 @@ class WorkItemProvider(Protocol):
 ```python
 @dataclass
 class WorkItemScope:
-    project_external_ids: list[str]
-    board_external_ids: list[str] = field(default_factory=list)
+    project_external_id: str
+    board_external_id: str
     workitem_types: list[WorkItemType] | None = None   # None means all
 ```
 
-`fetch_workitems` is an async iterator so connectors can stream large pages without buffering. Every yielded `WorkItem` must already be normalized per [data model §5.5](./05-data-model.md#55-workitem).
+The report runner builds this scope from the team's one board `ScopeDefinition`, whose
+`external_ref` contains both identities. `fetch_workitems` is an async iterator so connectors can
+stream large pages without buffering. Every yielded `WorkItem` must already be normalized per
+[data model §5.5](./05-data-model.md#55-workitem).
 
 ### 6.3 `MergeRequestProvider` (GitLab, GitHub PRs, Bitbucket)
 
@@ -213,6 +242,10 @@ class MergeRequestScope:
     include_drafts: bool = True
     include_closed_unmerged: bool = False
 ```
+
+The team does not persist a repository selection in MVP. At report time, the runner resolves every
+repository accessible through the team's whole code connection and supplies those IDs to
+`MergeRequestScope`.
 
 ### 6.4 `ReviewProvider` (optional)
 

@@ -9,6 +9,7 @@ dependencies = [
 ]
 
 [project.entry-points."em_radar.connectors"]
+gitlab = "em_radar_connector_gitlab:GitLabConnector"
 jira = "em_radar_connector_jira:JiraConnector"
 
 [build-system]
@@ -27,6 +28,7 @@ dev = [
 [tool.setuptools.packages.find]
 where = [
     "packages/core/src",
+    "packages/connectors/gitlab/src",
     "packages/connectors/jira/src",
     "packages/config/src",
     "packages/normalizer/src",

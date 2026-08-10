@@ -25,6 +25,7 @@ from em_radar_core.connectors import (
     ValueProvider,
     WorkItemScope,
 )
+from em_radar_core.http_client import create_redacting_async_client
 from em_radar_core.models import (
     Board,
     BoardType,
@@ -104,9 +105,13 @@ class JiraConnector:
         except ValidationError as error:
             raise ConnectorConfigError("Invalid Jira connector config") from error
 
-        self._client = CLIENT_FACTORY(
+        token = self.config.token.get_secret_value()
+        auth_header = _authorization_header(self.config)
+        self._client = create_redacting_async_client(
+            client_factory=CLIENT_FACTORY,
+            sensitive_values=(token, auth_header),
             base_url=str(self.config.base_url),
-            headers={"Authorization": _authorization_header(self.config)},
+            headers={"Authorization": auth_header},
             verify=self.config.verify_tls,
         )
 
@@ -377,7 +382,11 @@ class JiraConnector:
             try:
                 payload = await self._request_json("rest/api/2/search/jql", params=page_params)
             except ConnectorNotFoundError:
-                # Jira Data Center/Server has no enhanced search; use classic pagination.
+                if sent_token is not None:
+                    # Pagination has already advanced past page 1; a mid-stream 404 must not
+                    # restart from startAt=0 and re-yield already-emitted issues.
+                    raise
+                # Jira Data Center/Server has no enhanced search endpoint; use classic pagination.
                 async for issue in self._request_paginated_issues_legacy(params=params):
                     yield issue
                 return
@@ -854,7 +863,9 @@ def _status_category(
         return StatusCategory.IN_PROGRESS
     if normalized in {"done", "3"}:
         return StatusCategory.DONE
-    raise ConnectorDataError(f"Unsupported Jira status category: {normalized or '<missing>'}")
+    # Jira's built-in "No Category" (key="undefined", id=1) and any other unrecognised
+    # category default to TODO rather than aborting the page fetch.
+    return StatusCategory.TODO
 
 
 def _status_key(value: str) -> str:
