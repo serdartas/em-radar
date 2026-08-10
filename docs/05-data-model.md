@@ -334,6 +334,13 @@ two separate signals.
 The signal engine evaluates `SignalDefinition` rows against canonical models only. It never reads
 raw connector payloads or executes user-provided code.
 
+**No hardcoded signals.** `origin = system_template` rows (the default pack) use the exact same
+structure as `user_created` rows — the engine has no separate, compiled-in evaluation path for shipped
+signals. Every default-pack signal is therefore recreatable from scratch in the UI rule builder, and
+its `expression` filters only canonical, connector-independent fields (§4–§6), so it means the same
+thing regardless of which connector supplied the data. See
+[02-requirements REQ-F-036](./02-requirements.md#req-f-036--no-hardcoded-signals).
+
 ### 5.12C SignalConfigGroup
 
 A reusable, named bundle of signals (e.g. "Scrum signals", "Kanban signals"). A group is defined

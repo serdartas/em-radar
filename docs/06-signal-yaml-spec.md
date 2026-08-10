@@ -34,14 +34,19 @@ connectors provide access, teams own the board scope, and a pack is just the rul
 
 - **Pack.** A named, versioned bundle of signals and their configuration — the on-disk form of a Signal Config Group.
 - **Signal Config Group.** The in-app entity a pack maps to: a reusable bundle of signals, attached to any number of teams. See [data model §5.12C](./05-data-model.md#512c-signalconfiggroup).
-- **Template.** A built-in signal shipped with the application. A template seeds a signal in a group; it is configuration, not executable code. Built-in signals are catalogued in §12.
+- **Template.** A pre-authored signal definition shipped with the application (the default pack). A template seeds a signal in a group; it is configuration, not executable code, and carries no privileged behavior — a user can recreate the same signal from scratch. Templates are catalogued in §12.
 - **Signal.** A named, structured rule expression over one signal entity type, carrying its own
   configuration (params, severity, enabled state). In MVP, `issue` belongs to the work-tracking
-  domain and `merge_request` belongs to the code-repository domain. A signal selects neither a
-  connection nor a project, board, or repository; the team supplies compatible source data at
-  report time. Cross-domain signals are deferred until after MVP.
+  domain — the **task-board source** — and `merge_request` belongs to the code-repository domain —
+  the **code source**. These entity types line up 1:1 with the two team sources of the same names
+  ([data model §5.12](./05-data-model.md#512-teamprofile)). A signal selects neither a connection nor
+  a project, board, or repository; the team supplies compatible source data at report time.
+  Cross-domain signals are deferred until after MVP.
 - **Condition.** A field/operator/value predicate validated against capability schemas for the
-  signal's declared entity type.
+  signal's declared entity type. Fields are **canonical and connector-independent**: a condition like
+  `status_category is In Progress` or `age_in_current_status > 7 days` means the same thing whatever
+  connector supplied the data (Jira today, GitHub or Linear later), because signals filter the
+  canonical model, never raw source payloads.
 - **Severity.** The importance level a finding from this signal should carry (`info`, `warning`, `critical`). Each signal declares a default; packs may override.
 - **Capability schema.** Connector metadata describing available entity types, fields, operators,
   value providers, and field availability constraints.
@@ -186,10 +191,12 @@ across installs.
 
 ## 8. Signal Templates
 
-Built-in signals ship as **templates**: pre-written signal definitions catalogued in §12. A
-template is configuration, not executable code. Users may add a template to a group as-is, duplicate
-it into an editable signal (`origin: user_created`), disable it, or restore the built-in default. A
-template carries no scope — it is added to a group, and scope is resolved from the team later.
+The default pack's signals ship as **templates**: pre-written signal definitions catalogued in §12. A
+template is configuration, not executable code, and has no privileged evaluation path — the engine
+runs it exactly as it runs a user-authored signal, so any template can be recreated from scratch in
+the builder. Users may add a template to a group as-is, duplicate it into an editable signal
+(`origin: user_created`), disable it, or restore the shipped default. A template carries no scope —
+it is added to a group, and scope is resolved from the team later.
 
 ## 9. Signal Definitions
 
@@ -280,11 +287,18 @@ spec:
       workitem_key_pattern: "[A-Z]+-\\d+"
 ```
 
-## 12. Built-in Signal Template Catalog (MVP)
+## 12. Default Pack Signal Catalog (MVP)
+
+This is the catalog of signals in the **default pack** — the bundle seeded on first run. Each is a
+declarative signal definition, not a hardcoded engine check: it is expressed entirely in the rule
+grammar of §10 over the fields the connector capability schema exposes for its entity type. A user
+can duplicate, edit, delete, or **recreate any of these from scratch in the UI rule builder** — the
+"template" is just pre-authored seed content with no privileged behavior.
 
 Each entry below lists the canonical template key, default severity, default condition values, and
-the canonical evidence shape. These templates seed the product and can be duplicated into editable
-signal definitions.
+the canonical evidence shape. Because severity is a fixed per-signal value (§5), none of these
+signals escalates its own severity; a stricter tier is a second signal, which a user creates the same
+way.
 
 ### 12.1 `stale-in-progress-work-item`
 - **Default severity:** `warning`
@@ -330,9 +344,9 @@ signal definitions.
 ### 12.8 `sprint-scope-churn`
 - **Default severity:** `warning`
 - **Template defaults:**
-  - `warning_pct` (number, default `20.0`)
-  - `critical_pct` (number, default `35.0`)
-- **Notes:** This signal escalates its own severity from `warning` to `critical` when `critical_pct` is reached. `severity` field in the pack acts as a ceiling.
+  - `churn_pct` (number, default `20.0`)
+- **Notes:** Fixed severity, like every other signal — it does not self-escalate. To flag a stricter
+  tier (e.g. 35% → `critical`), create a second signal with a higher threshold in the builder.
 - **Evidence:** `{ original_count, added_count, churn_pct }`
 
 ### 12.9 `mergerequest-waiting-too-long`

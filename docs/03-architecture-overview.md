@@ -475,9 +475,13 @@ Configuration includes:
 On first startup:
 
 1. EM Radar loads the bundled default signal pack into a default signal config group.
-2. The defaults are seeded into the local database.
-3. The user can modify settings through the UI.
+2. The defaults are seeded into the local database as ordinary declarative signal definitions.
+3. The user can modify settings through the UI — including editing, deleting, or recreating any
+   default signal.
 4. Changes persist locally.
+
+The default pack is data, not code. It carries no privileged signal: everything it seeds is the same
+declarative shape a user authors in the rule builder (see §10.1).
 
 ---
 
@@ -528,6 +532,12 @@ The signal engine is not responsible for:
 * sending Slack/Teams messages
 * calling LLM providers directly
 
+**No hardcoded signals.** The engine has no per-signal code path. It evaluates rule expressions
+generically against canonical fields, so every signal — including those in the default pack — is a
+declarative definition it interprets, never compiled-in logic. Adding, editing, or removing a signal
+is a data change, not a code change. This is the architectural counterpart to
+[REQ-F-036](./02-requirements.md#req-f-036--no-hardcoded-signals).
+
 ---
 
 ### 10.2 Signal Evaluation Flow
@@ -570,7 +580,8 @@ Merge request flow
 Source-linking quality
 ```
 
-Initial signals:
+Default pack contents (declarative signal definitions seeded on first run, each editable and
+recreatable in the UI — not engine-hardcoded checks):
 
 * stale in-progress work item
 * blocked item without recent update

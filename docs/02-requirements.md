@@ -56,7 +56,7 @@ The advanced user can:
 
 * inspect configuration files
 * import/export signal packs
-* contribute new built-in signals
+* author and contribute signal definitions for the default pack (declarative, not code)
 * develop additional connectors later
 
 ### 3.3 Enterprise Administrator
@@ -486,21 +486,23 @@ Acceptance criteria:
 
 ---
 
-### REQ-F-031 — Configurable Built-in Signals
+### REQ-F-031 — Default Pack Signals as Editable Definitions
 
 **MVP**
 
-The system shall provide built-in signals as editable templates backed by structured rule
-definitions.
+The signals the system ships with are the contents of a **default signal pack**: ordinary
+declarative signal definitions (structured field/operator/value rule expressions), seeded on first
+run. They are not hard-coded engine features — see [REQ-F-036](#req-f-036--no-hardcoded-signals).
 
 Users shall be able to:
 
-* add built-in templates to signal config groups
+* add shipped signals (or copies of them) to signal config groups
 * enable signals
 * disable signals
 * duplicate signals
 * edit signal conditions, thresholds, logical grouping, severity, and report category
-* delete user-created or imported signals
+* delete any signal, including a shipped default
+* recreate any shipped signal from scratch using the same rule builder
 * reset signal settings to defaults
 
 Signals do not select connections, projects, boards, or repositories. In MVP each signal declares
@@ -526,7 +528,9 @@ Acceptance criteria:
 
 **MVP**
 
-The system shall include the following Jira/work-item signals:
+The default signal pack shall include the following task-board (work-item) signal definitions. These
+are declarative definitions seeded on first run, not engine-hardcoded checks; each can be edited,
+disabled, deleted, or recreated in the UI:
 
 1. stale in-progress work item
 2. blocked item without recent update
@@ -549,7 +553,9 @@ Acceptance criteria:
 
 **MVP**
 
-The system shall include the following GitLab/merge-request signals:
+The default signal pack shall include the following code-source (merge-request) signal definitions.
+As with the task-board signals, these are declarative definitions seeded on first run, not
+engine-hardcoded checks; each can be edited, disabled, deleted, or recreated in the UI:
 
 1. merge request waiting too long
 2. merge request without linked work item
@@ -607,19 +613,43 @@ This is not required for MVP.
 
 ---
 
+### REQ-F-036 — No Hardcoded Signals
+
+**MVP**
+
+No signal shall be hard-coded into the engine. Every signal — including every signal in the default
+pack — shall be a declarative definition the signal engine interprets, and shall be fully
+reproducible through the Signal Settings page.
+
+Acceptance criteria:
+
+* the signal engine contains no per-signal code path; it evaluates rule expressions generically
+* the default signal pack ships as declarative signal definitions (the same shape a user authors),
+  seeded into the local database on first run
+* every default-pack signal can be recreated from scratch in the rule builder using only fields,
+  operators, values, logical grouping, severity, and category available in the UI
+* the rule grammar and connector capability schemas are the single source of truth for what a signal
+  can express; a shipped signal has no capability a user-authored signal lacks
+* removing or editing a default-pack signal does not require a code change
+
+---
+
 ## 4.5 Signal Configuration
 
 ### REQ-F-040 — Default Signal Config Group
 
 **MVP**
 
-The system shall include a default signal config group.
+The system shall include a default signal config group, seeded from the bundled default signal pack.
+The group combines task-board and code-source signal definitions. Its signals are ordinary editable
+definitions, not fixed engine features (see [REQ-F-036](#req-f-036--no-hardcoded-signals)).
 
 Acceptance criteria:
 
-* the default group is loaded on first startup
+* the default group is loaded on first startup by seeding the default signal pack
 * the default group contains enough enabled signals to produce useful reports
 * default thresholds are documented
+* every signal in the default group is editable, deletable, and recreatable from the UI
 
 ---
 
@@ -1505,10 +1535,13 @@ Finding should include:
 
 Detect significant scope changes after sprint start.
 
-Default thresholds:
+Default threshold:
 
 * warning: 20% added after sprint start
-* critical: 35% added after sprint start
+
+The default pack ships this as a single signal with a fixed severity, so it stays expressible in the
+standard rule grammar (no self-escalating severity). An EM who wants a stricter tier simply creates a
+second signal (e.g. 35% → critical) in the builder — exactly as any user would.
 
 Finding should include:
 
@@ -1772,10 +1805,11 @@ The MVP is ready when all of the following are true:
 * [ ] Jira connector works
 * [ ] GitLab connector works
 * [ ] Canonical model is implemented
-* [ ] Signal engine runs without source-specific dependencies
-* [ ] At least 8 Jira/work-item signals exist
-* [ ] At least 5 GitLab/merge-request signals exist
+* [ ] Signal engine runs without source-specific dependencies and has no per-signal hardcoded logic
+* [ ] Default pack ships at least 8 task-board (Jira/work-item) signal definitions
+* [ ] Default pack ships at least 5 code-source (GitLab/merge-request) signal definitions
 * [ ] Signals are configurable from UI
+* [ ] Every default-pack signal can be recreated from scratch in the UI rule builder
 * [ ] Sprint report works
 * [ ] Date-range report works
 * [ ] Markdown export works
