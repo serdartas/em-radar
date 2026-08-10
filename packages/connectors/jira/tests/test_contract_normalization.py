@@ -381,6 +381,58 @@ def test_optional_real_jira_integration_is_env_gated() -> None:
     asyncio.run(run())
 
 
+def test_no_category_status_category_helper_returns_todo() -> None:
+    status_no_category = {
+        "name": "Backlog",
+        "statusCategory": {"key": "undefined", "id": 1, "name": "No Category"},
+    }
+    result = jira_connector_module._status_category(status_no_category, [])
+    assert result is StatusCategory.TODO
+
+    status_id_only = {
+        "name": "Backlog",
+        "statusCategory": {"id": 1, "name": "No Category"},
+    }
+    result_id_only = jira_connector_module._status_category(status_id_only, [])
+    assert result_id_only is StatusCategory.TODO
+
+
+def test_no_category_issue_normalizes_to_todo_and_is_not_dropped_from_page() -> None:
+    issue_payload = {
+        "id": "99001",
+        "key": "ENG-99",
+        "self": "https://jira.example.com/rest/api/2/issue/99001",
+        "fields": {
+            "summary": "Issue with no status category",
+            "issuetype": {"name": "Task"},
+            "status": {
+                "name": "Backlog",
+                "statusCategory": {"key": "undefined", "id": 1, "name": "No Category"},
+            },
+            "project": {"id": "10000", "key": "ENG"},
+            "labels": [],
+            "components": [],
+        },
+    }
+    workitem = jira_connector_module._workitem_from_payload(
+        issue_payload,
+        "https://jira.example.com",
+        JiraFieldMappingConfig(),
+    )
+    assert workitem.status_category is StatusCategory.TODO
+    assert workitem.key == "ENG-99"
+
+
+def test_malformed_status_category_field_still_raises_data_error() -> None:
+    status_missing = {"name": "Some Status"}
+    with pytest.raises(ConnectorDataError):
+        jira_connector_module._status_category(status_missing, [])
+
+    status_non_mapping = {"name": "Some Status", "statusCategory": "not-a-mapping"}
+    with pytest.raises(ConnectorDataError):
+        jira_connector_module._status_category(status_non_mapping, [])
+
+
 def _assert_workitem_invariants(workitem: WorkItem) -> None:
     assert workitem.parent_id != workitem.id
     if workitem.type is WorkItemType.EPIC:
