@@ -211,7 +211,8 @@ async def _run_team_report(
     # Fetch code data (repositories, merge requests, reviews) when code source is present.
     code_data: _CodeFetchResult | None = None
     if has_code_source and team_row.code_connection_id is not None:
-        code_data = await _fetch_code_data(session, team_row.code_connection_id, window)
+        mr_window = _code_fetch_window(window, board_data.sprints if board_data else [], started_at)
+        code_data = await _fetch_code_data(session, team_row.code_connection_id, mr_window)
 
     board_workitems = board_data.workitems if board_data else []
     board_transitions = board_data.transitions if board_data else []
@@ -463,6 +464,37 @@ def _jira_evaluation_window(
         window_type=WindowType.SPRINT,
         sprint_id=active_sprint.id,
         team_profile_id=team_id,
+    )
+
+
+def _code_fetch_window(
+    window: EvaluationWindow,
+    sprints: list[Sprint],
+    started_at: datetime,
+) -> EvaluationWindow:
+    """Derive a concrete DATE_RANGE window for MR fetch.
+
+    SPRINT windows carry no date bounds; MR providers that date-filter on
+    window.start/window.end would receive None.  Convert to a DATE_RANGE starting
+    at the sprint's start_date and ending at the report snapshot time (started_at),
+    so MR activity after an overdue sprint's planned end is still captured.
+    Falls back to a 14-day lookback when the sprint has no start_date.
+    """
+    if window.window_type != WindowType.SPRINT:
+        return window
+    window_sprint = next((s for s in sprints if s.id == window.sprint_id), None)
+    if window_sprint is not None and window_sprint.start_date is not None:
+        return EvaluationWindow(
+            window_type=WindowType.DATE_RANGE,
+            start=window_sprint.start_date,
+            end=started_at,
+            team_profile_id=window.team_profile_id,
+        )
+    return EvaluationWindow(
+        window_type=WindowType.DATE_RANGE,
+        start=started_at - timedelta(days=DEFAULT_KANBAN_REPORT_DAYS),
+        end=started_at,
+        team_profile_id=window.team_profile_id,
     )
 
 
