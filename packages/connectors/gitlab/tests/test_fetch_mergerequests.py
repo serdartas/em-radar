@@ -619,6 +619,9 @@ def test_fetch_mergerequests_excludes_closed_when_include_closed_unmerged_false(
         ("pending", PipelineStatus.RUNNING),
         ("preparing", PipelineStatus.RUNNING),
         ("manual", PipelineStatus.RUNNING),
+        ("waiting_for_resource", PipelineStatus.RUNNING),
+        ("scheduled", PipelineStatus.RUNNING),
+        ("created", PipelineStatus.RUNNING),
         ("unknown_future_status", PipelineStatus.NONE),
     ],
 )
@@ -1260,10 +1263,10 @@ def test_fetch_mergerequests_sends_updated_before_for_date_range_window(
     assert seen_params[0] == "2026-05-31T00:00:00Z"
 
 
-def test_fetch_mergerequests_sends_updated_after_for_date_range_window(
+def test_fetch_mergerequests_no_updated_after_for_date_range_window(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """DATE_RANGE window passes updated_after=window.start to bound the fetch from below."""
+    """DATE_RANGE window does NOT send updated_after; filtering is done post-normalization."""
     seen_params: list[str | None] = []
 
     async def run() -> None:
@@ -1284,8 +1287,7 @@ def test_fetch_mergerequests_sends_updated_after_for_date_range_window(
 
     asyncio.run(run())
 
-    assert len(seen_params) == 1
-    assert seen_params[0] == "2026-05-01T00:00:00Z"
+    assert seen_params == [None]
 
 
 def test_fetch_mergerequests_no_updated_before_for_sprint_window(
@@ -1339,6 +1341,181 @@ def test_fetch_mergerequests_no_updated_after_for_sprint_window(
     asyncio.run(run())
 
     assert seen_params == [None]
+
+
+def test_fetch_mergerequests_stale_open_mr_included_in_date_range(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An open MR whose updated_at predates window.start is still yielded.
+
+    This is the exact scenario the 'waiting too long' signal needs: an MR that has not been
+    touched since before the report window but is still open and therefore stale.
+    """
+
+    async def run() -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            if _is_mr_detail_path(request.url.path):
+                return httpx.Response(200, json=_mr_detail_response())
+            if request.url.path.endswith("/approvals"):
+                return httpx.Response(200, json=_approvals_response([]))
+            return httpx.Response(
+                200,
+                headers={"X-Next-Page": ""},
+                json=[
+                    _mr_payload(
+                        state="opened",
+                        # updated_at is before window.start (2026-05-01)
+                        updated_at="2026-04-15T10:00:00Z",
+                    )
+                ],
+            )
+
+        connector = _make_connector(monkeypatch, handler)
+        mrs = await _collect(
+            connector.fetch_mergerequests(
+                MergeRequestScope(repository_external_ids=["101"]),
+                _date_window(),
+            )
+        )
+        await connector.close()
+
+        assert len(mrs) == 1
+        assert mrs[0].state is MergeRequestState.OPEN
+
+    asyncio.run(run())
+
+
+def test_fetch_mergerequests_merged_mr_outside_window_excluded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A merged MR whose merged_at predates window.start is excluded by the post-filter."""
+
+    async def run() -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            if _is_mr_detail_path(request.url.path):
+                return httpx.Response(200, json=_mr_detail_response())
+            if request.url.path.endswith("/approvals"):
+                return httpx.Response(200, json=_approvals_response([]))
+            return httpx.Response(
+                200,
+                headers={"X-Next-Page": ""},
+                json=[
+                    _mr_payload(
+                        state="merged",
+                        # merged_at is before window.start (2026-05-01)
+                        merged_at="2026-04-20T10:00:00Z",
+                    )
+                ],
+            )
+
+        connector = _make_connector(monkeypatch, handler)
+        mrs = await _collect(
+            connector.fetch_mergerequests(
+                MergeRequestScope(repository_external_ids=["101"]),
+                _date_window(),
+            )
+        )
+        await connector.close()
+
+        assert len(mrs) == 0
+
+    asyncio.run(run())
+
+
+def test_fetch_mergerequests_closed_mr_outside_window_excluded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A closed MR whose closed_at predates window.start is excluded before enrichment.
+
+    The pre-filter (_payload_in_window) must skip enrichment entirely — not just drop the
+    MR after normalization.  Asserting that the detail and approvals endpoints were never
+    called proves that the pre-filter, not the post-normalization safety check, did the work.
+    """
+    out_of_window_iid = 1
+
+    async def run() -> None:
+        requested_paths: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requested_paths.append(request.url.path)
+            if _is_mr_detail_path(request.url.path):
+                return httpx.Response(200, json=_mr_detail_response())
+            if request.url.path.endswith("/approvals"):
+                return httpx.Response(200, json=_approvals_response([]))
+            return httpx.Response(
+                200,
+                headers={"X-Next-Page": ""},
+                json=[
+                    _mr_payload(
+                        iid=out_of_window_iid,
+                        state="closed",
+                        # closed_at is before window.start (2026-05-01)
+                        closed_at="2026-04-20T10:00:00Z",
+                    )
+                ],
+            )
+
+        connector = _make_connector(monkeypatch, handler)
+        mrs = await _collect(
+            connector.fetch_mergerequests(
+                MergeRequestScope(
+                    repository_external_ids=["101"],
+                    include_closed_unmerged=True,
+                ),
+                _date_window(),
+            )
+        )
+        await connector.close()
+
+        assert len(mrs) == 0
+        # Pre-filter must have excluded the MR before any enrichment calls were made.
+        assert not any(f"/merge_requests/{out_of_window_iid}" in p for p in requested_paths), (
+            f"Detail endpoint was unexpectedly called for iid={out_of_window_iid}"
+        )
+        assert not any(p.endswith("/approvals") for p in requested_paths), (
+            "Approvals endpoint was unexpectedly called for out-of-window MR"
+        )
+
+    asyncio.run(run())
+
+
+def test_fetch_mergerequests_merged_mr_inside_window_included(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A merged MR whose merged_at falls within the window is yielded."""
+
+    async def run() -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            if _is_mr_detail_path(request.url.path):
+                return httpx.Response(200, json=_mr_detail_response())
+            if request.url.path.endswith("/approvals"):
+                return httpx.Response(200, json=_approvals_response([]))
+            return httpx.Response(
+                200,
+                headers={"X-Next-Page": ""},
+                json=[
+                    _mr_payload(
+                        state="merged",
+                        # merged_at is inside the window (2026-05-01 to 2026-05-31)
+                        merged_at="2026-05-15T14:00:00Z",
+                    )
+                ],
+            )
+
+        connector = _make_connector(monkeypatch, handler)
+        mrs = await _collect(
+            connector.fetch_mergerequests(
+                MergeRequestScope(repository_external_ids=["101"]),
+                _date_window(),
+            )
+        )
+        await connector.close()
+
+        assert len(mrs) == 1
+        assert mrs[0].state is MergeRequestState.MERGED
+        assert mrs[0].merged_at == datetime(2026, 5, 15, 14, 0, 0, tzinfo=timezone.utc)
+
+    asyncio.run(run())
 
 
 # ---------------------------------------------------------------------------
@@ -1686,6 +1863,100 @@ def test_fetch_mergerequests_wraps_network_errors(monkeypatch: pytest.MonkeyPatc
     async def run() -> None:
         def handler(request: httpx.Request) -> httpx.Response:
             raise httpx.ConnectError("network down", request=request)
+
+        connector = _make_connector(monkeypatch, handler)
+        with pytest.raises(ConnectorTransientError):
+            await _collect(
+                connector.fetch_mergerequests(
+                    MergeRequestScope(repository_external_ids=["101"]),
+                    _date_window(),
+                )
+            )
+        await connector.close()
+
+    asyncio.run(run())
+
+
+def test_fetch_mergerequests_detail_500_raises_transient_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Detail endpoint HTTP 500 propagates as ConnectorTransientError, not silent degradation."""
+
+    async def run() -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            if _is_mr_detail_path(request.url.path):
+                return httpx.Response(500)
+            if request.url.path.endswith("/approvals"):
+                return httpx.Response(200, json=_approvals_response([]))
+            return httpx.Response(
+                200,
+                headers={"X-Next-Page": ""},
+                json=[_mr_payload()],
+            )
+
+        connector = _make_connector(monkeypatch, handler)
+        with pytest.raises(ConnectorTransientError):
+            await _collect(
+                connector.fetch_mergerequests(
+                    MergeRequestScope(repository_external_ids=["101"]),
+                    _date_window(),
+                )
+            )
+        await connector.close()
+
+    asyncio.run(run())
+
+
+def test_fetch_mergerequests_approvals_500_raises_transient_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Approvals endpoint HTTP 500 propagates as ConnectorTransientError, not silent degradation."""
+
+    async def run() -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            if _is_mr_detail_path(request.url.path):
+                return httpx.Response(200, json=_mr_detail_response())
+            if request.url.path.endswith("/approvals"):
+                return httpx.Response(500)
+            return httpx.Response(
+                200,
+                headers={"X-Next-Page": ""},
+                json=[_mr_payload()],
+            )
+
+        connector = _make_connector(monkeypatch, handler)
+        with pytest.raises(ConnectorTransientError):
+            await _collect(
+                connector.fetch_mergerequests(
+                    MergeRequestScope(repository_external_ids=["101"]),
+                    _date_window(),
+                )
+            )
+        await connector.close()
+
+    asyncio.run(run())
+
+
+def test_fetch_mergerequests_both_enrichment_endpoints_500_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both the detail and approvals endpoints returning HTTP 500 raises ConnectorTransientError.
+
+    Guards against a regression where a 2-entry inner ExceptionGroup is mishandled and the
+    second error is lost without the first being propagated as a typed connector exception.
+    """
+
+    async def run() -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            if _is_mr_detail_path(request.url.path):
+                return httpx.Response(500)
+            if request.url.path.endswith("/approvals"):
+                return httpx.Response(500)
+            return httpx.Response(
+                200,
+                headers={"X-Next-Page": ""},
+                json=[_mr_payload()],
+            )
 
         connector = _make_connector(monkeypatch, handler)
         with pytest.raises(ConnectorTransientError):

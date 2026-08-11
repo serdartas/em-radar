@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from datetime import datetime, timezone
 from typing import ClassVar, cast
@@ -34,6 +35,8 @@ from em_radar_core.models import (
     Source,
     WindowType,
 )
+
+_logger = logging.getLogger(__name__)
 
 CLIENT_FACTORY: Callable[..., httpx.AsyncClient] = httpx.AsyncClient
 PAGE_SIZE = 100
@@ -264,13 +267,12 @@ class GitLabConnector:
             "sort": "desc",
             "per_page": PAGE_SIZE,
         }
-        # Issue 1: bound the DATE_RANGE window on both ends; SPRINT has no time filter so that
-        # stale-MR detection can still see MRs that were last updated before the sprint started.
+        # Upper-bound the fetch so future noise is excluded; lower-bound filtering is done
+        # after normalization so open MRs last touched before window.start are still visible
+        # to staleness signals.
         if window.window_type is WindowType.DATE_RANGE:
             if window.end is not None:
                 params["updated_before"] = _format_iso_datetime(window.end)
-            if window.start is not None:
-                params["updated_after"] = _format_iso_datetime(window.start)
 
         # Cap concurrent enrichment requests to avoid triggering GitLab rate limits on full pages.
         # Created per method call so it does not bleed across concurrent invocations.
@@ -283,12 +285,25 @@ class GitLabConnector:
             iid = _required_positive_int(payload, "iid")
             # Issue 2: diff stats are absent from the list endpoint; fetch them separately.
             # Both fetches are independent — run them concurrently, under the shared semaphore.
+            # TaskGroup cancels the sibling coroutine on error; asyncio.gather would leave it
+            # orphaned (e.g. a 500 on /approvals keeps diff-stats in flight).
+            # Use plain except (not except*) so the inner ExceptionGroup is unwrapped into a
+            # plain exception before propagating — the outer TaskGroup's except* expects plain
+            # connector exceptions, not nested ExceptionGroups.
             async with sem:
-                diff_stats, approval_count = await asyncio.gather(
-                    self._resolve_diff_stats(project_id, iid, payload),
-                    self._fetch_approval_count(project_id, iid),
-                )
-            return payload, is_draft, diff_stats, approval_count
+                try:
+                    async with asyncio.TaskGroup() as tg:
+                        diff_task = tg.create_task(
+                            self._resolve_diff_stats(project_id, iid, payload)
+                        )
+                        approval_task = tg.create_task(self._fetch_approval_count(project_id, iid))
+                except BaseExceptionGroup as eg:
+                    if len(eg.exceptions) > 1:
+                        _logger.warning(
+                            "Multiple enrichment errors for MR; reporting first: %s", eg
+                        )
+                    raise eg.exceptions[0] from eg
+            return payload, is_draft, diff_task.result(), approval_task.result()
 
         page = 1
         while True:
@@ -312,14 +327,34 @@ class GitLabConnector:
                 # merged MRs are always included regardless of this flag.
                 if gl_state == "closed" and not scope.include_closed_unmerged:
                     continue
+                # Skip terminal MRs outside the window before enrichment to avoid 2 wasted
+                # API calls (diff stats + approvals) per out-of-window MR.
+                if not _payload_in_window(payload, window):
+                    continue
                 accepted.append((payload, is_draft))
 
             # Enrich all accepted MRs in the page concurrently, then yield them in order.
-            results = await asyncio.gather(*[_enrich(p, d) for p, d in accepted])
+            # TaskGroup cancels sibling tasks immediately when one raises, preventing orphaned
+            # in-flight network calls that asyncio.gather would leave running.
+            tasks: list[asyncio.Task[object]] = []
+            try:
+                async with asyncio.TaskGroup() as tg:
+                    tasks = [tg.create_task(_enrich(p, d)) for p, d in accepted]
+            except* (
+                ConnectorTransientError,
+                ConnectorDataError,
+                ConnectorAuthError,
+                ConnectorNotFoundError,
+                ConnectorRateLimitedError,
+            ) as eg:
+                raise eg.exceptions[0]
+            results = [t.result() for t in tasks]
             for payload, is_draft, diff_stats, approval_count in results:
-                yield _mergerequest_from_payload(
+                mr = _mergerequest_from_payload(
                     payload, project_id, is_draft, approval_count, diff_stats
                 )
+                if _mr_in_window(mr, window):
+                    yield mr
 
             if next_page is None:
                 return
@@ -570,6 +605,46 @@ def _mr_state(gl_state: str, is_draft: bool) -> MergeRequestState:
     if gl_state == "closed":
         return MergeRequestState.CLOSED
     raise ConnectorDataError(f"Unsupported GitLab MR state: {gl_state!r}")
+
+
+def _mr_in_window(mr: MergeRequest, window: EvaluationWindow) -> bool:
+    # Open/draft MRs are always included: a stale open MR last touched before the window
+    # start is exactly the case the "waiting too long" signal is designed to catch.
+    if mr.state in (MergeRequestState.OPEN, MergeRequestState.DRAFT):
+        return True
+    # Without a lower bound there is nothing to filter against.
+    if window.start is None:
+        return True
+    # Terminal MRs are kept only when their completion event falls within the window, not
+    # when updated_at does — an MR can be updated (e.g. comment) long after it was merged.
+    if mr.state is MergeRequestState.MERGED:
+        return mr.merged_at is not None and mr.merged_at >= window.start
+    if mr.state is MergeRequestState.CLOSED:
+        return mr.closed_at is not None and mr.closed_at >= window.start
+    return True
+
+
+def _payload_in_window(payload: Mapping[str, object], window: EvaluationWindow) -> bool:
+    """Pre-normalization window filter on raw GitLab MR payloads.
+
+    Prevents enrichment calls for terminal MRs that fall outside the window.  Non-terminal
+    states (open, locked, unknown) always pass through; unknown states are kept so that
+    normalization can raise ConnectorDataError with a meaningful message.
+    """
+    if window.start is None:
+        return True
+    gl_state = _optional_str(payload, "state")
+    if gl_state == "merged":
+        merged_at = _parse_datetime(_optional_str(payload, "merged_at"))
+        if merged_at is None:
+            return True  # missing timestamp; pass through so normalization raises
+        return merged_at >= window.start
+    if gl_state == "closed":
+        closed_at = _parse_datetime(_optional_str(payload, "closed_at"))
+        if closed_at is None:
+            return True  # missing timestamp; pass through so normalization raises
+        return closed_at >= window.start
+    return True
 
 
 def _pipeline_info(
