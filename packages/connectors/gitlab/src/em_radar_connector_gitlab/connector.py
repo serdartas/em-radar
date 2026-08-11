@@ -50,8 +50,9 @@ _NAMESPACE = UUID("c7d8a5f1-3b4e-4f2a-8c9d-1e0f7a6b5c3d")
 _REVIEW_NOTE_PATTERNS: tuple[tuple[str, ReviewDecision], ...] = (
     ("approved this merge request", ReviewDecision.APPROVED),
     ("unapproved this merge request", ReviewDecision.DISMISSED),
-    # GitLab 15.4+ emits "requested changes" system notes.
-    ("requested changes", ReviewDecision.CHANGES_REQUESTED),
+    # "requested changes" is intentionally absent: GitLab emits both a system note AND sets
+    # reviewer.state == "requested_changes".  Relying on reviewer state as the single source
+    # avoids duplicate CHANGES_REQUESTED rows when both signals arrive for the same event.
 )
 
 _PIPELINE_STATUS_MAP: dict[str, PipelineStatus] = {
@@ -550,13 +551,22 @@ class GitLabConnector:
                         submitted_at=None,
                     )
                 elif state == "requested_changes":
-                    # Modern GitLab surfaces request-changes via reviewer state in addition to
-                    # (or instead of) emitting a system note, so we emit the row from here too.
+                    # Authoritative source for CHANGES_REQUESTED — preferred over system notes
+                    # because notes and reviewer state can both fire for the same event.
                     submitted_at = _parse_datetime(_optional_str(reviewer_payload, "created_at"))
                     yield Review(
                         mergerequest_id=mr_id,
                         reviewer_id=reviewer_id,
                         decision=ReviewDecision.CHANGES_REQUESTED,
+                        submitted_at=submitted_at,
+                    )
+                elif state == "reviewed":
+                    # Reviewer left comments without approving or requesting changes.
+                    submitted_at = _parse_datetime(_optional_str(reviewer_payload, "created_at"))
+                    yield Review(
+                        mergerequest_id=mr_id,
+                        reviewer_id=reviewer_id,
+                        decision=ReviewDecision.COMMENTED,
                         submitted_at=submitted_at,
                     )
             if next_page is None:

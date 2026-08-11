@@ -158,10 +158,15 @@ def test_fetch_reviews_normalizes_dismissed_from_unapproved_note(
     asyncio.run(run())
 
 
-def test_fetch_reviews_normalizes_changes_requested_note(
+def test_fetch_reviews_changes_requested_note_alone_produces_no_row(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A 'requested changes' system note maps to decision=changes_requested."""
+    """A 'requested changes' system note without a matching reviewer state produces no row.
+
+    CHANGES_REQUESTED is sourced exclusively from reviewer.state == 'requested_changes' to
+    avoid duplicate rows when GitLab emits both a system note and updates the reviewer state
+    for the same event.
+    """
 
     async def run() -> None:
         def handler(request: httpx.Request) -> httpx.Response:
@@ -178,8 +183,7 @@ def test_fetch_reviews_normalizes_changes_requested_note(
         reviews = await _collect(connector.fetch_reviews(["2001"]))
         await connector.close()
 
-        assert len(reviews) == 1
-        assert reviews[0].decision is ReviewDecision.CHANGES_REQUESTED
+        assert reviews == []
 
     asyncio.run(run())
 
@@ -561,6 +565,89 @@ def test_fetch_reviews_reviewer_state_requested_changes_no_created_at_yields_nul
     asyncio.run(run())
 
 
+def test_fetch_reviews_note_and_reviewer_state_both_changes_requested_yields_exactly_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When a 'requested changes' note AND reviewer state==requested_changes both arrive,
+    exactly one CHANGES_REQUESTED row is emitted (no duplication).
+    """
+
+    async def run() -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            path = request.url.path
+            if path.endswith("/merge_requests/2001"):
+                return httpx.Response(200, json=_mr_global_payload())
+            if "/notes" in path:
+                return _notes_response(
+                    [
+                        _note_payload(
+                            body="requested changes",
+                            author_id=99,
+                            created_at="2026-05-10T10:00:00Z",
+                        )
+                    ]
+                )
+            if "/reviewers" in path:
+                return _reviewers_response(
+                    [
+                        _reviewer_payload(
+                            reviewer_id=99,
+                            state="requested_changes",
+                            created_at="2026-05-10T10:00:00Z",
+                        )
+                    ]
+                )
+            raise AssertionError(f"unexpected path: {path}")
+
+        connector = _make_connector(monkeypatch, handler)
+        reviews = await _collect(connector.fetch_reviews(["2001"]))
+        await connector.close()
+
+        changes_requested = [r for r in reviews if r.decision is ReviewDecision.CHANGES_REQUESTED]
+        assert len(changes_requested) == 1, (
+            f"expected exactly one CHANGES_REQUESTED row, got {len(changes_requested)}"
+        )
+
+    asyncio.run(run())
+
+
+def test_fetch_reviews_reviewer_state_reviewed_emits_commented(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A reviewer whose state is 'reviewed' produces a COMMENTED Review row."""
+
+    async def run() -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            path = request.url.path
+            if path.endswith("/merge_requests/2001"):
+                return httpx.Response(200, json=_mr_global_payload())
+            if "/notes" in path:
+                return _notes_response([])
+            if "/reviewers" in path:
+                return _reviewers_response(
+                    [
+                        _reviewer_payload(
+                            reviewer_id=55,
+                            state="reviewed",
+                            created_at="2026-06-01T09:00:00Z",
+                        )
+                    ]
+                )
+            raise AssertionError(f"unexpected path: {path}")
+
+        connector = _make_connector(monkeypatch, handler)
+        reviews = await _collect(connector.fetch_reviews(["2001"]))
+        await connector.close()
+
+        assert len(reviews) == 1
+        r = reviews[0]
+        assert r.decision is ReviewDecision.COMMENTED
+        assert r.reviewer_id == _stable_id("user", "55")
+        assert r.submitted_at == datetime(2026, 6, 1, 9, 0, 0, tzinfo=timezone.utc)
+
+    asyncio.run(run())
+
+
 # ---------------------------------------------------------------------------
 # Pagination of reviewer requests (fix #4)
 # ---------------------------------------------------------------------------
@@ -737,8 +824,6 @@ def test_fetch_reviews_invalid_note_datetime_raises(monkeypatch: pytest.MonkeyPa
         ("approved this merge request", ReviewDecision.APPROVED),
         ("approved this merge request at 2026-05-01", ReviewDecision.APPROVED),  # suffix variation
         ("unapproved this merge request", ReviewDecision.DISMISSED),
-        ("requested changes", ReviewDecision.CHANGES_REQUESTED),
-        ("requested changes to this merge request", ReviewDecision.CHANGES_REQUESTED),
     ],
 )
 def test_fetch_reviews_decision_mapping(
