@@ -50,9 +50,10 @@ _NAMESPACE = UUID("c7d8a5f1-3b4e-4f2a-8c9d-1e0f7a6b5c3d")
 _REVIEW_NOTE_PATTERNS: tuple[tuple[str, ReviewDecision], ...] = (
     ("approved this merge request", ReviewDecision.APPROVED),
     ("unapproved this merge request", ReviewDecision.DISMISSED),
-    # "requested changes" is intentionally absent: GitLab emits both a system note AND sets
-    # reviewer.state == "requested_changes".  Relying on reviewer state as the single source
-    # avoids duplicate CHANGES_REQUESTED rows when both signals arrive for the same event.
+    # Notes are historical and ordered; reviewer state is a snapshot of current state only.
+    # Sourcing CHANGES_REQUESTED from notes preserves history when a reviewer subsequently
+    # approves (their state becomes "approved", losing the prior "requested_changes" event).
+    ("requested changes", ReviewDecision.CHANGES_REQUESTED),
 )
 
 _PIPELINE_STATUS_MAP: dict[str, PipelineStatus] = {
@@ -550,24 +551,15 @@ class GitLabConnector:
                         decision=ReviewDecision.REQUESTED,
                         submitted_at=None,
                     )
-                elif state == "requested_changes":
-                    # Authoritative source for CHANGES_REQUESTED — preferred over system notes
-                    # because notes and reviewer state can both fire for the same event.
-                    submitted_at = _parse_datetime(_optional_str(reviewer_payload, "created_at"))
-                    yield Review(
-                        mergerequest_id=mr_id,
-                        reviewer_id=reviewer_id,
-                        decision=ReviewDecision.CHANGES_REQUESTED,
-                        submitted_at=submitted_at,
-                    )
                 elif state == "reviewed":
                     # Reviewer left comments without approving or requesting changes.
-                    submitted_at = _parse_datetime(_optional_str(reviewer_payload, "created_at"))
+                    # created_at is the reviewer assignment time, not the comment time, so
+                    # submitted_at is always None — no reliable timestamp is available here.
                     yield Review(
                         mergerequest_id=mr_id,
                         reviewer_id=reviewer_id,
                         decision=ReviewDecision.COMMENTED,
-                        submitted_at=submitted_at,
+                        submitted_at=None,
                     )
             if next_page is None:
                 return
