@@ -351,6 +351,102 @@ def test_fetch_mergerequests_normalizes_merged_mr(monkeypatch: pytest.MonkeyPatc
     asyncio.run(run())
 
 
+def test_fetch_mergerequests_closed_draft_mr_state_is_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A GitLab MR that is both closed and draft normalizes to CLOSED, not DRAFT.
+
+    Terminal states win over the draft flag so that closed_at is populated and closed-state
+    signals can see the MR.  The is_draft flag itself is preserved on the model.
+    """
+
+    async def run() -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            if _is_mr_detail_path(request.url.path):
+                return httpx.Response(200, json=_mr_detail_response())
+            if request.url.path.endswith("/approvals"):
+                return httpx.Response(200, json=_approvals_response([]))
+            return httpx.Response(
+                200,
+                headers={"X-Next-Page": ""},
+                json=[
+                    _mr_payload(
+                        state="closed",
+                        draft=True,
+                        closed_at="2026-05-20T14:00:00Z",
+                    )
+                ],
+            )
+
+        connector = _make_connector(monkeypatch, handler)
+        mrs = await _collect(
+            connector.fetch_mergerequests(
+                MergeRequestScope(
+                    repository_external_ids=["101"],
+                    include_drafts=True,
+                    include_closed_unmerged=True,
+                ),
+                _date_window(),
+            )
+        )
+        await connector.close()
+
+        assert len(mrs) == 1
+        mr = mrs[0]
+        assert mr.state is MergeRequestState.CLOSED
+        assert mr.closed_at == datetime(2026, 5, 20, 14, 0, 0, tzinfo=timezone.utc)
+        assert mr.is_draft is True
+
+    asyncio.run(run())
+
+
+def test_fetch_mergerequests_merged_draft_mr_state_is_merged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A GitLab MR that is both merged and draft normalizes to MERGED, not DRAFT.
+
+    Terminal states win over the draft flag; merged_at must be populated and is_draft preserved.
+    """
+
+    async def run() -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            if _is_mr_detail_path(request.url.path):
+                return httpx.Response(200, json=_mr_detail_response())
+            if request.url.path.endswith("/approvals"):
+                return httpx.Response(200, json=_approvals_response([]))
+            return httpx.Response(
+                200,
+                headers={"X-Next-Page": ""},
+                json=[
+                    _mr_payload(
+                        state="merged",
+                        draft=True,
+                        merged_at="2026-05-18T10:00:00Z",
+                    )
+                ],
+            )
+
+        connector = _make_connector(monkeypatch, handler)
+        mrs = await _collect(
+            connector.fetch_mergerequests(
+                MergeRequestScope(
+                    repository_external_ids=["101"],
+                    include_drafts=True,
+                ),
+                _date_window(),
+            )
+        )
+        await connector.close()
+
+        assert len(mrs) == 1
+        mr = mrs[0]
+        assert mr.state is MergeRequestState.MERGED
+        assert mr.merged_at == datetime(2026, 5, 18, 10, 0, 0, tzinfo=timezone.utc)
+        assert mr.is_draft is True
+
+    asyncio.run(run())
+
+
 def test_fetch_mergerequests_locked_mr_maps_to_open_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1318,6 +1414,150 @@ def test_fetch_mergerequests_closed_mr_satisfies_invariant(
         assert mr.state is MergeRequestState.CLOSED
         assert mr.closed_at is not None
         assert mr.merged_at is None
+
+    asyncio.run(run())
+
+
+# ---------------------------------------------------------------------------
+# Draft filter — terminal-state precedence
+# ---------------------------------------------------------------------------
+
+
+def test_fetch_mergerequests_closed_draft_mr_included_when_closed_requested(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A closed MR carrying draft=True is included when include_closed_unmerged=True.
+
+    The draft filter must not drop MRs whose GitLab state is already terminal; only the
+    include_closed_unmerged flag governs whether terminal MRs pass through.
+    """
+
+    async def run() -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            if _is_mr_detail_path(request.url.path):
+                return httpx.Response(200, json=_mr_detail_response())
+            if request.url.path.endswith("/approvals"):
+                return httpx.Response(200, json=_approvals_response([]))
+            return httpx.Response(
+                200,
+                headers={"X-Next-Page": ""},
+                json=[
+                    _mr_payload(
+                        state="closed",
+                        draft=True,
+                        closed_at="2026-05-20T14:00:00Z",
+                        merged_at=None,
+                    )
+                ],
+            )
+
+        scope_include = MergeRequestScope(
+            repository_external_ids=["101"],
+            include_drafts=False,
+            include_closed_unmerged=True,
+        )
+
+        connector = _make_connector(monkeypatch, handler)
+        mrs = await _collect(connector.fetch_mergerequests(scope_include, _date_window()))
+        await connector.close()
+
+        assert len(mrs) == 1
+        mr = mrs[0]
+        assert mr.state is MergeRequestState.CLOSED
+        assert mr.is_draft is True
+        assert mr.closed_at is not None
+        assert mr.merged_at is None
+
+    asyncio.run(run())
+
+
+def test_fetch_mergerequests_closed_draft_mr_excluded_when_closed_not_requested(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A closed MR carrying draft=True is excluded when include_closed_unmerged=False.
+
+    The include_closed_unmerged filter applies to all terminal MRs regardless of the draft flag.
+    """
+
+    async def run() -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            if _is_mr_detail_path(request.url.path):
+                return httpx.Response(200, json=_mr_detail_response())
+            if request.url.path.endswith("/approvals"):
+                return httpx.Response(200, json=_approvals_response([]))
+            return httpx.Response(
+                200,
+                headers={"X-Next-Page": ""},
+                json=[
+                    _mr_payload(
+                        state="closed",
+                        draft=True,
+                        closed_at="2026-05-20T14:00:00Z",
+                        merged_at=None,
+                    )
+                ],
+            )
+
+        scope_exclude = MergeRequestScope(
+            repository_external_ids=["101"],
+            include_drafts=False,
+            include_closed_unmerged=False,
+        )
+
+        connector = _make_connector(monkeypatch, handler)
+        mrs = await _collect(connector.fetch_mergerequests(scope_exclude, _date_window()))
+        await connector.close()
+
+        assert len(mrs) == 0
+
+    asyncio.run(run())
+
+
+def test_fetch_mergerequests_merged_draft_mr_included_when_drafts_excluded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A merged MR carrying draft=True is included even when include_drafts=False.
+
+    The draft filter must not drop MRs whose GitLab state is already terminal (merged);
+    only the include_drafts flag governs open draft MRs.  This guards against a future
+    regression where is_terminal is narrowed to only ("closed",), which would wrongly
+    drop merged+draft MRs when include_drafts=False.
+    """
+
+    async def run() -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            if _is_mr_detail_path(request.url.path):
+                return httpx.Response(200, json=_mr_detail_response())
+            if request.url.path.endswith("/approvals"):
+                return httpx.Response(200, json=_approvals_response([]))
+            return httpx.Response(
+                200,
+                headers={"X-Next-Page": ""},
+                json=[
+                    _mr_payload(
+                        state="merged",
+                        draft=True,
+                        merged_at="2026-05-18T10:00:00Z",
+                    )
+                ],
+            )
+
+        connector = _make_connector(monkeypatch, handler)
+        mrs = await _collect(
+            connector.fetch_mergerequests(
+                MergeRequestScope(
+                    repository_external_ids=["101"],
+                    include_drafts=False,
+                ),
+                _date_window(),
+            )
+        )
+        await connector.close()
+
+        assert len(mrs) == 1
+        mr = mrs[0]
+        assert mr.state is MergeRequestState.MERGED
+        assert mr.is_draft is True
 
     asyncio.run(run())
 

@@ -303,8 +303,13 @@ class GitLabConnector:
             for payload in payloads:
                 gl_state = _optional_str(payload, "state")
                 is_draft = _mr_is_draft(payload, gl_state)
-                if not scope.include_drafts and is_draft:
+                is_terminal = gl_state in ("merged", "closed")
+                # Terminal MRs are never excluded on the basis of the draft flag — a closed MR
+                # that still carries draft=True must pass through and be normalized to CLOSED.
+                if not scope.include_drafts and is_draft and not is_terminal:
                     continue
+                # include_closed_unmerged governs only the "closed" (rejected/abandoned) state;
+                # merged MRs are always included regardless of this flag.
                 if gl_state == "closed" and not scope.include_closed_unmerged:
                     continue
                 accepted.append((payload, is_draft))
@@ -490,7 +495,8 @@ def _mergerequest_from_payload(
 ) -> MergeRequest:
     mr_global_id = str(_required_positive_int(payload, "id"))
     iid = _required_positive_int(payload, "iid")
-    state = _mr_state(payload, is_draft)
+    gl_state = _optional_str(payload, "state") or ""
+    state = _mr_state(gl_state, is_draft)
 
     merged_at: datetime | None = None
     closed_at: datetime | None = None
@@ -551,10 +557,10 @@ def _mr_is_draft(payload: Mapping[str, object], gl_state: str | None) -> bool:
     return False
 
 
-def _mr_state(payload: Mapping[str, object], is_draft: bool) -> MergeRequestState:
-    if is_draft:
+def _mr_state(gl_state: str, is_draft: bool) -> MergeRequestState:
+    # Draft only overrides non-terminal states; merged/closed take precedence unconditionally.
+    if is_draft and gl_state in ("opened", "locked"):
         return MergeRequestState.DRAFT
-    gl_state = _optional_str(payload, "state")
     # Issue 3: "locked" MRs are still open in GitLab — they cannot receive new commits but are
     # not closed.  Mapping them to CLOSED would require a closed_at that GitLab does not supply.
     if gl_state in ("opened", "locked"):
