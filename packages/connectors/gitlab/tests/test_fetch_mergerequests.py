@@ -1969,3 +1969,64 @@ def test_fetch_mergerequests_both_enrichment_endpoints_500_raises(
         await connector.close()
 
     asyncio.run(run())
+
+
+def test_fetch_mergerequests_repository_id_matches_list_repositories(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Repository.id from list_repositories() equals MergeRequest.repository_id from fetch_mergerequests().
+
+    Regression guard for the FK mismatch where Repository received a random UUID while
+    MergeRequest computed a stable UUID via _stable_id("repository", project_id).
+    """
+
+    async def run() -> None:
+        project_id = 101
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            path = request.url.path.rstrip("/")
+            # list_repositories: GET api/v4/projects
+            if path.endswith("/projects") and "merge_requests" not in path:
+                return httpx.Response(
+                    200,
+                    headers={"X-Next-Page": ""},
+                    json=[
+                        {
+                            "id": project_id,
+                            "name": "API",
+                            "path_with_namespace": "engineering/api",
+                            "default_branch": "main",
+                            "archived": False,
+                            "web_url": "https://gitlab.example.com/engineering/api",
+                        }
+                    ],
+                )
+            # single-MR detail endpoint
+            if _is_mr_detail_path(path):
+                return httpx.Response(200, json=_mr_detail_response())
+            # approvals endpoint
+            if path.endswith("/approvals"):
+                return httpx.Response(200, json=_approvals_response([]))
+            # fetch_mergerequests: GET api/v4/projects/{id}/merge_requests
+            return httpx.Response(
+                200,
+                headers={"X-Next-Page": ""},
+                json=[_mr_payload(mr_id=9001, iid=1)],
+            )
+
+        connector = _make_connector(monkeypatch, handler)
+
+        repositories = await connector.list_repositories()
+        mrs = await _collect(
+            connector.fetch_mergerequests(
+                MergeRequestScope(repository_external_ids=[str(project_id)]),
+                _date_window(),
+            )
+        )
+        await connector.close()
+
+        assert len(repositories) == 1
+        assert len(mrs) == 1
+        assert mrs[0].repository_id == repositories[0].id
+
+    asyncio.run(run())

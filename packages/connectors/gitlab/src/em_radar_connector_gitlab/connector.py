@@ -762,9 +762,11 @@ def _repository_from_payload(payload: Mapping[str, object]) -> Repository:
     if not isinstance(default_branch, str):
         raise ConnectorDataError("GitLab project contained an invalid default_branch")
 
+    project_id = str(_required_positive_int(payload, "id"))
     return Repository(
+        id=_stable_id("repository", project_id),
         source=Source.GITLAB,
-        external_id=str(_required_positive_int(payload, "id")),
+        external_id=project_id,
         source_url=_optional_str(payload, "web_url"),
         name=_required_str(payload, "name"),
         full_path=_required_str(payload, "path_with_namespace"),
