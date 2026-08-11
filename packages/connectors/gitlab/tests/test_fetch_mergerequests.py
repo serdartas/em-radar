@@ -929,6 +929,80 @@ def test_fetch_mergerequests_approval_403_yields_zero(
 
 
 # ---------------------------------------------------------------------------
+# Enrichment pairing
+# ---------------------------------------------------------------------------
+
+
+def test_fetch_mergerequests_enrichment_paired_per_mr(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each MR on a page receives its own distinct enrichment (diff stats + approvals).
+
+    Both handlers route by iid so a cross-wiring bug — MR A getting MR B's enrichment —
+    produces wrong values and fails the per-iid assertions.
+    """
+
+    async def run() -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            path = request.url.path
+            segments = path.rstrip("/").split("/")
+            if path.endswith("/approvals"):
+                iid = int(segments[-2])
+                if iid == 1:
+                    return httpx.Response(200, json=_approvals_response([10]))
+                if iid == 2:
+                    return httpx.Response(200, json=_approvals_response([10, 11]))
+                raise AssertionError(f"Unexpected approvals iid: {iid}")
+            if _is_mr_detail_path(path):
+                iid = int(segments[-1])
+                if iid == 1:
+                    return httpx.Response(
+                        200,
+                        json=_mr_detail_response(changes_count=3, additions=10, deletions=2),
+                    )
+                if iid == 2:
+                    return httpx.Response(
+                        200,
+                        json=_mr_detail_response(changes_count=7, additions=30, deletions=5),
+                    )
+                raise AssertionError(f"Unexpected detail iid: {iid}")
+            return httpx.Response(
+                200,
+                headers={"X-Next-Page": ""},
+                json=[
+                    _mr_payload(mr_id=1001, iid=1),
+                    _mr_payload(mr_id=1002, iid=2),
+                ],
+            )
+
+        connector = _make_connector(monkeypatch, handler)
+        mrs = await _collect(
+            connector.fetch_mergerequests(
+                MergeRequestScope(repository_external_ids=["101"]),
+                _date_window(),
+            )
+        )
+        await connector.close()
+
+        assert len(mrs) == 2
+        by_iid = {mr.iid: mr for mr in mrs}
+
+        mr1 = by_iid[1]
+        assert mr1.changed_files_count == 3
+        assert mr1.additions == 10
+        assert mr1.deletions == 2
+        assert mr1.approval_count == 1
+
+        mr2 = by_iid[2]
+        assert mr2.changed_files_count == 7
+        assert mr2.additions == 30
+        assert mr2.deletions == 5
+        assert mr2.approval_count == 2
+
+    asyncio.run(run())
+
+
+# ---------------------------------------------------------------------------
 # Pagination
 # ---------------------------------------------------------------------------
 

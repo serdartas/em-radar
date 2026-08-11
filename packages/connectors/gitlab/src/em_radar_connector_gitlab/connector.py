@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from datetime import datetime, timezone
 from typing import ClassVar, cast
@@ -271,6 +272,24 @@ class GitLabConnector:
             if window.start is not None:
                 params["updated_after"] = _format_iso_datetime(window.start)
 
+        # Cap concurrent enrichment requests to avoid triggering GitLab rate limits on full pages.
+        # Created per method call so it does not bleed across concurrent invocations.
+        sem = asyncio.Semaphore(10)
+
+        async def _enrich(
+            payload: Mapping[str, object],
+            is_draft: bool,
+        ) -> tuple[Mapping[str, object], bool, tuple[int | None, int | None, int | None], int]:
+            iid = _required_positive_int(payload, "iid")
+            # Issue 2: diff stats are absent from the list endpoint; fetch them separately.
+            # Both fetches are independent — run them concurrently, under the shared semaphore.
+            async with sem:
+                diff_stats, approval_count = await asyncio.gather(
+                    self._resolve_diff_stats(project_id, iid, payload),
+                    self._fetch_approval_count(project_id, iid),
+                )
+            return payload, is_draft, diff_stats, approval_count
+
         page = 1
         while True:
             payloads, next_page = await self._request_json_list_page(
@@ -278,19 +297,21 @@ class GitLabConnector:
                 params={**params, "page": page},
             )
 
+            # Issue 4: read state first so the draft heuristic can gate on it.
+            # Filter before enrichment so skipped MRs never trigger extra network calls.
+            accepted: list[tuple[Mapping[str, object], bool]] = []
             for payload in payloads:
-                # Issue 4: read state first so the draft heuristic can gate on it.
                 gl_state = _optional_str(payload, "state")
                 is_draft = _mr_is_draft(payload, gl_state)
                 if not scope.include_drafts and is_draft:
                     continue
                 if gl_state == "closed" and not scope.include_closed_unmerged:
                     continue
+                accepted.append((payload, is_draft))
 
-                iid = _required_positive_int(payload, "iid")
-                approval_count = await self._fetch_approval_count(project_id, iid)
-                # Issue 2: diff stats are absent from the list endpoint; fetch them separately.
-                diff_stats = await self._resolve_diff_stats(project_id, iid, payload)
+            # Enrich all accepted MRs in the page concurrently, then yield them in order.
+            results = await asyncio.gather(*[_enrich(p, d) for p, d in accepted])
+            for payload, is_draft, diff_stats, approval_count in results:
                 yield _mergerequest_from_payload(
                     payload, project_id, is_draft, approval_count, diff_stats
                 )
