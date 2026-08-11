@@ -544,21 +544,13 @@ class GitLabConnector:
                 reviewer_id = _stable_id("user", str(_required_positive_int(user, "id")))
                 state = _optional_str(reviewer_payload, "state")
                 if state == "unreviewed":
-                    # Only emit requested when the reviewer has not yet acted.
+                    # Snapshot-derived: this row reflects the API state at fetch time.
+                    # A later decision row (APPROVED, CHANGES_REQUESTED, etc.) sourced from
+                    # note history will supersede it during signal evaluation.
                     yield Review(
                         mergerequest_id=mr_id,
                         reviewer_id=reviewer_id,
                         decision=ReviewDecision.REQUESTED,
-                        submitted_at=None,
-                    )
-                elif state == "reviewed":
-                    # Reviewer left comments without approving or requesting changes.
-                    # created_at is the reviewer assignment time, not the comment time, so
-                    # submitted_at is always None — no reliable timestamp is available here.
-                    yield Review(
-                        mergerequest_id=mr_id,
-                        reviewer_id=reviewer_id,
-                        decision=ReviewDecision.COMMENTED,
                         submitted_at=None,
                     )
             if next_page is None:
