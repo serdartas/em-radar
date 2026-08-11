@@ -56,6 +56,10 @@ _REVIEW_NOTE_PATTERNS: tuple[tuple[str, ReviewDecision], ...] = (
     ("requested changes", ReviewDecision.CHANGES_REQUESTED),
 )
 
+_REVIEWER_ACTED_STATES: frozenset[str] = frozenset(
+    {"approved", "requested_changes", "unapproved", "reviewed"}
+)
+
 _PIPELINE_STATUS_MAP: dict[str, PipelineStatus] = {
     "success": PipelineStatus.SUCCESS,
     "passed": PipelineStatus.SUCCESS,
@@ -543,8 +547,10 @@ class GitLabConnector:
                 user = _required_mapping(reviewer_payload, "user")
                 reviewer_id = _stable_id("user", str(_required_positive_int(user, "id")))
                 state = _optional_str(reviewer_payload, "state")
-                if state == "unreviewed":
+                if state not in _REVIEWER_ACTED_STATES:
                     # Snapshot-derived: this row reflects the API state at fetch time.
+                    # Covers "unreviewed", "review_started", "attention_requested", and any
+                    # future non-terminal states GitLab may add.
                     # A later decision row (APPROVED, CHANGES_REQUESTED, etc.) sourced from
                     # note history will supersede it during signal evaluation.
                     yield Review(

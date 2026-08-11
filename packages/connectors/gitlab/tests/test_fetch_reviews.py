@@ -512,6 +512,61 @@ def test_fetch_reviews_acted_reviewer_does_not_produce_requested_row(
     asyncio.run(run())
 
 
+def test_fetch_reviews_review_started_produces_requested_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A reviewer with state='review_started' (non-terminal) produces a REQUESTED row."""
+
+    async def run() -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            path = request.url.path
+            if path.endswith("/merge_requests/2001"):
+                return httpx.Response(200, json=_mr_global_payload())
+            if "/notes" in path:
+                return _notes_response([])
+            if "/reviewers" in path:
+                return _reviewers_response(
+                    [_reviewer_payload(reviewer_id=99, state="review_started")]
+                )
+            raise AssertionError(f"unexpected path: {path}")
+
+        connector = _make_connector(monkeypatch, handler)
+        reviews = await _collect(connector.fetch_reviews(["2001"]))
+        await connector.close()
+
+        assert len(reviews) == 1
+        assert reviews[0].decision is ReviewDecision.REQUESTED
+        assert reviews[0].submitted_at is None
+        assert reviews[0].reviewer_id == _stable_id("user", "99")
+
+    asyncio.run(run())
+
+
+def test_fetch_reviews_reviewed_state_yields_no_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression guard: state='reviewed' is a terminal/acted state and yields zero rows."""
+
+    async def run() -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            path = request.url.path
+            if path.endswith("/merge_requests/2001"):
+                return httpx.Response(200, json=_mr_global_payload())
+            if "/notes" in path:
+                return _notes_response([])
+            if "/reviewers" in path:
+                return _reviewers_response([_reviewer_payload(reviewer_id=99, state="reviewed")])
+            raise AssertionError(f"unexpected path: {path}")
+
+        connector = _make_connector(monkeypatch, handler)
+        reviews = await _collect(connector.fetch_reviews(["2001"]))
+        await connector.close()
+
+        assert reviews == []
+
+    asyncio.run(run())
+
+
 # ---------------------------------------------------------------------------
 # Pagination of reviewer requests (fix #4)
 # ---------------------------------------------------------------------------
