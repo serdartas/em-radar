@@ -8,6 +8,7 @@ from em_radar_core.models import (
     Confidence,
     EntityType,
     EvaluationContext,
+    MergeRequest,
     Severity,
     SignalDefinition,
     SignalFinding,
@@ -139,6 +140,10 @@ def evaluate_signal_definition(
     # report_settings.severity already holds the fully resolved value; the evaluator always
     # reads from that single canonical field via resolve_severity.
     severity = resolve_severity(definition.report_settings.severity)
+
+    if definition.entity_type == "merge_request":
+        return _evaluate_mr_signal(definition, data, ctx, severity)
+
     findings: list[SignalFinding] = []
     for scope in scopes:
         for workitem in _workitems_for_scope(data, scope):
@@ -170,6 +175,37 @@ def evaluate_signal_definition(
                     created_at=ctx.now,
                 )
             )
+    return findings
+
+
+def _evaluate_mr_signal(
+    definition: SignalDefinition,
+    data: SignalData,
+    ctx: EvaluationContext,
+    severity: Severity,
+) -> list[SignalFinding]:
+    """Evaluate a merge_request entity signal over all MergeRequest entities in the data."""
+    findings: list[SignalFinding] = []
+    for mr in data.mergerequests:
+        result = _evaluate_mr_group(definition.expression, mr, data, ctx)
+        if not result.matched:
+            continue
+        findings.append(
+            SignalFinding(
+                report_id=data.report_id,
+                signal_id=str(definition.id),
+                signal_name=definition.name,
+                severity=severity,
+                confidence=Confidence.HIGH,
+                entity_type=EntityType.MERGEREQUEST,
+                entity_id=mr.id,
+                title=f"!{mr.iid} - {mr.title}",
+                reason=result.reason,
+                evidence=result.evidence,
+                source_link=mr.source_url,
+                created_at=ctx.now,
+            )
+        )
     return findings
 
 
@@ -351,6 +387,98 @@ def _field_value(
     raise ExpressionValidationError(f"unsupported field: {field_key}")
 
 
+def _evaluate_mr_group(
+    expression: JsonObject,
+    mr: MergeRequest,
+    data: SignalData,
+    ctx: EvaluationContext,
+) -> ConditionMatch:
+    if expression.get("type") != "group":
+        return _evaluate_mr_condition(expression, mr, data, ctx)
+    conditions = [item for item in expression["conditions"] if isinstance(item, dict)]
+    matches = [_evaluate_mr_group(condition, mr, data, ctx) for condition in conditions]
+    operator = expression["operator"]
+    matched = (
+        all(match.matched for match in matches)
+        if operator == "all"
+        else any(match.matched for match in matches)
+    )
+    active = [match for match in matches if match.matched]
+    if not matched and operator == "all":
+        active = [match for match in matches if not match.matched]
+    return ConditionMatch(
+        matched=matched,
+        reason=(" and " if operator == "all" else " or ").join(match.reason for match in active),
+        evidence={key: value for match in active for key, value in match.evidence.items()},
+    )
+
+
+def _evaluate_mr_condition(
+    condition: JsonObject,
+    mr: MergeRequest,
+    data: SignalData,
+    ctx: EvaluationContext,
+) -> ConditionMatch:
+    field_key = str(condition["field"])
+    operator = str(condition["operator"])
+    expected = condition.get("value")
+    observed = _mr_field_value(field_key, mr, data, ctx)
+    matched = _compare(observed, operator, expected)
+    return ConditionMatch(
+        matched=matched,
+        reason=f"{field_key} {operator} {expected} (observed {observed})",
+        evidence={field_key: _json_value(observed)},
+    )
+
+
+def _mr_field_value(
+    field_key: str,
+    mr: MergeRequest,
+    data: SignalData,
+    ctx: EvaluationContext,
+) -> object:
+    if field_key == "state":
+        return mr.state.value
+    if field_key == "is_draft":
+        return mr.is_draft
+    if field_key == "title":
+        return mr.title
+    if field_key == "source_branch":
+        return mr.source_branch
+    if field_key == "target_branch":
+        return mr.target_branch
+    if field_key == "changed_files_count":
+        return mr.changed_files_count
+    if field_key == "pipeline_status":
+        return mr.pipeline_status.value if mr.pipeline_status is not None else None
+    if field_key == "age_since_pipeline_update":
+        return _age_days(ctx.now, mr.pipeline_updated_at)
+    if field_key == "approval_count":
+        return mr.approval_count
+    if field_key == "linked_workitem_keys":
+        return mr.linked_workitem_keys
+    if field_key == "created_at":
+        return mr.created_at
+    if field_key == "updated_at":
+        return mr.updated_at
+    if field_key == "merged_at":
+        return mr.merged_at
+    if field_key == "closed_at":
+        return mr.closed_at
+    if field_key == "age_since_created":
+        return _age_days(ctx.now, mr.created_at)
+    if field_key == "age_since_updated":
+        return _age_days(ctx.now, mr.updated_at)
+    if field_key == "age_since_last_review_activity":
+        submitted = [
+            r.submitted_at
+            for r in data.reviews
+            if r.mergerequest_id == mr.id and r.submitted_at is not None
+        ]
+        return _age_days(ctx.now, max(submitted)) if submitted else None
+    raise ExpressionValidationError(f"unsupported MR field: {field_key}")
+
+
 def _compare(observed: object, operator: str, expected: object) -> bool:
     if operator == "is":
         return observed == expected
@@ -361,8 +489,12 @@ def _compare(observed: object, operator: str, expected: object) -> bool:
     if operator == "is_none_of":
         return observed not in _list(expected)
     if operator == "contains":
+        if isinstance(observed, str) and isinstance(expected, str):
+            return expected in observed
         return expected in _list(observed)
     if operator == "does_not_contain":
+        if isinstance(observed, str) and isinstance(expected, str):
+            return expected not in observed
         return expected not in _list(observed)
     if operator == "contains_any":
         return bool(set(_list(observed)).intersection(_list(expected)))
