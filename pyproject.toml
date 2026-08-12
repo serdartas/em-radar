@@ -44,7 +44,7 @@ where = [
 "packages/config/defaults" = ["packages/config/defaults/default-pack.yaml"]
 
 [tool.pytest.ini_options]
-pythonpath = ["apps/api/src", "apps/api/tests"]
+pythonpath = ["apps/api/src"]
 
 [tool.ruff]
 line-length = 100
