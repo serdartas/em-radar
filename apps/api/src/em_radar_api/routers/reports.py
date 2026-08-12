@@ -6,8 +6,11 @@ from uuid import UUID
 
 from em_radar_connector_jira.connector import JiraConnector
 from em_radar_core.connectors import (
+    ConnectorAuthError,
     ConnectorConfigError,
     ConnectorError,
+    ConnectorRateLimitedError,
+    ConnectorTransientError,
     MergeRequestProvider,
     MergeRequestScope,
     ReviewProvider,
@@ -198,10 +201,19 @@ async def _run_team_report(
     all_definitions = _signal_definitions_for_team(session, team_row)
     board_definitions, code_definitions = _partition_definitions_by_source(all_definitions)
 
+    # Typed connector errors during fetch are non-fatal: the run continues with available data
+    # and records a partial-data note (spec §9-§10, REQ-NF-070).
+    partial_data_notes: list[dict[str, str]] = []
+
     # Fetch board data (project, board, sprints, workitems, transitions) when board scope present.
     board_data: _BoardFetchResult | None = None
     if board_scope is not None:
-        board_data = await _fetch_board_data(session, team, board_scope, started_at)
+        try:
+            board_data = await _fetch_board_data(session, team, board_scope, started_at)
+        except (ConnectorRateLimitedError, ConnectorTransientError, ConnectorAuthError) as error:
+            partial_data_notes.append(
+                {"source": "board", "reason": f"board data unavailable: {type(error).__name__}"}
+            )
 
     # Derive evaluation window from the board, or fall back to a 14-day date range for
     # code-only teams.  Full working-mode window derivation for all source combinations
@@ -220,7 +232,12 @@ async def _run_team_report(
     code_data: _CodeFetchResult | None = None
     if has_code_source and team_row.code_connection_id is not None:
         mr_window = _code_fetch_window(window, board_data.sprints if board_data else [], started_at)
-        code_data = await _fetch_code_data(session, team_row.code_connection_id, mr_window)
+        try:
+            code_data = await _fetch_code_data(session, team_row.code_connection_id, mr_window)
+        except (ConnectorRateLimitedError, ConnectorTransientError, ConnectorAuthError) as error:
+            partial_data_notes.append(
+                {"source": "code", "reason": f"code data unavailable: {type(error).__name__}"}
+            )
 
     board_workitems = board_data.workitems if board_data else []
     board_transitions = board_data.transitions if board_data else []
@@ -271,7 +288,7 @@ async def _run_team_report(
         ReportTable(
             evaluation_window_id=window.id,
             signal_pack_snapshot=_team_signal_pack_snapshot(
-                team_row, all_definitions, skipped_signals
+                team_row, all_definitions, skipped_signals, partial_data_notes
             ),
             status=ReportStatus.PENDING,
             started_at=started_at,
@@ -386,6 +403,9 @@ async def _fetch_board_data(
             if isinstance(connector, TransitionProvider)
             else []
         )
+    except (ConnectorRateLimitedError, ConnectorTransientError, ConnectorAuthError):
+        # Partial-data errors propagate to _run_team_report for graceful handling.
+        raise
     except ConnectorError as error:
         raise HTTPException(status_code=502, detail=str(error)) from error
     finally:
@@ -438,6 +458,9 @@ async def _fetch_code_data(
             if isinstance(code_connector, ReviewProvider)
             else []
         )
+    except (ConnectorRateLimitedError, ConnectorTransientError, ConnectorAuthError):
+        # Partial-data errors propagate to _run_team_report for graceful handling.
+        raise
     except ConnectorError as error:
         raise HTTPException(status_code=502, detail=str(error)) from error
     finally:
@@ -601,6 +624,7 @@ def _team_signal_pack_snapshot(
     team_row: TeamProfileTable,
     definitions: Sequence[SignalDefinition],
     skipped_signals: Sequence[dict[str, object]] = (),
+    partial_data_notes: Sequence[dict[str, str]] = (),
 ) -> dict[str, object]:
     return {
         "schema_id": "emradar.dev/v1",
@@ -618,6 +642,7 @@ def _team_signal_pack_snapshot(
             for definition in definitions
         ],
         "skipped_signals": list(skipped_signals),
+        "partial_data_notes": list(partial_data_notes),
     }
 
 
