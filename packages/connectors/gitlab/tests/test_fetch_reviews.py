@@ -415,7 +415,9 @@ def test_fetch_reviews_iterates_multiple_mr_ids(monkeypatch: pytest.MonkeyPatch)
             raise AssertionError(f"unexpected path: {path}")
 
         connector = _make_connector(monkeypatch, handler)
-        reviews = await _collect(connector.fetch_reviews(["gitlab.example.com/2001", "gitlab.example.com/3001"]))
+        reviews = await _collect(
+            connector.fetch_reviews(["gitlab.example.com/2001", "gitlab.example.com/3001"])
+        )
         await connector.close()
 
         assert len(reviews) == 2
