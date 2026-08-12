@@ -56,6 +56,10 @@ _FIELD_CONNECTOR_CAPABILITY_MAP: dict[str, tuple[str, str]] = {
         "provides_transitions",
         "requires status-transition history from the connector",
     ),
+    "sprint_scope_added_pct": (
+        "provides_transitions",
+        "requires status-transition history from the connector",
+    ),
 }
 
 
@@ -305,16 +309,29 @@ def _sprint_scope_added_pct(sprint: Sprint, data: SignalData) -> float | None:
     sprint_items = [wi for wi in data.workitems if wi.current_sprint_id == sprint.id]
     if not sprint_items:
         return None
+    # Compute first-seen time for each item: min(all its transitions, updated_at, created_at).
+    # Items whose first-seen time is before sprint start are "original"; the rest are "added".
     original = sum(
-        1
-        for wi in sprint_items
-        for t in data.transitions
-        if t.entity_id == wi.id and t.occurred_at <= sprint.start_date
+        1 for wi in sprint_items if _first_seen_in_sprint(wi, sprint, data) == "original"
     )
     added = len(sprint_items) - original
     if original == 0:
         return None
     return round(added / original * 100.0, 2)
+
+
+def _first_seen_in_sprint(wi: WorkItem, sprint: Sprint, data: SignalData) -> str:
+    """Return 'original' if the item was in the sprint at sprint start, else 'added'."""
+    candidates = [t.occurred_at for t in data.transitions if t.entity_id == wi.id]
+    if wi.updated_at is not None:
+        candidates.append(wi.updated_at)
+    if not candidates:
+        first_seen = wi.created_at
+    else:
+        first_seen = min(candidates)
+    if first_seen is None or first_seen > sprint.start_date:
+        return "added"
+    return "original"
 
 
 def preview_signal_definition(

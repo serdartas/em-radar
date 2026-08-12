@@ -71,13 +71,13 @@ def test_m2_m3_parameter_overrides_have_equivalent_expression_values() -> None:
 
 def test_all_eight_jira_templates_preserve_evidence_contracts() -> None:
     expected = {
-        "stale-in-progress-work-item": ("days_idle", "last_updated_at", "threshold"),
-        "blocked-without-update": ("days_blocked_idle", "last_updated_at", "threshold"),
-        "story-without-acceptance-criteria": ("workitem_type", "has_description"),
-        "story-without-parent-epic": ("workitem_type",),
-        "epic-too-broad": ("child_count", "threshold"),
-        "epic-without-measurable-description": ("description_length", "threshold"),
-        "repeated-carry-over": ("sprint_count", "sprint_names"),
+        "stale-in-progress-work-item": ("status_category", "age_in_current_status"),
+        "blocked-without-update": ("status_category", "age_since_updated"),
+        "story-without-acceptance-criteria": ("issue_type", "acceptance_criteria"),
+        "story-without-parent-epic": ("issue_type", "parent_id"),
+        "epic-too-broad": ("issue_type", "child_count"),
+        "epic-without-measurable-description": ("issue_type", "description_length"),
+        "repeated-carry-over": ("status_category", "sprint_count"),
         "sprint-scope-churn": ("sprint_scope_added_pct",),
     }
 

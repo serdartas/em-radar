@@ -38,7 +38,7 @@ JIRA_SIGNAL_TEMPLATES: tuple[JiraSignalTemplate, ...] = (
             ],
         },
         report_settings=ReportSettings(severity="warning", category="flow"),
-        evidence_shape=("days_idle", "last_updated_at", "threshold"),
+        evidence_shape=("status_category", "age_in_current_status"),
     ),
     JiraSignalTemplate(
         key="blocked-without-update",
@@ -57,7 +57,7 @@ JIRA_SIGNAL_TEMPLATES: tuple[JiraSignalTemplate, ...] = (
             ],
         },
         report_settings=ReportSettings(severity="critical", category="flow"),
-        evidence_shape=("days_blocked_idle", "last_updated_at", "threshold"),
+        evidence_shape=("status_category", "age_since_updated"),
     ),
     JiraSignalTemplate(
         key="story-without-acceptance-criteria",
@@ -72,7 +72,7 @@ JIRA_SIGNAL_TEMPLATES: tuple[JiraSignalTemplate, ...] = (
             ],
         },
         report_settings=ReportSettings(severity="warning", category="quality"),
-        evidence_shape=("workitem_type", "has_description"),
+        evidence_shape=("issue_type", "acceptance_criteria"),
     ),
     JiraSignalTemplate(
         key="story-without-parent-epic",
@@ -87,7 +87,7 @@ JIRA_SIGNAL_TEMPLATES: tuple[JiraSignalTemplate, ...] = (
             ],
         },
         report_settings=ReportSettings(severity="info", category="planning"),
-        evidence_shape=("workitem_type",),
+        evidence_shape=("issue_type", "parent_id"),
     ),
     JiraSignalTemplate(
         key="epic-too-broad",
@@ -102,7 +102,7 @@ JIRA_SIGNAL_TEMPLATES: tuple[JiraSignalTemplate, ...] = (
             ],
         },
         report_settings=ReportSettings(severity="warning", category="planning"),
-        evidence_shape=("child_count", "threshold"),
+        evidence_shape=("issue_type", "child_count"),
     ),
     JiraSignalTemplate(
         key="epic-without-measurable-description",
@@ -117,7 +117,7 @@ JIRA_SIGNAL_TEMPLATES: tuple[JiraSignalTemplate, ...] = (
             ],
         },
         report_settings=ReportSettings(severity="info", category="planning"),
-        evidence_shape=("description_length", "threshold"),
+        evidence_shape=("issue_type", "description_length"),
     ),
     JiraSignalTemplate(
         key="repeated-carry-over",
@@ -133,7 +133,7 @@ JIRA_SIGNAL_TEMPLATES: tuple[JiraSignalTemplate, ...] = (
         },
         report_settings=ReportSettings(severity="warning", category="delivery"),
         required_scope_capabilities=("sprint",),
-        evidence_shape=("sprint_count", "sprint_names"),
+        evidence_shape=("status_category", "sprint_count"),
     ),
     JiraSignalTemplate(
         key="sprint-scope-churn",

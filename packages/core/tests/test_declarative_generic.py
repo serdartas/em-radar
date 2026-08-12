@@ -237,6 +237,81 @@ def test_sprint_scope_churn_fires_via_sprint_entity_expression() -> None:
     assert findings[0].evidence["sprint_scope_added_pct"] == 100.0
 
 
+def test_sprint_scope_churn_multi_transition_item_counted_once() -> None:
+    """An original item with multiple pre-start transitions is counted once, not N times."""
+    s = sprint(name="Sprint 1", start_date=NOW - timedelta(days=7))
+    original = workitem(key="RAD-1", sprint_ids=[s.id], current_sprint_id=s.id)
+    t1 = transition(
+        original.id,
+        occurred_at=NOW - timedelta(days=10),
+        to_status_category=StatusCategory.IN_PROGRESS,
+    )
+    t2 = transition(
+        original.id,
+        occurred_at=NOW - timedelta(days=9),
+        to_status_category=StatusCategory.IN_PROGRESS,
+    )
+    t3 = transition(
+        original.id,
+        occurred_at=NOW - timedelta(days=8),
+        to_status_category=StatusCategory.IN_PROGRESS,
+    )
+    # No added items → original=1, added=0, churn=0% → signal should NOT fire (threshold=20%)
+    data = SignalData(
+        report_id=uuid4(),
+        projects=(project(),),
+        boards=(board(),),
+        sprints=(s,),
+        workitems=(original,),
+        transitions=(t1, t2, t3),
+    )
+    ctx = context(sprint_id=s.id)
+    definition = instantiate_jira_signal_template("sprint-scope-churn")
+
+    findings = evaluate_signal_definition(
+        definition, data, ctx, JiraConnector.describe_signal_schema(), [_sprint_scope()]
+    )
+
+    assert findings == [], (
+        "No churn when all items were in sprint at start; "
+        "multi-transition original item must not be double-counted"
+    )
+
+
+def test_sprint_scope_churn_below_threshold_does_not_fire() -> None:
+    """Churn below the 20% threshold must produce no findings."""
+    s = sprint(name="Sprint 1", start_date=NOW - timedelta(days=7))
+    # 10 original, 1 added → 10% churn < 20%
+    originals = [
+        workitem(key=f"RAD-{i}", sprint_ids=[s.id], current_sprint_id=s.id) for i in range(10)
+    ]
+    added_item = workitem(key="RAD-NEW", sprint_ids=[s.id], current_sprint_id=s.id)
+    transitions = tuple(
+        transition(
+            wi.id,
+            occurred_at=NOW - timedelta(days=8),
+            to_status_category=StatusCategory.IN_PROGRESS,
+        )
+        for wi in originals
+    )
+    data = SignalData(
+        report_id=uuid4(),
+        projects=(project(),),
+        boards=(board(),),
+        sprints=(s,),
+        workitems=tuple([*originals, added_item]),
+        transitions=transitions,
+    )
+    ctx = context(sprint_id=s.id)
+    definition = instantiate_jira_signal_template("sprint-scope-churn")
+
+    findings = evaluate_signal_definition(
+        definition, data, ctx, JiraConnector.describe_signal_schema(), [_sprint_scope()]
+    )
+
+    assert findings == []
+
+
 # ---------------------------------------------------------------------------
 # 3. No template_key == branch in declarative.py
 # ---------------------------------------------------------------------------
