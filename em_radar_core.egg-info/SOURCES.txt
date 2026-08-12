@@ -20,6 +20,8 @@ packages/connectors/gitlab/src/em_radar_connector_gitlab/__init__.py
 packages/connectors/gitlab/src/em_radar_connector_gitlab/connector.py
 packages/connectors/jira/src/em_radar_connector_jira/__init__.py
 packages/connectors/jira/src/em_radar_connector_jira/connector.py
+packages/connectors/src/em_radar_connector_contracts/__init__.py
+packages/connectors/src/em_radar_connector_contracts/plugin.py
 packages/core/src/em_radar_core/__init__.py
 packages/core/src/em_radar_core/connectors.py
 packages/core/src/em_radar_core/http_client.py
