@@ -1,4 +1,8 @@
-import { apiFetch } from "@/lib/api"
+import { apiErrorMessage, apiFetch } from "@/lib/api"
+
+export function connectionErrorMessage(error: unknown): string {
+  return apiErrorMessage(error, "The connection could not be reached. Check the URL and try again.")
+}
 
 export interface SourceConnection {
   id: string
