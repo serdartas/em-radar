@@ -8,9 +8,8 @@ from starlette.responses import Response
 
 from em_radar_api.db import get_session, get_write_session
 from em_radar_api.repositories.signal_config_groups import get_signal_config_group
-from em_radar_api.repositories.signal_configs import list_signal_configs
 from em_radar_api.repositories.signal_definitions import get_signal_definition
-from em_radar_api.signal_pack_export import export_signal_groups_pack, export_signal_pack
+from em_radar_api.signal_pack_export import export_signal_groups_pack
 from em_radar_api.signal_pack_import import (
     SignalPackImportPreview,
     apply_signal_pack_import,
@@ -34,41 +33,31 @@ class SignalPackImportRequest(BaseModel):
 
 @router.get("/signal-pack/export")
 def export_signal_pack_route(
-    mode: Literal["minimal", "full"] = "minimal",
-    export_type: Literal["legacy", "private_backup", "public_template"] = "legacy",
+    export_type: Literal["private_backup", "public_template"] = "private_backup",
     group_ids: list[UUID] = Query(default=[]),
     name: PackName = None,
     session: Session = Depends(get_session),
 ) -> Response:
-    if export_type == "legacy":
-        yaml_text = export_signal_pack(
-            list_signal_configs(session),
-            full=mode == "full",
-            name=name,
-        )
-    else:
-        if not group_ids:
-            raise HTTPException(
-                status_code=422, detail="group_ids is required for this export type"
-            )
-        groups = []
-        for group_id in group_ids:
-            group = get_signal_config_group(session, group_id)
-            if group is None:
-                raise HTTPException(status_code=404, detail="signal config group not found")
-            groups.append(group)
-        definitions_by_id = {
-            signal_id: definition
-            for group in groups
-            for signal_id in group.signal_ids
-            if (definition := get_signal_definition(session, signal_id)) is not None
-        }
-        yaml_text = export_signal_groups_pack(
-            groups,
-            definitions_by_id,
-            export_type=export_type,
-            name=name,
-        )
+    if not group_ids:
+        raise HTTPException(status_code=422, detail="group_ids is required")
+    groups = []
+    for group_id in group_ids:
+        group = get_signal_config_group(session, group_id)
+        if group is None:
+            raise HTTPException(status_code=404, detail="signal config group not found")
+        groups.append(group)
+    definitions_by_id = {
+        signal_id: definition
+        for group in groups
+        for signal_id in group.signal_ids
+        if (definition := get_signal_definition(session, signal_id)) is not None
+    }
+    yaml_text = export_signal_groups_pack(
+        groups,
+        definitions_by_id,
+        export_type=export_type,
+        name=name,
+    )
     return Response(
         content=yaml_text,
         media_type="application/yaml",

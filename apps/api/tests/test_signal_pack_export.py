@@ -1,96 +1,103 @@
-import re
+"""Tests for signal pack export (declarative signal groups path)."""
 
-from fastapi.testclient import TestClient
-from sqlalchemy.orm import sessionmaker
-from sqlmodel import Session
 import yaml
+from fastapi.testclient import TestClient
 
-from em_radar_api.repositories.signal_configs import upsert_signal_config
-from em_radar_api.signal_configs import SignalConfigUpsert
-from em_radar_config import SIGNAL_CATALOG, load_signal_pack
-from em_radar_core.models import Severity
+from em_radar_config import load_signal_pack
 
 
-def test_minimal_export_is_valid_and_omits_untouched_signals(
+def test_export_signal_group_produces_valid_declarative_pack(
     api_client: TestClient,
-    session_factory: sessionmaker[Session],
+    session_factory,
 ) -> None:
-    with session_factory() as session:
-        upsert_signal_config(
-            session,
-            SignalConfigUpsert(
-                signal_id="stale-in-progress-work-item",
-                enabled=False,
-                severity_override=Severity.CRITICAL,
-                params={"days_threshold": 2},
-                scope={"project_keys": ["RAD"]},
-            ),
-        )
-        upsert_signal_config(
-            session,
-            SignalConfigUpsert(signal_id="blocked-without-update", params={"days_threshold": 3}),
-        )
+    """Export a signal group that has at least one signal definition."""
+    # Seed a signal definition and a group.
+    defn_id = api_client.post(
+        "/api/signal-definitions",
+        json={
+            "name": "Export test signal",
+            "entity_type": "issue",
+            "expression": {
+                "type": "group",
+                "operator": "all",
+                "conditions": [
+                    {"field": "status_category", "operator": "is", "value": "in_progress"}
+                ],
+            },
+            "report_settings": {"severity": "warning", "category": "flow"},
+            "enabled": True,
+            "origin": "user_created",
+        },
+    ).json()["id"]
+    group_id = api_client.post(
+        "/api/signal-config-groups",
+        json={"name": "export-test-group", "signal_ids": [defn_id]},
+    ).json()["id"]
 
-    response = api_client.get("/api/signal-pack/export")
+    response = api_client.get(
+        "/api/signal-pack/export",
+        params={"group_ids": [group_id], "export_type": "private_backup"},
+    )
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("application/yaml")
     assert response.headers["content-disposition"] == 'attachment; filename="signal-pack.yaml"'
     pack = load_signal_pack(response.text).pack
-    assert re.fullmatch(r"local-overrides-\d{8}-\d{6}", pack.metadata.name)
-    assert [signal.id for signal in pack.spec.signals] == ["stale-in-progress-work-item"]
-    assert pack.spec.signals[0].enabled is False
-    assert pack.spec.signals[0].severity is Severity.CRITICAL
-    assert pack.spec.signals[0].params == {"days_threshold": 2, "exclude_labels": []}
-    assert pack.spec.signals[0].scope is not None
-    assert pack.spec.signals[0].scope.project_keys == ["RAD"]
+    assert pack.metadata.name == "export-test-group"
+    assert len(pack.spec.signals) == 1
+    assert pack.spec.signals[0].name == "Export test signal"
 
 
-def test_full_export_contains_every_signal_with_effective_values(
+def test_export_requires_group_ids(api_client: TestClient) -> None:
+    response = api_client.get("/api/signal-pack/export")
+
+    assert response.status_code == 422
+
+
+def test_export_name_pattern_validated(api_client: TestClient) -> None:
+    """Invalid pack names (not kebab-case) are rejected by query parameter validation."""
+    response = api_client.get(
+        "/api/signal-pack/export",
+        params={"name": "Not Valid"},
+    )
+
+    assert response.status_code == 422
+
+
+def test_export_has_no_credential_named_keys(
     api_client: TestClient,
-    session_factory: sessionmaker[Session],
+    session_factory,
 ) -> None:
-    with session_factory() as session:
-        upsert_signal_config(
-            session,
-            SignalConfigUpsert(
-                signal_id="stale-in-progress-work-item",
-                severity_override=Severity.CRITICAL,
-                params={"days_threshold": 2},
-            ),
-        )
+    defn_id = api_client.post(
+        "/api/signal-definitions",
+        json={
+            "name": "Cred check signal",
+            "entity_type": "issue",
+            "expression": {
+                "type": "group",
+                "operator": "all",
+                "conditions": [
+                    {"field": "status_category", "operator": "is", "value": "in_progress"}
+                ],
+            },
+            "report_settings": {"severity": "info", "category": "flow"},
+            "enabled": True,
+            "origin": "user_created",
+        },
+    ).json()["id"]
+    group_id = api_client.post(
+        "/api/signal-config-groups",
+        json={"name": "cred-check-group", "signal_ids": [defn_id]},
+    ).json()["id"]
 
     response = api_client.get(
         "/api/signal-pack/export",
-        params={"mode": "full", "name": "current-settings"},
+        params={"group_ids": [group_id]},
     )
-
-    assert response.status_code == 200
-    pack = load_signal_pack(response.text).pack
-    signals = {signal.id: signal for signal in pack.spec.signals}
-    assert pack.metadata.name == "current-settings"
-    assert set(signals) == set(SIGNAL_CATALOG)
-    assert signals["stale-in-progress-work-item"].severity is Severity.CRITICAL
-    assert signals["blocked-without-update"].severity is Severity.CRITICAL
-    assert all(signal.params is not None for signal in signals.values())
-
-
-def test_export_has_no_credential_named_keys_and_omits_field_mappings_by_default(
-    api_client: TestClient,
-) -> None:
-    response = api_client.get("/api/signal-pack/export")
 
     assert response.status_code == 200
     exported = yaml.safe_load(response.text)
-    assert exported["spec"].get("field_mappings") is None
     assert not _credential_keys(exported)
-
-
-def test_export_rejects_invalid_mode_and_name(api_client: TestClient) -> None:
-    assert api_client.get("/api/signal-pack/export", params={"mode": "other"}).status_code == 422
-    assert (
-        api_client.get("/api/signal-pack/export", params={"name": "Not Valid"}).status_code == 422
-    )
 
 
 def _credential_keys(value: object) -> set[str]:

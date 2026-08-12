@@ -56,7 +56,6 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, JsonValue, model_validator
 from sqlmodel import Session, select
 
-from em_radar_api.signal_configs import SignalConfigTable
 
 from em_radar_api.db import get_session, get_write_session
 from em_radar_api.connector_registry import create_connector, get_connector_capabilities
@@ -852,20 +851,11 @@ def _placeholder_code_users(
 
 
 def _workitem_key_pattern(session: Session) -> str:
-    """Return the configured work-item key regex pattern, falling back to the default.
+    """Return the configured work-item key regex pattern.
 
-    The pattern is stored in the params of the 'mergerequest-without-linked-workitem' signal
-    config so that the same pattern governs both key extraction and the detection signal.
+    Pattern configuration moves to declarative signal expressions in M5-13.
     """
-    config = session.exec(
-        select(SignalConfigTable).where(
-            SignalConfigTable.signal_id == "mergerequest-without-linked-workitem"
-        )
-    ).first()
-    if config is not None:
-        pattern = config.params.get("workitem_key_pattern")
-        if isinstance(pattern, str) and pattern:
-            return pattern
+    del session
     return DEFAULT_WORKITEM_KEY_PATTERN
 
 

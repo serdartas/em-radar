@@ -9,13 +9,10 @@ from em_radar_core.evaluation.declarative import (
     resolve_severity,
     validate_expression,
 )
-from em_radar_core.evaluation.evaluator import SignalConfig, SignalEvaluator
 
 __all__ = [
     "ExpressionValidationError",
     "ScopeDescriptor",
-    "SignalConfig",
-    "SignalEvaluator",
     "SignalSkipNote",
     "check_capability_gate",
     "check_window_gate",
