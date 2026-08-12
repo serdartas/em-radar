@@ -44,12 +44,14 @@ class ConfiguredConnector:
         pass
 
 
-def test_get_connectors_does_not_include_demo(api_client) -> None:
+def test_get_connectors_includes_registered_connectors(api_client) -> None:
     response = api_client.get("/api/connectors")
 
     assert response.status_code == 200
     names = [connector["name"] for connector in response.json()]
-    assert "demo" not in names
+    assert "jira" in names
+    assert "gitlab" in names
+    assert "demo" in names
 
 
 def test_registry_flags_secrets_and_factory_validates_config(
