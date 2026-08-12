@@ -14,6 +14,7 @@ from em_radar_normalizer import (
     extract_workitem_keys,
     index_workitems_by_key,
     link_merge_request,
+    populate_merge_request_links,
     resolve_workitem_ids,
 )
 
@@ -102,6 +103,24 @@ def test_custom_pattern_is_respected() -> None:
     ]
 
 
+def test_custom_pattern_with_capturing_group_returns_whole_keys() -> None:
+    assert extract_workitem_keys(
+        "Fixes ABC-123 and DEF-4",
+        None,
+        "feature/misc",
+        pattern=r"([A-Z]+-\d+)",
+    ) == ["ABC-123", "DEF-4"]
+
+
+def test_custom_pattern_with_alternation_binds_whole_keys() -> None:
+    assert extract_workitem_keys(
+        "ABC-1 then DEF-2 then GHI-3",
+        None,
+        "feature/misc",
+        pattern=r"ABC-\d+|DEF-\d+",
+    ) == ["ABC-1", "DEF-2"]
+
+
 def test_default_pattern_constant() -> None:
     assert DEFAULT_WORKITEM_KEY_PATTERN == r"[A-Z]+-\d+"
 
@@ -143,3 +162,19 @@ def test_link_merge_request_returns_keys_and_ids() -> None:
     assert ids == [abc.id]
     assert mr.linked_workitem_keys == []
     assert mr.linked_workitem_ids == []
+
+
+def test_populate_merge_request_links_writes_onto_mr() -> None:
+    abc = make_workitem("ABC-1")
+    defg = make_workitem("DEF-2")
+    mr = make_merge_request(
+        title="Implement ABC-1",
+        description="Depends on DEF-2 and MISSING-9",
+        source_branch="feature/GHI-3-impl",
+    )
+
+    result = populate_merge_request_links(mr, [abc, defg])
+
+    assert result is mr
+    assert mr.linked_workitem_keys == ["ABC-1", "DEF-2", "MISSING-9", "GHI-3"]
+    assert mr.linked_workitem_ids == [abc.id, defg.id]

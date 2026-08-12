@@ -19,7 +19,7 @@ def extract_workitem_keys(
     ``source_branch`` so the result is deterministic. ``pattern`` matches whole keys as
     standalone tokens (word-bounded) to avoid partial captures inside larger identifiers.
     """
-    compiled = re.compile(rf"\b{pattern}\b")
+    compiled = re.compile(rf"\b(?:{pattern})\b")
     seen: dict[str, None] = {}
     for field in (title, description or "", source_branch):
         for match in compiled.findall(field):
@@ -60,3 +60,15 @@ def link_merge_request(
     )
     ids = resolve_workitem_ids(keys, index_workitems_by_key(workitems))
     return keys, ids
+
+
+def populate_merge_request_links(
+    merge_request: MergeRequest,
+    workitems: Iterable[WorkItem],
+    pattern: str = DEFAULT_WORKITEM_KEY_PATTERN,
+) -> MergeRequest:
+    """Extract and resolve links, writing them onto ``merge_request`` in place."""
+    keys, ids = link_merge_request(merge_request, workitems, pattern)
+    merge_request.linked_workitem_keys = keys
+    merge_request.linked_workitem_ids = ids
+    return merge_request
