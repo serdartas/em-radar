@@ -109,12 +109,25 @@ def test_jira_template_expressions_match_positive_and_negative_fixtures() -> Non
         carried,
         not_carried,
     )
+    # repeated-carry-over requires a sprint window (M5-05); pass a minimal sprint to set one.
+    carry_sprint = Sprint(
+        source=Source.JIRA,
+        external_id="sprint-carry",
+        board_id=_board().id,
+        name="Sprint 1",
+        state=SprintState.ACTIVE,
+    )
 
     assert _matched_keys("story-without-acceptance-criteria", workitems) == {"RAD-18"}
     assert _matched_keys("story-without-parent-epic", workitems) == {"RAD-20"}
     assert _matched_keys("epic-too-broad", workitems) == {"RAD-1"}
     assert _matched_keys("epic-without-measurable-description", workitems) == {"RAD-1"}
-    assert _matched_keys("repeated-carry-over", workitems, capabilities=("sprint",)) == {"RAD-23"}
+    assert _matched_keys(
+        "repeated-carry-over",
+        workitems,
+        capabilities=("sprint",),
+        sprints=(carry_sprint,),
+    ) == {"RAD-23"}
     assert set(_findings("story-without-acceptance-criteria", tuple(workitems))[0].evidence) >= {
         "scope_id",
         "workitem_type",
@@ -135,7 +148,12 @@ def test_jira_template_expressions_match_positive_and_negative_fixtures() -> Non
         "threshold",
     }
     assert set(
-        _findings("repeated-carry-over", tuple(workitems), capabilities=("sprint",))[0].evidence
+        _findings(
+            "repeated-carry-over",
+            tuple(workitems),
+            capabilities=("sprint",),
+            sprints=(carry_sprint,),
+        )[0].evidence
     ) >= {"scope_id", "sprint_count", "sprint_names"}
     stale = _workitem("RAD-25", updated_at=NOW - timedelta(days=10))
     stale_findings = _findings(
@@ -250,10 +268,13 @@ def _matched_keys(
     workitems: tuple[WorkItem, ...] | list[WorkItem],
     *,
     capabilities: tuple[str, ...] = (),
+    sprints: tuple[Sprint, ...] = (),
 ) -> set[str]:
     return {
         finding.title.split(" ", 1)[0].split(" - ", 1)[0]
-        for finding in _findings(template_key, tuple(workitems), capabilities=capabilities)
+        for finding in _findings(
+            template_key, tuple(workitems), capabilities=capabilities, sprints=sprints
+        )
     }
 
 

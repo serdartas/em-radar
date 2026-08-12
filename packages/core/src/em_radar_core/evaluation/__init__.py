@@ -1,6 +1,8 @@
 from em_radar_core.evaluation.declarative import (
     ExpressionValidationError,
     ScopeDescriptor,
+    SignalSkipNote,
+    check_window_gate,
     evaluate_signal_definition,
     preview_signal_definition,
     resolve_severity,
@@ -13,6 +15,8 @@ __all__ = [
     "ScopeDescriptor",
     "SignalConfig",
     "SignalEvaluator",
+    "SignalSkipNote",
+    "check_window_gate",
     "evaluate_signal_definition",
     "preview_signal_definition",
     "resolve_severity",
