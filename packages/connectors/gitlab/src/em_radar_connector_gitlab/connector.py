@@ -32,6 +32,8 @@ from em_radar_core.models import (
     MergeRequestState,
     PipelineStatus,
     Repository,
+    Review,
+    ReviewDecision,
     Source,
     WindowType,
 )
@@ -43,6 +45,21 @@ PAGE_SIZE = 100
 _NAMESPACE = UUID("c7d8a5f1-3b4e-4f2a-8c9d-1e0f7a6b5c3d")
 
 # Issue 6: module-level constant so the dict is built once, not per MR.
+# Maps the beginning of a GitLab system-note body to a canonical review decision.
+# Matched with str.startswith so minor suffix variations (e.g. punctuation) are tolerated.
+_REVIEW_NOTE_PATTERNS: tuple[tuple[str, ReviewDecision], ...] = (
+    ("approved this merge request", ReviewDecision.APPROVED),
+    ("unapproved this merge request", ReviewDecision.DISMISSED),
+    # Notes are historical and ordered; reviewer state is a snapshot of current state only.
+    # Sourcing CHANGES_REQUESTED from notes preserves history when a reviewer subsequently
+    # approves (their state becomes "approved", losing the prior "requested_changes" event).
+    ("requested changes", ReviewDecision.CHANGES_REQUESTED),
+)
+
+_REVIEWER_ACTED_STATES: frozenset[str] = frozenset(
+    {"approved", "requested_changes", "unapproved", "reviewed"}
+)
+
 _PIPELINE_STATUS_MAP: dict[str, PipelineStatus] = {
     "success": PipelineStatus.SUCCESS,
     "passed": PipelineStatus.SUCCESS,
@@ -457,6 +474,97 @@ class GitLabConnector:
                 raise ConnectorDataError("GitLab project pagination did not advance")
             page = next_page
 
+    async def fetch_reviews(
+        self,
+        mergerequest_external_ids: list[str],
+    ) -> AsyncIterator[Review]:
+        for mr_external_id in mergerequest_external_ids:
+            async for review in self._fetch_reviews_for_mr(mr_external_id):
+                yield review
+
+    async def _fetch_reviews_for_mr(self, mr_external_id: str) -> AsyncIterator[Review]:
+        # Resolve project_id and iid from the global MR id.
+        # GitLab exposes a non-project-scoped endpoint for this since 13.5.
+        mr_payload = await self._request_json(f"api/v4/merge_requests/{mr_external_id}")
+        project_id = str(_required_positive_int(mr_payload, "project_id"))
+        iid = _required_positive_int(mr_payload, "iid")
+        mr_id = _stable_id("mergerequest", mr_external_id)
+
+        # Activity rows first, in ascending chronological order so approve→unapprove is preserved.
+        async for review in self._fetch_review_activity(project_id, iid, mr_id):
+            yield review
+
+        # Requested rows last — these carry null submitted_at and have no position in the timeline.
+        async for review in self._fetch_reviewer_requests(project_id, iid, mr_id):
+            yield review
+
+    async def _fetch_review_activity(
+        self,
+        project_id: str,
+        iid: int,
+        mr_id: UUID,
+    ) -> AsyncIterator[Review]:
+        page = 1
+        while True:
+            payloads, next_page = await self._request_json_list_page(
+                f"api/v4/projects/{project_id}/merge_requests/{iid}/notes",
+                params={
+                    "page": page,
+                    "per_page": PAGE_SIZE,
+                    "sort": "asc",
+                    "order_by": "created_at",
+                },
+            )
+            for note_payload in payloads:
+                review = _review_from_note(note_payload, mr_id)
+                if review is not None:
+                    yield review
+            if next_page is None:
+                return
+            if next_page <= page:
+                raise ConnectorDataError("GitLab notes pagination did not advance")
+            page = next_page
+
+    async def _fetch_reviewer_requests(
+        self,
+        project_id: str,
+        iid: int,
+        mr_id: UUID,
+    ) -> AsyncIterator[Review]:
+        page = 1
+        while True:
+            try:
+                payloads, next_page = await self._request_json_list_page(
+                    f"api/v4/projects/{project_id}/merge_requests/{iid}/reviewers",
+                    params={"page": page, "per_page": PAGE_SIZE},
+                )
+            except (ConnectorNotFoundError, ConnectorAuthError):
+                # Reviewers API unavailable on some self-managed editions or token scopes.
+                return
+            for reviewer_payload in payloads:
+                # GitLab reviewers endpoint returns MergeRequestReviewer objects:
+                # {"user": {"id": ..., ...}, "state": "unreviewed"|"reviewed"|..., "created_at": ...}
+                user = _required_mapping(reviewer_payload, "user")
+                reviewer_id = _stable_id("user", str(_required_positive_int(user, "id")))
+                state = _optional_str(reviewer_payload, "state")
+                if state not in _REVIEWER_ACTED_STATES:
+                    # Snapshot-derived: this row reflects the API state at fetch time.
+                    # Covers "unreviewed", "review_started", "attention_requested", and any
+                    # future non-terminal states GitLab may add.
+                    # A later decision row (APPROVED, CHANGES_REQUESTED, etc.) sourced from
+                    # note history will supersede it during signal evaluation.
+                    yield Review(
+                        mergerequest_id=mr_id,
+                        reviewer_id=reviewer_id,
+                        decision=ReviewDecision.REQUESTED,
+                        submitted_at=None,
+                    )
+            if next_page is None:
+                return
+            if next_page <= page:
+                raise ConnectorDataError("GitLab reviewers pagination did not advance")
+            page = next_page
+
     async def close(self) -> None:
         await self._client.aclose()
 
@@ -803,6 +911,29 @@ def _required_bool(payload: Mapping[str, object], key: str) -> bool:
     if not isinstance(value, bool):
         raise ConnectorDataError(f"GitLab payload contained an invalid {key}")
     return value
+
+
+def _review_from_note(note_payload: Mapping[str, object], mr_id: UUID) -> Review | None:
+    """Return a Review from a GitLab system note, or None if the note is not a review event."""
+    if note_payload.get("system") is not True:
+        return None
+    body = (_optional_str(note_payload, "body") or "").lower()
+    decision: ReviewDecision | None = None
+    for pattern, dec in _REVIEW_NOTE_PATTERNS:
+        if body.startswith(pattern):
+            decision = dec
+            break
+    if decision is None:
+        return None
+    author = _required_mapping(note_payload, "author")
+    reviewer_id = _stable_id("user", str(_required_positive_int(author, "id")))
+    submitted_at = _required_datetime(note_payload, "created_at")
+    return Review(
+        mergerequest_id=mr_id,
+        reviewer_id=reviewer_id,
+        decision=decision,
+        submitted_at=submitted_at,
+    )
 
 
 def _error_for_status(
