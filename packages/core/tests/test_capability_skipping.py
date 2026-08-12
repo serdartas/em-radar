@@ -87,7 +87,7 @@ def test_history_signal_skipped_when_transitions_unavailable() -> None:
 
     assert isinstance(note, SignalSkipNote)
     assert note.signal_id == str(definition.id)
-    assert "provides_transitions" in note.reason
+    assert "transition" in note.reason
 
 
 def test_history_signal_not_skipped_when_transitions_available() -> None:

@@ -48,11 +48,14 @@ class SignalSkipNote:
 
 _SPRINT_ONLY_TEMPLATES: frozenset[str] = frozenset({"repeated-carry-over", "sprint-scope-churn"})
 
-# Maps expression field keys to the connector Capabilities attribute they require.
+# Maps expression field keys to (Capabilities attribute, human-readable reason).
 # When a signal's expression uses a field in this map and the connector reports the
-# corresponding capability as False, the signal is skipped with a note.
-_FIELD_CONNECTOR_CAPABILITY_MAP: dict[str, str] = {
-    "age_in_current_status": "provides_transitions",
+# corresponding capability as False, the signal is skipped with the given reason.
+_FIELD_CONNECTOR_CAPABILITY_MAP: dict[str, tuple[str, str]] = {
+    "age_in_current_status": (
+        "provides_transitions",
+        "requires status-transition history from the connector",
+    ),
 }
 
 
@@ -69,12 +72,11 @@ def check_capability_gate(
         field_key = leaf.get("field")
         if not isinstance(field_key, str):
             continue
-        required_attr = _FIELD_CONNECTOR_CAPABILITY_MAP.get(field_key)
-        if required_attr is not None and not getattr(capabilities, required_attr):
-            return SignalSkipNote(
-                signal_id=str(definition.id),
-                reason=f"requires {required_attr}",
-            )
+        cap_entry = _FIELD_CONNECTOR_CAPABILITY_MAP.get(field_key)
+        if cap_entry is not None:
+            cap_attr, reason = cap_entry
+            if not getattr(capabilities, cap_attr):
+                return SignalSkipNote(signal_id=str(definition.id), reason=reason)
     return None
 
 
