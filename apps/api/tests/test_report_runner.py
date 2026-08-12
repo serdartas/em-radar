@@ -14,11 +14,14 @@ from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.orm import sessionmaker
+from sqlmodel import Session, select
 
 from em_radar_core.connectors import Capabilities, ConnectionTestResult, MergeRequestScope
 from em_radar_core.models import (
     EvaluationWindow,
     MergeRequest,
+    MergeRequestState,
     Repository,
     Source,
     Sprint,
@@ -26,6 +29,7 @@ from em_radar_core.models import (
     WindowType,
 )
 
+from em_radar_api.tables import MergeRequestTable, WorkItemTable
 from test_source_connection_routes import (
     FrozenReportDateTime,
     JiraTestConnector,
@@ -214,6 +218,78 @@ def test_sprint_without_dates_uses_fallback_lookback_window(
     assert mr_window.window_type == WindowType.DATE_RANGE
     assert mr_window.start == _REPORT_STARTED_AT - timedelta(days=14)
     assert mr_window.end == _REPORT_STARTED_AT
+
+
+class _LinkingMRConnector(_RecordingMRConnector):
+    """GitLab fake that yields one MR referencing a matched and an unmatched work-item key."""
+
+    display_name: ClassVar[str] = "GitLab (linking)"
+
+    async def fetch_mergerequests(
+        self,
+        scope: MergeRequestScope,
+        window: EvaluationWindow,
+    ) -> AsyncIterator[MergeRequest]:
+        _LinkingMRConnector.received_windows.append(window)
+        yield MergeRequest(
+            id=UUID("d4e5f6a7-b8c9-0123-def4-56789abcdef0"),
+            source=Source.GITLAB,
+            external_id="mr-1",
+            repository_id=_REPO_ID,
+            iid=1,
+            title="Implement PLAT-1 endpoint",
+            description="Follow-up to NOPE-9 which has no matching work item.",
+            state=MergeRequestState.OPEN,
+            author_id=_MR_AUTHOR_ID,
+            target_branch="main",
+            source_branch="feature/plat-1",
+            created_at=_REPORT_STARTED_AT,
+            updated_at=_REPORT_STARTED_AT,
+        )
+
+
+def test_report_run_populates_merge_request_workitem_links(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+    monkeypatch,
+) -> None:
+    """A fetched MR referencing a fetched Jira work item persists resolved keys and ids;
+    a referenced key with no matching work item stays in keys but resolves to no id."""
+    monkeypatch.setattr(
+        "em_radar_api.connector_registry._connector_types",
+        lambda: [JiraTestConnector, _LinkingMRConnector],
+    )
+    monkeypatch.setattr("em_radar_api.routers.reports.datetime", FrozenReportDateTime)
+
+    jira_id = _create_jira_connection(api_client)
+    scope_id = _create_board_scope(api_client, jira_id, _BOARD_CAPABILITIES)
+    gitlab_id = _create_gitlab_connection(api_client)
+    team_id = api_client.post(
+        "/api/teams",
+        json={
+            "name": "Scrum with linking code",
+            "connection_ids": [jira_id],
+            "scope_ids": [scope_id],
+            "code_connection_id": gitlab_id,
+            "working_mode": "scrum",
+            "sprint_length_days": 14,
+        },
+    ).json()["id"]
+
+    response = api_client.post(
+        "/api/reports/run", json={"connector": "jira", "team_profile_id": team_id}
+    )
+    assert response.status_code == 200
+
+    with session_factory() as session:
+        workitem = session.exec(select(WorkItemTable).where(WorkItemTable.key == "PLAT-1")).one()
+        merge_request = session.exec(select(MergeRequestTable)).one()
+
+    assert "PLAT-1" in merge_request.linked_workitem_keys
+    assert "NOPE-9" in merge_request.linked_workitem_keys
+    assert workitem.id in merge_request.linked_workitem_ids
+    # The unmatched key resolves to no id, so only the single matched id is stored.
+    assert merge_request.linked_workitem_ids == [workitem.id]
 
 
 def test_date_range_window_passes_through_unchanged_to_mr_fetch(

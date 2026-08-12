@@ -29,6 +29,7 @@ def test_signal_schema_contains_expected_merge_request_fields_and_operators() ->
     assert {"greater_than", "less_than", "between"}.issubset(
         set(_field("changed_files_count")["operators"])
     )
+    field_keys = {field["key"] for field in schema["fields"]}
     assert {
         "age_since_last_review_activity",
         "linked_workitem_keys",
@@ -36,7 +37,11 @@ def test_signal_schema_contains_expected_merge_request_fields_and_operators() ->
         "pipeline_status",
         "age_since_pipeline_update",
         "approval_count",
-    }.issubset({field["key"] for field in schema["fields"]})
+        "changed_files_count",
+    }.issubset(field_keys)
+    # The REST endpoint does not reliably expose line-level stats, so they are not advertised.
+    assert "additions" not in field_keys
+    assert "deletions" not in field_keys
 
 
 def test_signal_schema_has_no_source_selection_fields() -> None:
