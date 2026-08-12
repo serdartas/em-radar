@@ -99,7 +99,7 @@ def load_signal_pack(
 
 
 def apply_pack_defaults(pack: SignalPack) -> list[SignalEntry]:
-    """Return signal entries with pack-level severity_override applied where per-signal severity is absent.
+    """Return signal entries with pack-level severity_override applied to those lacking their own.
 
     Per-signal severity is `SignalEntry.severity` — the top-level override field, consistent with
     how `_config_from_signal` resolves precedence. Signals that already set this field are left
