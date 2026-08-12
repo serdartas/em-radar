@@ -42,12 +42,31 @@ class ExpressionValidationError(ValueError):
     pass
 
 
+def resolve_severity(
+    per_signal: str | None,
+    pack_override: str | None = None,
+    template_default: str | None = None,
+) -> Severity:
+    """Return effective severity per spec §8 precedence: per-signal → pack override → template default.
+
+    No tier escalates based on observed data — severity is a fixed property of the signal
+    configuration, not a dynamic outcome of evaluation.
+    """
+    for candidate in (per_signal, pack_override, template_default):
+        if candidate is not None:
+            return Severity(candidate)
+    return Severity.WARNING
+
+
 def evaluate_signal_definition(
     definition: SignalDefinition,
     data: SignalData,
     ctx: EvaluationContext,
     schema: SignalCapabilitySchema,
     scopes: list[ScopeDescriptor],
+    *,
+    pack_severity_override: str | None = None,
+    template_severity: str | None = None,
 ) -> list[SignalFinding]:
     if not definition.enabled or not scopes:
         return []
@@ -56,6 +75,11 @@ def evaluate_signal_definition(
     if definition.template_key == "sprint-scope-churn":
         return _evaluate_sprint_scope_churn_template(definition, data, ctx, scopes)
 
+    severity = resolve_severity(
+        definition.report_settings.severity,
+        pack_severity_override,
+        template_severity,
+    )
     findings: list[SignalFinding] = []
     for scope in scopes:
         for workitem in _workitems_for_scope(data, scope):
@@ -76,7 +100,7 @@ def evaluate_signal_definition(
                     report_id=data.report_id,
                     signal_id=str(definition.id),
                     signal_name=definition.name,
-                    severity=Severity(definition.report_settings.severity),
+                    severity=severity,
                     confidence=Confidence.HIGH,
                     entity_type=EntityType.WORKITEM,
                     entity_id=workitem.id,
