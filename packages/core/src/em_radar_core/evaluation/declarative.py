@@ -13,6 +13,7 @@ from em_radar_core.models import (
     SignalFinding,
     Sprint,
     Transition,
+    WindowType,
     WorkItem,
 )
 from em_radar_core.signals import SignalData
@@ -38,8 +39,32 @@ class ConditionMatch:
     evidence: JsonObject
 
 
+@dataclass(frozen=True)
+class SignalSkipNote:
+    signal_id: str
+    reason: str
+
+
+_SPRINT_ONLY_TEMPLATES: frozenset[str] = frozenset({"repeated-carry-over", "sprint-scope-churn"})
+
+
 class ExpressionValidationError(ValueError):
     pass
+
+
+def check_window_gate(
+    definition: SignalDefinition,
+    ctx: EvaluationContext,
+) -> SignalSkipNote | None:
+    """Return a skip note when a sprint-only signal runs outside a sprint window, else None."""
+    if definition.template_key not in _SPRINT_ONLY_TEMPLATES:
+        return None
+    if ctx.window.window_type is WindowType.SPRINT:
+        return None
+    return SignalSkipNote(
+        signal_id=str(definition.id),
+        reason="requires a sprint window",
+    )
 
 
 def resolve_severity(
@@ -66,6 +91,9 @@ def evaluate_signal_definition(
     scopes: list[ScopeDescriptor],
 ) -> list[SignalFinding]:
     if not definition.enabled or not scopes:
+        return []
+
+    if check_window_gate(definition, ctx) is not None:
         return []
 
     validate_expression(definition.expression, schema, scopes)

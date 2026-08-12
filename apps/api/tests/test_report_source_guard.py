@@ -281,3 +281,50 @@ def test_both_sources_no_signals_skipped(api_client: TestClient, monkeypatch) ->
     assert snapshot["skipped_signals"] == [], (
         "No signals should be skipped when both sources present"
     )
+
+
+def test_kanban_run_adds_window_gate_skip_for_sprint_only_signal(
+    api_client: TestClient, monkeypatch
+) -> None:
+    """Board team in kanban mode (DATE_RANGE window) with a sprint-only signal sees it gated."""
+    monkeypatch.setattr(
+        "em_radar_api.connector_registry._connector_types",
+        lambda: [JiraTestConnector],
+    )
+    connection_id = _create_jira_connection(api_client)
+    scope_id = _create_board_scope(api_client, connection_id, _BOARD_CAPABILITIES)
+    sprint_signal_id = api_client.post(
+        "/api/signal-definitions",
+        json={
+            "name": "Repeated carry-over (window gate test)",
+            "entity_type": "issue",
+            "template_key": "repeated-carry-over",
+            "expression": {
+                "type": "group",
+                "operator": "all",
+                "conditions": [{"field": "sprint_count", "operator": "greater_than", "value": 1}],
+            },
+            "report_settings": {"severity": "warning", "category": "delivery"},
+            "enabled": True,
+            "origin": "system_template",
+        },
+    ).json()["id"]
+    group = _create_group(api_client, "Sprint-only group", [sprint_signal_id])
+    team_id = _create_jira_team(
+        api_client,
+        connection_id,
+        scope_id,
+        "kanban",
+        group_ids=[group],
+    )
+
+    response = api_client.post(
+        "/api/reports/run", json={"connector": "jira", "team_profile_id": team_id}
+    )
+
+    assert response.status_code == 200
+    snapshot = response.json()["signal_pack_snapshot"]
+    skipped_ids = {s["id"] for s in snapshot["skipped_signals"]}
+    assert sprint_signal_id in skipped_ids, "repeated-carry-over must be gated on date-range run"
+    skip_entry = next(s for s in snapshot["skipped_signals"] if s["id"] == sprint_signal_id)
+    assert "sprint window" in skip_entry["reason"]

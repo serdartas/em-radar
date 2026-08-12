@@ -15,7 +15,7 @@ from em_radar_core.connectors import (
     WorkItemProvider,
     WorkItemScope,
 )
-from em_radar_core.evaluation import ScopeDescriptor, evaluate_signal_definition
+from em_radar_core.evaluation import ScopeDescriptor, check_window_gate, evaluate_signal_definition
 from em_radar_core.models import (
     Board,
     Confidence,
@@ -247,11 +247,14 @@ async def _run_team_report(
     session.add(EvaluationWindowTable(**persisted_window.model_dump()))
     session.commit()
 
+    ctx = EvaluationContext(now=started_at, window=window, team=team)
+
     skipped_signals = _skipped_signal_entries(
         board_definitions=board_definitions,
         code_definitions=code_definitions,
         board_attached=board_scope is not None,
         code_attached=has_code_source,
+        ctx=ctx,
     )
 
     report = create_report(
@@ -280,7 +283,6 @@ async def _run_team_report(
             mergerequests=tuple(code_mergerequests),
             reviews=tuple(code_reviews),
         )
-        ctx = EvaluationContext(now=started_at, window=window, team=team)
 
         # Evaluate board signals (workitem/sprint/issue entity types) when board source attached.
         findings: list[SignalFinding] = []
@@ -547,8 +549,9 @@ def _skipped_signal_entries(
     code_definitions: list[SignalDefinition],
     board_attached: bool,
     code_attached: bool,
+    ctx: EvaluationContext,
 ) -> list[dict[str, object]]:
-    """Build skip-note entries for signal definitions whose required source is absent."""
+    """Build skip-note entries for signal definitions whose required source is absent or window-gated."""
     entries: list[dict[str, object]] = []
     if not board_attached:
         for defn in board_definitions:
@@ -560,6 +563,11 @@ def _skipped_signal_entries(
             entries.append(
                 {"id": str(defn.id), "name": defn.name, "reason": "code source not attached"}
             )
+    if board_attached:
+        for defn in board_definitions:
+            skip = check_window_gate(defn, ctx)
+            if skip is not None:
+                entries.append({"id": str(defn.id), "name": defn.name, "reason": skip.reason})
     return entries
 
 
