@@ -112,6 +112,15 @@ def test_custom_pattern_with_capturing_group_returns_whole_keys() -> None:
     ) == ["ABC-123", "DEF-4"]
 
 
+def test_custom_pattern_with_inner_capturing_groups_returns_whole_keys() -> None:
+    assert extract_workitem_keys(
+        "Fixes ABC-123 and DEF-4",
+        None,
+        "feature/misc",
+        pattern=r"([A-Z]+)-(\d+)",
+    ) == ["ABC-123", "DEF-4"]
+
+
 def test_custom_pattern_with_alternation_binds_whole_keys() -> None:
     assert extract_workitem_keys(
         "ABC-1 then DEF-2 then GHI-3",

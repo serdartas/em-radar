@@ -22,8 +22,8 @@ def extract_workitem_keys(
     compiled = re.compile(rf"\b(?:{pattern})\b")
     seen: dict[str, None] = {}
     for field in (title, description or "", source_branch):
-        for match in compiled.findall(field):
-            seen.setdefault(match, None)
+        for match in compiled.finditer(field):
+            seen.setdefault(match.group(0), None)
     return list(seen)
 
 
