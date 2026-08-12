@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TypeAlias
 
-from em_radar_core.connectors import SignalCapabilitySchema, SignalField
+from em_radar_core.connectors import Capabilities, SignalCapabilitySchema, SignalField
 from em_radar_core.models import (
     Confidence,
     EntityType,
@@ -30,6 +30,7 @@ class ScopeDescriptor:
     name: str
     external_ref: JsonObject = field(default_factory=dict)
     capabilities: tuple[str, ...] = ()
+    connector_capabilities: Capabilities | None = None
 
 
 @dataclass(frozen=True)
@@ -47,9 +48,34 @@ class SignalSkipNote:
 
 _SPRINT_ONLY_TEMPLATES: frozenset[str] = frozenset({"repeated-carry-over", "sprint-scope-churn"})
 
+# Maps expression field keys to the connector Capabilities attribute they require.
+# When a signal's expression uses a field in this map and the connector reports the
+# corresponding capability as False, the signal is skipped with a note.
+_FIELD_CONNECTOR_CAPABILITY_MAP: dict[str, str] = {
+    "age_in_current_status": "provides_transitions",
+}
+
 
 class ExpressionValidationError(ValueError):
     pass
+
+
+def check_capability_gate(
+    definition: SignalDefinition,
+    capabilities: Capabilities,
+) -> SignalSkipNote | None:
+    """Return a skip note when the definition requires connector capabilities that are absent."""
+    for leaf in _leaf_conditions(definition.expression):
+        field_key = leaf.get("field")
+        if not isinstance(field_key, str):
+            continue
+        required_attr = _FIELD_CONNECTOR_CAPABILITY_MAP.get(field_key)
+        if required_attr is not None and not getattr(capabilities, required_attr, True):
+            return SignalSkipNote(
+                signal_id=str(definition.id),
+                reason=f"requires {required_attr}",
+            )
+    return None
 
 
 def check_window_gate(
@@ -95,6 +121,12 @@ def evaluate_signal_definition(
 
     if check_window_gate(definition, ctx) is not None:
         return []
+
+    for scope in scopes:
+        if scope.connector_capabilities is not None:
+            if check_capability_gate(definition, scope.connector_capabilities) is not None:
+                return []
+            break
 
     validate_expression(definition.expression, schema, scopes)
     if definition.template_key == "sprint-scope-churn":
