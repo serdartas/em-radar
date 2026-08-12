@@ -183,12 +183,12 @@ def test_five_signals_over_500_workitems_complete_under_budget() -> None:
 def test_concurrent_fetch_is_faster_than_sequential(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Production asyncio.gather path runs workitem + MR fetch in parallel.
+    """asyncio.gather over the production fetch functions is materially faster than sequential.
 
     Patches _fetch_workitems_and_transitions and _fetch_code_data in the reports module
-    with stubs that sleep 0.1s each (simulating I/O), then times the real asyncio.gather
-    call to verify it completes in ~0.1s rather than ~0.2s. This detects regressions to
-    sequential `await ... await ...`.
+    with stubs that sleep 0.1s each (simulating I/O), then times asyncio.gather over them
+    to verify concurrent execution completes in ~0.1s rather than ~0.2s. Exercises the
+    production function names so a rename is caught; does not drive _run_team_report itself.
     """
     import em_radar_api.routers.reports as reports_module
 
