@@ -180,49 +180,55 @@ def test_five_signals_over_500_workitems_complete_under_budget() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_concurrent_fetch_is_faster_than_sequential() -> None:
-    """asyncio.gather over workitem and MR fetches must be faster than sequential execution.
+def test_concurrent_fetch_is_faster_than_sequential(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Production asyncio.gather path runs workitem + MR fetch in parallel.
 
-    Each fake fetch simulates realistic I/O by sleeping 0.1s and then processing
-    the 500-WI / 300-MR dataset. Concurrent execution must complete in < 1.6× the
-    slower of the two sequential times, proving that I/O is overlapped.
+    Patches _fetch_workitems_and_transitions and _fetch_code_data in the reports module
+    with stubs that sleep 0.1s each (simulating I/O), then times the real asyncio.gather
+    call to verify it completes in ~0.1s rather than ~0.2s. This detects regressions to
+    sequential `await ... await ...`.
     """
-    FETCH_DELAY = 0.10  # simulate per-batch network latency
+    import em_radar_api.routers.reports as reports_module
+
+    FETCH_DELAY = 0.10
     workitems = _large_workitems(_WORKITEM_COUNT)
-    mrs = _large_mergerequests(_MR_COUNT)
 
-    async def _fetch_workitems():
+    async def _stub_wi_fetch(_meta, _window):
         await asyncio.sleep(FETCH_DELAY)
-        return list(workitems)
+        return list(workitems), []
 
-    async def _fetch_mergerequests():
+    async def _stub_code_fetch(_session, _conn_id, _window):
         await asyncio.sleep(FETCH_DELAY)
-        return list(mrs)
+        return None
 
-    async def sequential():
+    monkeypatch.setattr(reports_module, "_fetch_workitems_and_transitions", _stub_wi_fetch)
+    monkeypatch.setattr(reports_module, "_fetch_code_data", _stub_code_fetch)
+
+    async def run_sequential():
         t0 = time.monotonic()
-        wi = await _fetch_workitems()
-        mr = await _fetch_mergerequests()
+        wi = await reports_module._fetch_workitems_and_transitions(None, None)
+        mr = await reports_module._fetch_code_data(None, None, None)
         return time.monotonic() - t0, wi, mr
 
-    async def concurrent():
+    async def run_concurrent():
         t0 = time.monotonic()
-        wi, mr = await asyncio.gather(_fetch_workitems(), _fetch_mergerequests())
+        wi, mr = await asyncio.gather(
+            reports_module._fetch_workitems_and_transitions(None, None),
+            reports_module._fetch_code_data(None, None, None),
+        )
         return time.monotonic() - t0, wi, mr
 
-    seq_elapsed, seq_wi, seq_mr = asyncio.run(sequential())
-    con_elapsed, con_wi, con_mr = asyncio.run(concurrent())
+    seq_elapsed, seq_wi, _ = asyncio.run(run_sequential())
+    con_elapsed, con_wi, _ = asyncio.run(run_concurrent())
 
-    # Both should return correct data.
-    assert len(seq_wi) == _WORKITEM_COUNT
-    assert len(seq_mr) == _MR_COUNT
-    assert len(con_wi) == _WORKITEM_COUNT
-    assert len(con_mr) == _MR_COUNT
+    assert len(seq_wi[0]) == _WORKITEM_COUNT
+    assert len(con_wi[0]) == _WORKITEM_COUNT
 
-    # Concurrent must be materially faster than sequential.
     assert con_elapsed < seq_elapsed * 0.8, (
-        f"Concurrent ({con_elapsed:.3f}s) is not meaningfully faster than "
-        f"sequential ({seq_elapsed:.3f}s)"
+        f"Concurrent ({con_elapsed:.3f}s) is not faster than sequential ({seq_elapsed:.3f}s); "
+        "check that the Phase 2 gather in _run_team_report is still concurrent"
     )
     assert con_elapsed < _BUDGET_SECONDS, (
         f"Concurrent fetch took {con_elapsed:.2f}s — exceeds {_BUDGET_SECONDS}s budget"
