@@ -18,7 +18,6 @@ from em_radar_core.models import (
     WorkItem,
 )
 from em_radar_core.signals import SignalData
-from em_radar_core.signals.sprints import SprintScopeChurnSignal
 
 JsonObject: TypeAlias = dict[str, object]
 
@@ -54,6 +53,10 @@ _SPRINT_ONLY_TEMPLATES: frozenset[str] = frozenset({"repeated-carry-over", "spri
 # corresponding capability as False, the signal is skipped with the given reason.
 _FIELD_CONNECTOR_CAPABILITY_MAP: dict[str, tuple[str, str]] = {
     "age_in_current_status": (
+        "provides_transitions",
+        "requires status-transition history from the connector",
+    ),
+    "sprint_scope_added_pct": (
         "provides_transitions",
         "requires status-transition history from the connector",
     ),
@@ -132,8 +135,6 @@ def evaluate_signal_definition(
             break
 
     validate_expression(definition.expression, schema, scopes)
-    if definition.template_key == "sprint-scope-churn":
-        return _evaluate_sprint_scope_churn_template(definition, data, ctx, scopes)
 
     # Pack and template severity tiers are resolved at seed/import time (via apply_pack_defaults
     # and the signal catalog). By the time a SignalDefinition reaches the evaluator its
@@ -144,21 +145,15 @@ def evaluate_signal_definition(
     if definition.entity_type == "merge_request":
         return _evaluate_mr_signal(definition, data, ctx, severity)
 
+    if definition.entity_type == "sprint":
+        return _evaluate_sprint_signal(definition, data, ctx, severity, scopes)
+
     findings: list[SignalFinding] = []
     for scope in scopes:
         for workitem in _workitems_for_scope(data, scope):
             result = _evaluate_group(definition.expression, workitem, data, ctx, scope)
             if not result.matched:
                 continue
-            evidence = _template_evidence(
-                definition.template_key,
-                definition.expression,
-                workitem,
-                data,
-                ctx,
-            )
-            if evidence is None:
-                evidence = result.evidence
             findings.append(
                 SignalFinding(
                     report_id=data.report_id,
@@ -170,7 +165,7 @@ def evaluate_signal_definition(
                     entity_id=workitem.id,
                     title=f"{workitem.key} - {workitem.title}",
                     reason=result.reason,
-                    evidence={"scope_id": scope.scope_id, **evidence},
+                    evidence={"scope_id": scope.scope_id, **result.evidence},
                     source_link=workitem.source_url,
                     created_at=ctx.now,
                 )
@@ -207,6 +202,144 @@ def _evaluate_mr_signal(
             )
         )
     return findings
+
+
+def _evaluate_sprint_signal(
+    definition: SignalDefinition,
+    data: SignalData,
+    ctx: EvaluationContext,
+    severity: Severity,
+    scopes: list[ScopeDescriptor],
+) -> list[SignalFinding]:
+    """Evaluate a sprint entity signal over board sprints in scope.
+
+    When the evaluation window is a sprint window, only the target sprint is evaluated;
+    otherwise all board sprints are evaluated.
+    """
+    target_sprint_id = ctx.window.sprint_id if ctx.window.window_type is WindowType.SPRINT else None
+    findings: list[SignalFinding] = []
+    for scope in scopes:
+        if scope.scope_type != "board":
+            continue
+        external_id = scope.external_ref.get("id")
+        board_ids = {board.id for board in data.boards if board.external_id == external_id}
+        for sprint in data.sprints:
+            if sprint.board_id not in board_ids:
+                continue
+            if target_sprint_id is not None and sprint.id != target_sprint_id:
+                continue
+            result = _evaluate_sprint_group(definition.expression, sprint, data, ctx)
+            if not result.matched:
+                continue
+            findings.append(
+                SignalFinding(
+                    report_id=data.report_id,
+                    signal_id=str(definition.id),
+                    signal_name=definition.name,
+                    severity=severity,
+                    confidence=Confidence.HIGH,
+                    entity_type=EntityType.SPRINT,
+                    entity_id=sprint.id,
+                    title=sprint.name,
+                    reason=result.reason,
+                    evidence={"scope_id": scope.scope_id, **result.evidence},
+                    source_link=sprint.source_url,
+                    created_at=ctx.now,
+                )
+            )
+    return findings
+
+
+def _evaluate_sprint_group(
+    expression: JsonObject,
+    sprint: Sprint,
+    data: SignalData,
+    ctx: EvaluationContext,
+) -> ConditionMatch:
+    if expression.get("type") != "group":
+        return _evaluate_sprint_condition(expression, sprint, data, ctx)
+    conditions = [item for item in expression["conditions"] if isinstance(item, dict)]
+    matches = [_evaluate_sprint_group(condition, sprint, data, ctx) for condition in conditions]
+    operator = expression["operator"]
+    matched = (
+        all(match.matched for match in matches)
+        if operator == "all"
+        else any(match.matched for match in matches)
+    )
+    active = [match for match in matches if match.matched]
+    if not matched and operator == "all":
+        active = [match for match in matches if not match.matched]
+    return ConditionMatch(
+        matched=matched,
+        reason=(" and " if operator == "all" else " or ").join(match.reason for match in active),
+        evidence={key: value for match in active for key, value in match.evidence.items()},
+    )
+
+
+def _evaluate_sprint_condition(
+    condition: JsonObject,
+    sprint: Sprint,
+    data: SignalData,
+    ctx: EvaluationContext,
+) -> ConditionMatch:
+    field_key = str(condition["field"])
+    operator = str(condition["operator"])
+    expected = condition.get("value")
+    observed = _sprint_field_value(field_key, sprint, data, ctx)
+    matched = _compare(observed, operator, expected)
+    return ConditionMatch(
+        matched=matched,
+        reason=f"{field_key} {operator} {expected} (observed {observed})",
+        evidence={field_key: _json_value(observed)},
+    )
+
+
+def _sprint_field_value(
+    field_key: str,
+    sprint: Sprint,
+    data: SignalData,
+    ctx: EvaluationContext,
+) -> object:
+    if field_key == "sprint_scope_added_pct":
+        return _sprint_scope_added_pct(sprint, data, ctx)
+    raise ExpressionValidationError(f"unsupported sprint field: {field_key}")
+
+
+def _sprint_scope_added_pct(
+    sprint: Sprint, data: SignalData, ctx: EvaluationContext
+) -> float | None:
+    """Return the percentage of sprint items added after sprint start (churn %).
+
+    Returns None when sprint has no start_date or no items, so numeric operators
+    correctly produce no match. Uses sprint_ids (not current_sprint_id) to match
+    items that were part of the sprint even if later moved to another sprint.
+    """
+    if sprint.start_date is None:
+        return None
+    sprint_items = [wi for wi in data.workitems if sprint.id in wi.sprint_ids]
+    if not sprint_items:
+        return None
+    original = 0
+    for wi in sprint_items:
+        first_seen = _first_seen_at(wi, data)
+        if first_seen is None or first_seen > ctx.now:
+            continue  # unknown or future-dated — skip
+        if first_seen <= sprint.start_date:
+            original += 1
+    added = len(sprint_items) - original
+    if original == 0:
+        return None
+    return round(added / original * 100.0, 2)
+
+
+def _first_seen_at(wi: WorkItem, data: SignalData) -> datetime | None:
+    """Return the first-seen datetime for a work item: min(transitions, updated_at, created_at)."""
+    candidates = [t.occurred_at for t in data.transitions if t.entity_id == wi.id]
+    if wi.updated_at is not None:
+        candidates.append(wi.updated_at)
+    if not candidates:
+        return wi.created_at
+    return min(candidates)
 
 
 def preview_signal_definition(
@@ -696,66 +829,6 @@ def _json_value(value: object) -> object:
     return value
 
 
-def _template_evidence(
-    template_key: str | None,
-    expression: JsonObject,
-    workitem: WorkItem,
-    data: SignalData,
-    ctx: EvaluationContext,
-) -> JsonObject | None:
-    if template_key == "stale-in-progress-work-item":
-        started_at = _current_status_started_at(workitem, data.transitions)
-        return {
-            "days_idle": _age_days(ctx.now, started_at),
-            "last_updated_at": started_at.isoformat(),
-            "threshold": _threshold_from_expression(expression, "age_in_current_status", 7),
-        }
-    if template_key == "blocked-without-update":
-        return {
-            "days_blocked_idle": _age_days(ctx.now, workitem.updated_at),
-            "last_updated_at": workitem.updated_at.isoformat(),
-            "threshold": _threshold_from_expression(expression, "age_since_updated", 3),
-        }
-    if template_key == "story-without-acceptance-criteria":
-        return {
-            "workitem_type": workitem.type.value,
-            "has_description": bool(workitem.description),
-        }
-    if template_key == "story-without-parent-epic":
-        return {"workitem_type": workitem.type.value}
-    if template_key == "epic-too-broad":
-        return {
-            "child_count": sum(1 for item in data.workitems if item.parent_id == workitem.id),
-            "threshold": _threshold_from_expression(expression, "child_count", 15),
-        }
-    if template_key == "epic-without-measurable-description":
-        return {
-            "description_length": len(workitem.description or ""),
-            "threshold": _threshold_from_expression(expression, "description_length", 100),
-        }
-    if template_key == "repeated-carry-over":
-        sprint_names = {sprint.id: sprint.name for sprint in data.sprints}
-        sprint_ids = tuple(dict.fromkeys(workitem.sprint_ids))
-        return {
-            "sprint_count": len(sprint_ids),
-            "sprint_names": [
-                sprint_names[sprint_id] for sprint_id in sprint_ids if sprint_id in sprint_names
-            ],
-        }
-    return None
-
-
-def _threshold_from_expression(expression: JsonObject, field_key: str, default: int) -> int:
-    for condition in _leaf_conditions(expression):
-        if condition.get("field") != field_key:
-            continue
-        try:
-            return int(_duration_days(condition.get("value")))
-        except ExpressionValidationError:
-            return default
-    return default
-
-
 def _leaf_conditions(expression: JsonObject) -> list[JsonObject]:
     if expression.get("type") != "group":
         return [expression]
@@ -768,38 +841,3 @@ def _leaf_conditions(expression: JsonObject) -> list[JsonObject]:
         if isinstance(condition, dict)
         for leaf in _leaf_conditions(condition)
     ]
-
-
-def _evaluate_sprint_scope_churn_template(
-    definition: SignalDefinition,
-    data: SignalData,
-    ctx: EvaluationContext,
-    scopes: list[ScopeDescriptor],
-) -> list[SignalFinding]:
-    findings: list[SignalFinding] = []
-    for scope in scopes:
-        if scope.scope_type != "board":
-            continue
-        external_id = scope.external_ref.get("id")
-        board_ids = {board.id for board in data.boards if board.external_id == external_id}
-        if not board_ids:
-            continue
-        scoped_data = SignalData(
-            report_id=data.report_id,
-            projects=data.projects,
-            boards=tuple(board for board in data.boards if board.id in board_ids),
-            sprints=tuple(sprint for sprint in data.sprints if sprint.board_id in board_ids),
-            workitems=data.workitems,
-            transitions=data.transitions,
-        )
-        for finding in SprintScopeChurnSignal().evaluate(scoped_data, ctx):
-            findings.append(
-                finding.model_copy(
-                    update={
-                        "signal_id": str(definition.id),
-                        "signal_name": definition.name,
-                        "evidence": {"scope_id": scope.scope_id, **finding.evidence},
-                    }
-                )
-            )
-    return findings
