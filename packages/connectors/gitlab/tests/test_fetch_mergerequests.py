@@ -1211,7 +1211,9 @@ def test_fetch_mergerequests_iterates_multiple_repositories(
         connector = _make_connector(monkeypatch, handler)
         mrs = await _collect(
             connector.fetch_mergerequests(
-                MergeRequestScope(repository_external_ids=["gitlab.example.com/101", "gitlab.example.com/202"]),
+                MergeRequestScope(
+                    repository_external_ids=["gitlab.example.com/101", "gitlab.example.com/202"]
+                ),
                 _date_window(),
             )
         )
