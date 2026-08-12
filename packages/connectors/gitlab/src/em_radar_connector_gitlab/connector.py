@@ -185,12 +185,6 @@ class GitLabConnector:
                     ("greater_than", "less_than", "between"),
                 ),
                 SignalField(
-                    "total_changes",
-                    "Total line changes",
-                    "number",
-                    ("greater_than", "less_than", "between"),
-                ),
-                SignalField(
                     "pipeline_status",
                     "Pipeline status",
                     "enum",

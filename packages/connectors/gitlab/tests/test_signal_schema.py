@@ -33,7 +33,6 @@ def test_signal_schema_contains_expected_merge_request_fields_and_operators() ->
     assert {
         "age_since_last_review_activity",
         "linked_workitem_keys",
-        "total_changes",
         "pipeline_status",
         "age_since_pipeline_update",
         "approval_count",
@@ -42,6 +41,7 @@ def test_signal_schema_contains_expected_merge_request_fields_and_operators() ->
     # The REST endpoint does not reliably expose line-level stats, so they are not advertised.
     assert "additions" not in field_keys
     assert "deletions" not in field_keys
+    assert "total_changes" not in field_keys
 
 
 def test_signal_schema_has_no_source_selection_fields() -> None:
