@@ -1,3 +1,4 @@
 [em_radar.connectors]
+demo = em_radar_connector_demo:DemoConnector
 gitlab = em_radar_connector_gitlab:GitLabConnector
 jira = em_radar_connector_jira:JiraConnector

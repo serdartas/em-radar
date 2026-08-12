@@ -14,6 +14,8 @@ packages/config/src/em_radar_config/catalog.py
 packages/config/src/em_radar_config/jira_signal_templates.py
 packages/config/src/em_radar_config/models.py
 packages/config/src/em_radar_config/validation.py
+packages/connectors/demo/src/em_radar_connector_demo/__init__.py
+packages/connectors/demo/src/em_radar_connector_demo/connector.py
 packages/connectors/gitlab/src/em_radar_connector_gitlab/__init__.py
 packages/connectors/gitlab/src/em_radar_connector_gitlab/connector.py
 packages/connectors/jira/src/em_radar_connector_jira/__init__.py
@@ -39,3 +41,4 @@ packages/core/src/em_radar_core/signals/stale_in_progress.py
 packages/core/src/em_radar_core/signals/workitems.py
 packages/normalizer/src/em_radar_normalizer/__init__.py
 packages/normalizer/src/em_radar_normalizer/identity.py
+packages/normalizer/src/em_radar_normalizer/linking.py
