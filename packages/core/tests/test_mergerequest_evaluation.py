@@ -482,3 +482,116 @@ def test_validate_expression_rejects_mr_field_in_jira_signal() -> None:
 
     with pytest.raises(ExpressionValidationError, match="unknown field"):
         validate_expression(expression, JiraConnector.describe_signal_schema(), [_scope()])
+
+
+# ---------------------------------------------------------------------------
+# closed_at field (bug fix: was missing, would crash at evaluation time)
+# ---------------------------------------------------------------------------
+
+
+def test_mr_closed_at_field_is_supported() -> None:
+    """closed_at is a schema-valid GitLab field; evaluating it must not raise."""
+    closed = _mr(1, state=MergeRequestState.CLOSED, updated_at=NOW - timedelta(days=2))
+    open_mr = _mr(2)
+    expression = {
+        "type": "group",
+        "operator": "all",
+        "conditions": [{"field": "closed_at", "operator": "before", "value": NOW.isoformat()}],
+    }
+
+    # closed MR has closed_at = NOW (set by _mr helper); NOW is not before NOW → no match.
+    # open MR has closed_at = None → _compare returns False for datetime ops on None.
+    findings = evaluate_signal_definition(
+        _mr_definition(expression),
+        _data(closed, open_mr),
+        context(),
+        GitLabConnector.describe_signal_schema(),
+        [_scope()],
+    )
+
+    # Both are non-matches (closed MR's closed_at == NOW, not strictly before NOW;
+    # open MR has no closed_at). Key assertion: no ExpressionValidationError is raised.
+    assert isinstance(findings, list)
+
+
+# ---------------------------------------------------------------------------
+# title contains (substring matching, not list membership)
+# ---------------------------------------------------------------------------
+
+
+def test_mr_title_contains_substring() -> None:
+    wip = _mr(1)
+    wip.title = "WIP: refactor auth"
+    ready = _mr(2)
+    ready.title = "Add login form"
+    expression = {
+        "type": "group",
+        "operator": "all",
+        "conditions": [{"field": "title", "operator": "contains", "value": "WIP"}],
+    }
+
+    findings = evaluate_signal_definition(
+        _mr_definition(expression),
+        _data(wip, ready),
+        context(),
+        GitLabConnector.describe_signal_schema(),
+        [_scope()],
+    )
+
+    assert len(findings) == 1
+    assert findings[0].entity_id == wip.id
+
+
+def test_mr_title_does_not_contain_substring() -> None:
+    wip = _mr(1)
+    wip.title = "WIP: refactor auth"
+    ready = _mr(2)
+    ready.title = "Add login form"
+    expression = {
+        "type": "group",
+        "operator": "all",
+        "conditions": [{"field": "title", "operator": "does_not_contain", "value": "WIP"}],
+    }
+
+    findings = evaluate_signal_definition(
+        _mr_definition(expression),
+        _data(wip, ready),
+        context(),
+        GitLabConnector.describe_signal_schema(),
+        [_scope()],
+    )
+
+    assert len(findings) == 1
+    assert findings[0].entity_id == ready.id
+
+
+# ---------------------------------------------------------------------------
+# age_since_updated (additional schema field coverage)
+# ---------------------------------------------------------------------------
+
+
+def test_mr_age_since_updated() -> None:
+    stale = _mr(1, created_at=NOW - timedelta(days=10), updated_at=NOW - timedelta(days=5))
+    fresh = _mr(2, created_at=NOW - timedelta(days=10), updated_at=NOW - timedelta(days=1))
+    expression = {
+        "type": "group",
+        "operator": "all",
+        "conditions": [
+            {
+                "field": "age_since_updated",
+                "operator": "greater_than",
+                "value": {"amount": 3, "unit": "days"},
+            }
+        ],
+    }
+
+    findings = evaluate_signal_definition(
+        _mr_definition(expression),
+        _data(stale, fresh),
+        context(),
+        GitLabConnector.describe_signal_schema(),
+        [_scope()],
+    )
+
+    assert len(findings) == 1
+    assert findings[0].entity_id == stale.id

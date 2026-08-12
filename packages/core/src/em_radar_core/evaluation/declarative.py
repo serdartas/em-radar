@@ -447,14 +447,8 @@ def _mr_field_value(
         return mr.source_branch
     if field_key == "target_branch":
         return mr.target_branch
-    if field_key == "branches":
-        return mr.source_branch
     if field_key == "changed_files_count":
         return mr.changed_files_count
-    if field_key == "additions":
-        return mr.additions
-    if field_key == "deletions":
-        return mr.deletions
     if field_key == "pipeline_status":
         return mr.pipeline_status.value if mr.pipeline_status is not None else None
     if field_key == "age_since_pipeline_update":
@@ -469,6 +463,8 @@ def _mr_field_value(
         return mr.updated_at
     if field_key == "merged_at":
         return mr.merged_at
+    if field_key == "closed_at":
+        return mr.closed_at
     if field_key == "age_since_created":
         return _age_days(ctx.now, mr.created_at)
     if field_key == "age_since_updated":
@@ -493,8 +489,12 @@ def _compare(observed: object, operator: str, expected: object) -> bool:
     if operator == "is_none_of":
         return observed not in _list(expected)
     if operator == "contains":
+        if isinstance(observed, str) and isinstance(expected, str):
+            return expected in observed
         return expected in _list(observed)
     if operator == "does_not_contain":
+        if isinstance(observed, str) and isinstance(expected, str):
+            return expected not in observed
         return expected not in _list(observed)
     if operator == "contains_any":
         return bool(set(_list(observed)).intersection(_list(expected)))
