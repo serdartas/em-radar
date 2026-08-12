@@ -47,7 +47,7 @@ def resolve_severity(
     pack_override: str | None = None,
     template_default: str | None = None,
 ) -> Severity:
-    """Return effective severity per spec §8 precedence: per-signal → pack override → template default.
+    """Return effective severity following spec §8: per-signal → pack override → template default.
 
     No tier escalates based on observed data — severity is a fixed property of the signal
     configuration, not a dynamic outcome of evaluation.
@@ -64,9 +64,6 @@ def evaluate_signal_definition(
     ctx: EvaluationContext,
     schema: SignalCapabilitySchema,
     scopes: list[ScopeDescriptor],
-    *,
-    pack_severity_override: str | None = None,
-    template_severity: str | None = None,
 ) -> list[SignalFinding]:
     if not definition.enabled or not scopes:
         return []
@@ -75,11 +72,11 @@ def evaluate_signal_definition(
     if definition.template_key == "sprint-scope-churn":
         return _evaluate_sprint_scope_churn_template(definition, data, ctx, scopes)
 
-    severity = resolve_severity(
-        definition.report_settings.severity,
-        pack_severity_override,
-        template_severity,
-    )
+    # Pack and template severity tiers are resolved at seed/import time (via apply_pack_defaults
+    # and the signal catalog). By the time a SignalDefinition reaches the evaluator its
+    # report_settings.severity already holds the fully resolved value; the evaluator always
+    # reads from that single canonical field via resolve_severity.
+    severity = resolve_severity(definition.report_settings.severity)
     findings: list[SignalFinding] = []
     for scope in scopes:
         for workitem in _workitems_for_scope(data, scope):

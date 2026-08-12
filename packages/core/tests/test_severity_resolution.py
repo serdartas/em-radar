@@ -1,4 +1,10 @@
-"""Tests for the canonical severity resolution order (signal spec §8)."""
+"""Tests for the canonical severity resolution order (signal spec §8).
+
+Pack-level and template-tier resolution is applied at seed/import time (apply_pack_defaults,
+signal catalog). By the time a signal reaches the evaluator its report_settings.severity already
+holds the fully resolved value. The evaluator reads that value via resolve_severity, which is also
+the single point used by callers that construct resolution before calling the evaluator.
+"""
 
 from datetime import timedelta
 from uuid import uuid4
@@ -42,11 +48,11 @@ def _definition(severity: str = "warning") -> SignalDefinition:
 
 
 # ---------------------------------------------------------------------------
-# resolve_severity unit tests
+# resolve_severity unit tests — each precedence layer wins in order
 # ---------------------------------------------------------------------------
 
 
-def test_per_signal_severity_wins_over_all() -> None:
+def test_per_signal_severity_wins_over_pack_override_and_template() -> None:
     result = resolve_severity("info", pack_override="warning", template_default="critical")
     assert result is Severity.INFO
 
@@ -82,11 +88,12 @@ def test_pack_override_beats_template_default() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Integration: evaluate_signal_definition uses resolve_severity
+# Evaluator integration: reads pre-resolved severity from report_settings
 # ---------------------------------------------------------------------------
 
 
-def test_evaluator_uses_per_signal_severity_by_default() -> None:
+def test_evaluator_emits_severity_from_report_settings() -> None:
+    """The evaluator's only severity source is report_settings.severity (already resolved)."""
     item = workitem(key="RAD-1")
     findings = evaluate_signal_definition(
         _definition(severity="info"),
@@ -100,52 +107,17 @@ def test_evaluator_uses_per_signal_severity_by_default() -> None:
     assert findings[0].severity is Severity.INFO
 
 
-def test_evaluator_applies_pack_override_when_given() -> None:
+def test_evaluator_emits_critical_when_report_settings_severity_is_critical() -> None:
     item = workitem(key="RAD-1")
     findings = evaluate_signal_definition(
-        _definition(severity="warning"),
+        _definition(severity="critical"),
         SignalData(report_id=uuid4(), projects=(project(),), workitems=(item,)),
         context(),
         JiraConnector.describe_signal_schema(),
         [_scope()],
-        pack_severity_override="critical",
     )
 
-    # per-signal wins; pack_severity_override applies only when per-signal is absent
-    assert findings[0].severity is Severity.WARNING
-
-
-def test_evaluator_applies_template_severity_when_per_signal_absent() -> None:
-    definition = SignalDefinition(
-        name="No explicit severity signal",
-        entity_type="issue",
-        expression={
-            "type": "group",
-            "operator": "all",
-            "conditions": [
-                {"field": "status_category", "operator": "is", "value": "in_progress"},
-            ],
-        },
-        report_settings=ReportSettings(severity="warning", category="flow"),
-        enabled=True,
-        origin=SignalOrigin.USER_CREATED,
-        created_at=NOW,
-        updated_at=NOW,
-    )
-    item = workitem(key="RAD-1")
-
-    findings = evaluate_signal_definition(
-        definition,
-        SignalData(report_id=uuid4(), projects=(project(),), workitems=(item,)),
-        context(),
-        JiraConnector.describe_signal_schema(),
-        [_scope()],
-        pack_severity_override=None,
-        template_severity="info",
-    )
-
-    # per-signal (warning) wins over template (info)
-    assert findings[0].severity is Severity.WARNING
+    assert findings[0].severity is Severity.CRITICAL
 
 
 # ---------------------------------------------------------------------------
