@@ -181,7 +181,7 @@ def test_fetch_mergerequests_normalizes_open_mr(monkeypatch: pytest.MonkeyPatch)
         connector = _make_connector(monkeypatch, handler)
         mrs = await _collect(
             connector.fetch_mergerequests(
-                MergeRequestScope(repository_external_ids=["101"]),
+                MergeRequestScope(repository_external_ids=["gitlab.example.com/101"]),
                 _date_window(),
             )
         )
@@ -191,7 +191,7 @@ def test_fetch_mergerequests_normalizes_open_mr(monkeypatch: pytest.MonkeyPatch)
         mr = mrs[0]
 
         assert mr.source is Source.GITLAB
-        assert mr.external_id == "2001"
+        assert mr.external_id == "gitlab.example.com/2001"
         assert mr.iid == 7
         assert mr.title == "Feature: normalisation test"
         assert mr.state is MergeRequestState.OPEN
@@ -206,11 +206,10 @@ def test_fetch_mergerequests_normalizes_open_mr(monkeypatch: pytest.MonkeyPatch)
         assert mr.merged_at is None
         assert mr.closed_at is None
 
-        # changed_files_count is sourced from the single-MR detail endpoint; the REST
-        # endpoints do not reliably expose additions/deletions so they stay None.
+        # changed_files_count, additions, and deletions are all sourced from the detail endpoint.
         assert mr.changed_files_count == 5
-        assert mr.additions is None
-        assert mr.deletions is None
+        assert mr.additions == 20
+        assert mr.deletions == 8
 
         assert mr.pipeline_status is PipelineStatus.SUCCESS
         assert mr.pipeline_updated_at == datetime(2026, 5, 10, 11, 0, 0, tzinfo=timezone.utc)
@@ -218,10 +217,10 @@ def test_fetch_mergerequests_normalizes_open_mr(monkeypatch: pytest.MonkeyPatch)
         assert mr.approval_count == 2
         assert mr.comment_count == 3
 
-        # Stable IDs are deterministic from project_id and mr global id.
-        assert mr.repository_id == _stable_id("repository", "101")
-        assert mr.id == _stable_id("mergerequest", "2001")
-        assert mr.author_id == _stable_id("user", "42")
+        # Stable IDs are deterministic and namespaced by the GitLab instance host.
+        assert mr.repository_id == _stable_id("repository", "gitlab.example.com/101")
+        assert mr.id == _stable_id("mergerequest", "gitlab.example.com/2001")
+        assert mr.author_id == _stable_id("user", "gitlab.example.com/42")
 
     asyncio.run(run())
 
@@ -262,7 +261,7 @@ def test_fetch_mergerequests_draft_detection(
         connector = _make_connector(monkeypatch, handler)
         mrs = await _collect(
             connector.fetch_mergerequests(
-                MergeRequestScope(repository_external_ids=["101"]),
+                MergeRequestScope(repository_external_ids=["gitlab.example.com/101"]),
                 _date_window(),
             )
         )
@@ -301,7 +300,7 @@ def test_fetch_mergerequests_wip_prefix_not_applied_to_merged_mr(
         connector = _make_connector(monkeypatch, handler)
         mrs = await _collect(
             connector.fetch_mergerequests(
-                MergeRequestScope(repository_external_ids=["101"]),
+                MergeRequestScope(repository_external_ids=["gitlab.example.com/101"]),
                 _date_window(),
             )
         )
@@ -337,7 +336,7 @@ def test_fetch_mergerequests_normalizes_merged_mr(monkeypatch: pytest.MonkeyPatc
         connector = _make_connector(monkeypatch, handler)
         mrs = await _collect(
             connector.fetch_mergerequests(
-                MergeRequestScope(repository_external_ids=["101"]),
+                MergeRequestScope(repository_external_ids=["gitlab.example.com/101"]),
                 _date_window(),
             )
         )
@@ -383,7 +382,7 @@ def test_fetch_mergerequests_closed_draft_mr_state_is_closed(
         mrs = await _collect(
             connector.fetch_mergerequests(
                 MergeRequestScope(
-                    repository_external_ids=["101"],
+                    repository_external_ids=["gitlab.example.com/101"],
                     include_drafts=True,
                     include_closed_unmerged=True,
                 ),
@@ -431,7 +430,7 @@ def test_fetch_mergerequests_merged_draft_mr_state_is_merged(
         mrs = await _collect(
             connector.fetch_mergerequests(
                 MergeRequestScope(
-                    repository_external_ids=["101"],
+                    repository_external_ids=["gitlab.example.com/101"],
                     include_drafts=True,
                 ),
                 _date_window(),
@@ -468,7 +467,7 @@ def test_fetch_mergerequests_locked_mr_maps_to_open_state(
         connector = _make_connector(monkeypatch, handler)
         mrs = await _collect(
             connector.fetch_mergerequests(
-                MergeRequestScope(repository_external_ids=["101"]),
+                MergeRequestScope(repository_external_ids=["gitlab.example.com/101"]),
                 _date_window(),
             )
         )
@@ -507,7 +506,7 @@ def test_fetch_mergerequests_normalizes_closed_mr_with_include_closed_flag(
         mrs = await _collect(
             connector.fetch_mergerequests(
                 MergeRequestScope(
-                    repository_external_ids=["101"],
+                    repository_external_ids=["gitlab.example.com/101"],
                     include_closed_unmerged=True,
                 ),
                 _date_window(),
@@ -551,7 +550,7 @@ def test_fetch_mergerequests_excludes_drafts_when_include_drafts_false(
         mrs = await _collect(
             connector.fetch_mergerequests(
                 MergeRequestScope(
-                    repository_external_ids=["101"],
+                    repository_external_ids=["gitlab.example.com/101"],
                     include_drafts=False,
                 ),
                 _date_window(),
@@ -591,7 +590,7 @@ def test_fetch_mergerequests_excludes_closed_when_include_closed_unmerged_false(
         # include_closed_unmerged defaults to False
         mrs = await _collect(
             connector.fetch_mergerequests(
-                MergeRequestScope(repository_external_ids=["101"]),
+                MergeRequestScope(repository_external_ids=["gitlab.example.com/101"]),
                 _date_window(),
             )
         )
@@ -654,7 +653,7 @@ def test_fetch_mergerequests_maps_pipeline_status(
         connector = _make_connector(monkeypatch, handler)
         mrs = await _collect(
             connector.fetch_mergerequests(
-                MergeRequestScope(repository_external_ids=["101"]),
+                MergeRequestScope(repository_external_ids=["gitlab.example.com/101"]),
                 _date_window(),
             )
         )
@@ -684,7 +683,7 @@ def test_fetch_mergerequests_no_pipeline_yields_none_status(
         connector = _make_connector(monkeypatch, handler)
         mrs = await _collect(
             connector.fetch_mergerequests(
-                MergeRequestScope(repository_external_ids=["101"]),
+                MergeRequestScope(repository_external_ids=["gitlab.example.com/101"]),
                 _date_window(),
             )
         )
@@ -728,7 +727,7 @@ def test_fetch_mergerequests_diff_stats_from_detail_endpoint(
         connector = _make_connector(monkeypatch, handler)
         mrs = await _collect(
             connector.fetch_mergerequests(
-                MergeRequestScope(repository_external_ids=["101"]),
+                MergeRequestScope(repository_external_ids=["gitlab.example.com/101"]),
                 _date_window(),
             )
         )
@@ -736,8 +735,8 @@ def test_fetch_mergerequests_diff_stats_from_detail_endpoint(
 
         assert len(mrs) == 1
         assert mrs[0].changed_files_count == 7
-        assert mrs[0].additions is None
-        assert mrs[0].deletions is None
+        assert mrs[0].additions == 30
+        assert mrs[0].deletions == 12
         # Verify the detail endpoint was actually called.
         assert len(detail_paths) == 1
         assert detail_paths[0].endswith("/7")
@@ -769,7 +768,7 @@ def test_fetch_mergerequests_parses_changes_count_string(
         connector = _make_connector(monkeypatch, handler)
         mrs = await _collect(
             connector.fetch_mergerequests(
-                MergeRequestScope(repository_external_ids=["101"]),
+                MergeRequestScope(repository_external_ids=["gitlab.example.com/101"]),
                 _date_window(),
             )
         )
@@ -785,8 +784,8 @@ def test_fetch_mergerequests_parses_changes_count_string(
 def test_fetch_mergerequests_changed_files_from_detail_diff_stats_summary(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """changed_files_count is read from detail diff_stats_summary file_count; additions/deletions
-    are never populated even when present in the payload."""
+    """changed_files_count is read from diff_stats_summary.file_count; additions and deletions
+    are read from diff_stats_summary when top-level additions/deletions are absent."""
 
     async def run() -> None:
         def handler(request: httpx.Request) -> httpx.Response:
@@ -808,7 +807,7 @@ def test_fetch_mergerequests_changed_files_from_detail_diff_stats_summary(
         connector = _make_connector(monkeypatch, handler)
         mrs = await _collect(
             connector.fetch_mergerequests(
-                MergeRequestScope(repository_external_ids=["101"]),
+                MergeRequestScope(repository_external_ids=["gitlab.example.com/101"]),
                 _date_window(),
             )
         )
@@ -816,8 +815,8 @@ def test_fetch_mergerequests_changed_files_from_detail_diff_stats_summary(
 
         assert len(mrs) == 1
         assert mrs[0].changed_files_count == 5
-        assert mrs[0].additions is None
-        assert mrs[0].deletions is None
+        assert mrs[0].additions == 15
+        assert mrs[0].deletions == 7
 
     asyncio.run(run())
 
@@ -842,7 +841,7 @@ def test_fetch_mergerequests_mr_detail_404_degrades_gracefully(
         connector = _make_connector(monkeypatch, handler)
         mrs = await _collect(
             connector.fetch_mergerequests(
-                MergeRequestScope(repository_external_ids=["101"]),
+                MergeRequestScope(repository_external_ids=["gitlab.example.com/101"]),
                 _date_window(),
             )
         )
@@ -877,7 +876,7 @@ def test_fetch_mergerequests_mr_detail_403_degrades_gracefully(
         connector = _make_connector(monkeypatch, handler)
         mrs = await _collect(
             connector.fetch_mergerequests(
-                MergeRequestScope(repository_external_ids=["101"]),
+                MergeRequestScope(repository_external_ids=["gitlab.example.com/101"]),
                 _date_window(),
             )
         )
@@ -918,7 +917,7 @@ def test_fetch_mergerequests_counts_distinct_approvers(
         connector = _make_connector(monkeypatch, handler)
         mrs = await _collect(
             connector.fetch_mergerequests(
-                MergeRequestScope(repository_external_ids=["101"]),
+                MergeRequestScope(repository_external_ids=["gitlab.example.com/101"]),
                 _date_window(),
             )
         )
@@ -956,7 +955,7 @@ def test_fetch_mergerequests_deduplicates_approvers(
         connector = _make_connector(monkeypatch, handler)
         mrs = await _collect(
             connector.fetch_mergerequests(
-                MergeRequestScope(repository_external_ids=["101"]),
+                MergeRequestScope(repository_external_ids=["gitlab.example.com/101"]),
                 _date_window(),
             )
         )
@@ -987,7 +986,7 @@ def test_fetch_mergerequests_approval_404_yields_zero(
         connector = _make_connector(monkeypatch, handler)
         mrs = await _collect(
             connector.fetch_mergerequests(
-                MergeRequestScope(repository_external_ids=["101"]),
+                MergeRequestScope(repository_external_ids=["gitlab.example.com/101"]),
                 _date_window(),
             )
         )
@@ -1016,7 +1015,7 @@ def test_fetch_mergerequests_approval_403_yields_zero(
         connector = _make_connector(monkeypatch, handler)
         mrs = await _collect(
             connector.fetch_mergerequests(
-                MergeRequestScope(repository_external_ids=["101"]),
+                MergeRequestScope(repository_external_ids=["gitlab.example.com/101"]),
                 _date_window(),
             )
         )
@@ -1077,7 +1076,7 @@ def test_fetch_mergerequests_enrichment_paired_per_mr(
         connector = _make_connector(monkeypatch, handler)
         mrs = await _collect(
             connector.fetch_mergerequests(
-                MergeRequestScope(repository_external_ids=["101"]),
+                MergeRequestScope(repository_external_ids=["gitlab.example.com/101"]),
                 _date_window(),
             )
         )
@@ -1088,14 +1087,14 @@ def test_fetch_mergerequests_enrichment_paired_per_mr(
 
         mr1 = by_iid[1]
         assert mr1.changed_files_count == 3
-        assert mr1.additions is None
-        assert mr1.deletions is None
+        assert mr1.additions == 10
+        assert mr1.deletions == 2
         assert mr1.approval_count == 1
 
         mr2 = by_iid[2]
         assert mr2.changed_files_count == 7
-        assert mr2.additions is None
-        assert mr2.deletions is None
+        assert mr2.additions == 30
+        assert mr2.deletions == 5
         assert mr2.approval_count == 2
 
     asyncio.run(run())
@@ -1143,7 +1142,7 @@ def test_fetch_mergerequests_handles_empty_partial_and_full_pages(
         connector = _make_connector(monkeypatch, handler)
         mrs = await _collect(
             connector.fetch_mergerequests(
-                MergeRequestScope(repository_external_ids=["101"]),
+                MergeRequestScope(repository_external_ids=["gitlab.example.com/101"]),
                 _date_window(),
             )
         )
@@ -1212,7 +1211,7 @@ def test_fetch_mergerequests_iterates_multiple_repositories(
         connector = _make_connector(monkeypatch, handler)
         mrs = await _collect(
             connector.fetch_mergerequests(
-                MergeRequestScope(repository_external_ids=["101", "202"]),
+                MergeRequestScope(repository_external_ids=["gitlab.example.com/101", "gitlab.example.com/202"]),
                 _date_window(),
             )
         )
@@ -1220,13 +1219,20 @@ def test_fetch_mergerequests_iterates_multiple_repositories(
 
         assert len(mrs) == 3
         repo_101_ids = [
-            mr.external_id for mr in mrs if mr.repository_id == _stable_id("repository", "101")
+            mr.external_id
+            for mr in mrs
+            if mr.repository_id == _stable_id("repository", "gitlab.example.com/101")
         ]
         repo_202_ids = [
-            mr.external_id for mr in mrs if mr.repository_id == _stable_id("repository", "202")
+            mr.external_id
+            for mr in mrs
+            if mr.repository_id == _stable_id("repository", "gitlab.example.com/202")
         ]
-        assert repo_101_ids == ["2001"]
-        assert sorted(repo_202_ids) == ["3001", "3002"]
+        assert repo_101_ids == ["gitlab.example.com/2001"]
+        assert sorted(repo_202_ids) == [
+            "gitlab.example.com/3001",
+            "gitlab.example.com/3002",
+        ]
 
     asyncio.run(run())
 
@@ -1236,9 +1242,11 @@ def test_fetch_mergerequests_iterates_multiple_repositories(
 # ---------------------------------------------------------------------------
 
 
-def test_fetch_mergerequests_sends_updated_before_for_date_range_window(
+def test_fetch_mergerequests_no_updated_before_for_date_range_window(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """DATE_RANGE window does NOT send updated_before; terminal MRs merged inside the window
+    but updated (e.g. commented on) after window.end must still be returned."""
     seen_params: list[str | None] = []
 
     async def run() -> None:
@@ -1251,7 +1259,7 @@ def test_fetch_mergerequests_sends_updated_before_for_date_range_window(
         connector = _make_connector(monkeypatch, handler)
         await _collect(
             connector.fetch_mergerequests(
-                MergeRequestScope(repository_external_ids=["101"]),
+                MergeRequestScope(repository_external_ids=["gitlab.example.com/101"]),
                 _date_window(),
             )
         )
@@ -1260,7 +1268,7 @@ def test_fetch_mergerequests_sends_updated_before_for_date_range_window(
     asyncio.run(run())
 
     assert len(seen_params) == 1
-    assert seen_params[0] == "2026-05-31T00:00:00Z"
+    assert seen_params[0] is None
 
 
 def test_fetch_mergerequests_no_updated_after_for_date_range_window(
@@ -1279,7 +1287,7 @@ def test_fetch_mergerequests_no_updated_after_for_date_range_window(
         connector = _make_connector(monkeypatch, handler)
         await _collect(
             connector.fetch_mergerequests(
-                MergeRequestScope(repository_external_ids=["101"]),
+                MergeRequestScope(repository_external_ids=["gitlab.example.com/101"]),
                 _date_window(),
             )
         )
@@ -1305,7 +1313,7 @@ def test_fetch_mergerequests_no_updated_before_for_sprint_window(
         connector = _make_connector(monkeypatch, handler)
         await _collect(
             connector.fetch_mergerequests(
-                MergeRequestScope(repository_external_ids=["101"]),
+                MergeRequestScope(repository_external_ids=["gitlab.example.com/101"]),
                 _sprint_window(),
             )
         )
@@ -1332,7 +1340,7 @@ def test_fetch_mergerequests_no_updated_after_for_sprint_window(
         connector = _make_connector(monkeypatch, handler)
         await _collect(
             connector.fetch_mergerequests(
-                MergeRequestScope(repository_external_ids=["101"]),
+                MergeRequestScope(repository_external_ids=["gitlab.example.com/101"]),
                 _sprint_window(),
             )
         )
@@ -1373,7 +1381,7 @@ def test_fetch_mergerequests_stale_open_mr_included_in_date_range(
         connector = _make_connector(monkeypatch, handler)
         mrs = await _collect(
             connector.fetch_mergerequests(
-                MergeRequestScope(repository_external_ids=["101"]),
+                MergeRequestScope(repository_external_ids=["gitlab.example.com/101"]),
                 _date_window(),
             )
         )
@@ -1411,7 +1419,7 @@ def test_fetch_mergerequests_merged_mr_outside_window_excluded(
         connector = _make_connector(monkeypatch, handler)
         mrs = await _collect(
             connector.fetch_mergerequests(
-                MergeRequestScope(repository_external_ids=["101"]),
+                MergeRequestScope(repository_external_ids=["gitlab.example.com/101"]),
                 _date_window(),
             )
         )
@@ -1459,7 +1467,7 @@ def test_fetch_mergerequests_closed_mr_outside_window_excluded(
         mrs = await _collect(
             connector.fetch_mergerequests(
                 MergeRequestScope(
-                    repository_external_ids=["101"],
+                    repository_external_ids=["gitlab.example.com/101"],
                     include_closed_unmerged=True,
                 ),
                 _date_window(),
@@ -1505,7 +1513,7 @@ def test_fetch_mergerequests_merged_mr_inside_window_included(
         connector = _make_connector(monkeypatch, handler)
         mrs = await _collect(
             connector.fetch_mergerequests(
-                MergeRequestScope(repository_external_ids=["101"]),
+                MergeRequestScope(repository_external_ids=["gitlab.example.com/101"]),
                 _date_window(),
             )
         )
@@ -1543,7 +1551,7 @@ def test_fetch_mergerequests_merged_mr_satisfies_invariant(
         connector = _make_connector(monkeypatch, handler)
         mrs = await _collect(
             connector.fetch_mergerequests(
-                MergeRequestScope(repository_external_ids=["101"]),
+                MergeRequestScope(repository_external_ids=["gitlab.example.com/101"]),
                 _date_window(),
             )
         )
@@ -1579,7 +1587,7 @@ def test_fetch_mergerequests_closed_mr_satisfies_invariant(
         mrs = await _collect(
             connector.fetch_mergerequests(
                 MergeRequestScope(
-                    repository_external_ids=["101"],
+                    repository_external_ids=["gitlab.example.com/101"],
                     include_closed_unmerged=True,
                 ),
                 _date_window(),
@@ -1629,7 +1637,7 @@ def test_fetch_mergerequests_closed_draft_mr_included_when_closed_requested(
             )
 
         scope_include = MergeRequestScope(
-            repository_external_ids=["101"],
+            repository_external_ids=["gitlab.example.com/101"],
             include_drafts=False,
             include_closed_unmerged=True,
         )
@@ -1676,7 +1684,7 @@ def test_fetch_mergerequests_closed_draft_mr_excluded_when_closed_not_requested(
             )
 
         scope_exclude = MergeRequestScope(
-            repository_external_ids=["101"],
+            repository_external_ids=["gitlab.example.com/101"],
             include_drafts=False,
             include_closed_unmerged=False,
         )
@@ -1723,7 +1731,7 @@ def test_fetch_mergerequests_merged_draft_mr_included_when_drafts_excluded(
         mrs = await _collect(
             connector.fetch_mergerequests(
                 MergeRequestScope(
-                    repository_external_ids=["101"],
+                    repository_external_ids=["gitlab.example.com/101"],
                     include_drafts=False,
                 ),
                 _date_window(),
@@ -1765,7 +1773,7 @@ def test_fetch_mergerequests_missing_merged_at_raises(
         with pytest.raises(ConnectorDataError, match="merged_at"):
             await _collect(
                 connector.fetch_mergerequests(
-                    MergeRequestScope(repository_external_ids=["101"]),
+                    MergeRequestScope(repository_external_ids=["gitlab.example.com/101"]),
                     _date_window(),
                 )
             )
@@ -1796,7 +1804,7 @@ def test_fetch_mergerequests_missing_closed_at_raises(
             await _collect(
                 connector.fetch_mergerequests(
                     MergeRequestScope(
-                        repository_external_ids=["101"],
+                        repository_external_ids=["gitlab.example.com/101"],
                         include_closed_unmerged=True,
                     ),
                     _date_window(),
@@ -1828,7 +1836,7 @@ def test_fetch_mergerequests_invalid_datetime_raises(
         with pytest.raises(ConnectorDataError, match="not-a-datetime"):
             await _collect(
                 connector.fetch_mergerequests(
-                    MergeRequestScope(repository_external_ids=["101"]),
+                    MergeRequestScope(repository_external_ids=["gitlab.example.com/101"]),
                     _date_window(),
                 )
             )
@@ -1850,7 +1858,7 @@ def test_fetch_mergerequests_non_list_response_raises(
         with pytest.raises(ConnectorDataError):
             await _collect(
                 connector.fetch_mergerequests(
-                    MergeRequestScope(repository_external_ids=["101"]),
+                    MergeRequestScope(repository_external_ids=["gitlab.example.com/101"]),
                     _date_window(),
                 )
             )
@@ -1868,7 +1876,7 @@ def test_fetch_mergerequests_wraps_network_errors(monkeypatch: pytest.MonkeyPatc
         with pytest.raises(ConnectorTransientError):
             await _collect(
                 connector.fetch_mergerequests(
-                    MergeRequestScope(repository_external_ids=["101"]),
+                    MergeRequestScope(repository_external_ids=["gitlab.example.com/101"]),
                     _date_window(),
                 )
             )
@@ -1898,7 +1906,7 @@ def test_fetch_mergerequests_detail_500_raises_transient_error(
         with pytest.raises(ConnectorTransientError):
             await _collect(
                 connector.fetch_mergerequests(
-                    MergeRequestScope(repository_external_ids=["101"]),
+                    MergeRequestScope(repository_external_ids=["gitlab.example.com/101"]),
                     _date_window(),
                 )
             )
@@ -1928,7 +1936,7 @@ def test_fetch_mergerequests_approvals_500_raises_transient_error(
         with pytest.raises(ConnectorTransientError):
             await _collect(
                 connector.fetch_mergerequests(
-                    MergeRequestScope(repository_external_ids=["101"]),
+                    MergeRequestScope(repository_external_ids=["gitlab.example.com/101"]),
                     _date_window(),
                 )
             )
@@ -1962,7 +1970,7 @@ def test_fetch_mergerequests_both_enrichment_endpoints_500_raises(
         with pytest.raises(ConnectorTransientError):
             await _collect(
                 connector.fetch_mergerequests(
-                    MergeRequestScope(repository_external_ids=["101"]),
+                    MergeRequestScope(repository_external_ids=["gitlab.example.com/101"]),
                     _date_window(),
                 )
             )
@@ -2017,9 +2025,11 @@ def test_fetch_mergerequests_repository_id_matches_list_repositories(
         connector = _make_connector(monkeypatch, handler)
 
         repositories = await connector.list_repositories()
+        # Use the namespaced external_id from list_repositories as the scope input,
+        # which is how the report runner drives fetch_mergerequests in production.
         mrs = await _collect(
             connector.fetch_mergerequests(
-                MergeRequestScope(repository_external_ids=[str(project_id)]),
+                MergeRequestScope(repository_external_ids=[repositories[0].external_id]),
                 _date_window(),
             )
         )

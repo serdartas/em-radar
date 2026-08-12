@@ -47,6 +47,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, JsonValue, model_validator
 from sqlmodel import Session, select
 
+from em_radar_api.signal_configs import SignalConfigTable
+
 from em_radar_api.db import get_session, get_write_session
 from em_radar_api.connector_registry import create_connector
 from em_radar_api.repositories.canonical import persist_fetch
@@ -222,8 +224,9 @@ async def _run_team_report(
 
     # Extract work-item keys from each MR and resolve them against the fetched board work
     # items so linked_workitem_keys/ids are persisted (mutates each MR in place).
+    key_pattern = _workitem_key_pattern(session)
     for merge_request in code_mergerequests:
-        populate_merge_request_links(merge_request, board_workitems, DEFAULT_WORKITEM_KEY_PATTERN)
+        populate_merge_request_links(merge_request, board_workitems, key_pattern)
 
     identity = persist_fetch(
         session,
@@ -704,6 +707,24 @@ def _placeholder_code_users(
         )
         for user_id, source in sorted(author_sources.items())
     ]
+
+
+def _workitem_key_pattern(session: Session) -> str:
+    """Return the configured work-item key regex pattern, falling back to the default.
+
+    The pattern is stored in the params of the 'mergerequest-without-linked-workitem' signal
+    config so that the same pattern governs both key extraction and the detection signal.
+    """
+    config = session.exec(
+        select(SignalConfigTable).where(
+            SignalConfigTable.signal_id == "mergerequest-without-linked-workitem"
+        )
+    ).first()
+    if config is not None:
+        pattern = config.params.get("workitem_key_pattern")
+        if isinstance(pattern, str) and pattern:
+            return pattern
+    return DEFAULT_WORKITEM_KEY_PATTERN
 
 
 def _counts_by_severity(findings: Sequence[SignalFinding]) -> dict[Severity, int]:

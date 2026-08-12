@@ -5,6 +5,7 @@ import logging
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from datetime import datetime, timezone
 from typing import ClassVar, cast
+from urllib.parse import urlparse
 from uuid import UUID, uuid5
 
 import httpx
@@ -44,7 +45,16 @@ CLIENT_FACTORY: Callable[..., httpx.AsyncClient] = httpx.AsyncClient
 PAGE_SIZE = 100
 _NAMESPACE = UUID("c7d8a5f1-3b4e-4f2a-8c9d-1e0f7a6b5c3d")
 
-# Issue 6: module-level constant so the dict is built once, not per MR.
+
+def _url_instance_prefix(base_url: HttpUrl) -> str:
+    """Return host[:port] from a URL for namespacing entity external IDs per GitLab instance.
+
+    Two configured GitLab instances share Source.GITLAB and their numeric entity IDs may
+    collide; the host prefix makes every (source, external_id) pair globally unique.
+    """
+    return urlparse(str(base_url)).netloc
+
+
 # Maps the beginning of a GitLab system-note body to a canonical review decision.
 # Matched with str.startswith so minor suffix variations (e.g. punctuation) are tolerated.
 _REVIEW_NOTE_PATTERNS: tuple[tuple[str, ReviewDecision], ...] = (
@@ -97,6 +107,7 @@ class GitLabConnector:
         except ValidationError as error:
             raise ConnectorConfigError("Invalid GitLab connector config") from error
 
+        self._instance_prefix = _url_instance_prefix(self.config.base_url)
         token = self.config.token.get_secret_value()
         self._client = create_redacting_async_client(
             client_factory=CLIENT_FACTORY,
@@ -256,7 +267,7 @@ class GitLabConnector:
 
     async def _fetch_project_mergerequests(
         self,
-        project_id: str,
+        namespaced_project_id: str,
         scope: MergeRequestScope,
         window: EvaluationWindow,
     ) -> AsyncIterator[MergeRequest]:
@@ -266,12 +277,13 @@ class GitLabConnector:
             "sort": "desc",
             "per_page": PAGE_SIZE,
         }
-        # Upper-bound the fetch so future noise is excluded; lower-bound filtering is done
-        # after normalization so open MRs last touched before window.start are still visible
-        # to staleness signals.
-        if window.window_type is WindowType.DATE_RANGE:
-            if window.end is not None:
-                params["updated_before"] = _format_iso_datetime(window.end)
+        # No updated_before upper bound: terminal MRs merged/closed inside the window but
+        # updated (e.g. commented on) after window.end would be silently excluded by the
+        # API if we applied it.  Post-normalization filters (_payload_in_window,
+        # _mr_in_window) handle window boundaries correctly without this parameter.
+
+        # Strip the instance prefix to get the numeric GitLab project ID for API calls.
+        project_api_id = namespaced_project_id.split("/", 1)[-1]
 
         # Cap concurrent enrichment requests to avoid triggering GitLab rate limits on full pages.
         # Created per method call so it does not bleed across concurrent invocations.
@@ -280,10 +292,9 @@ class GitLabConnector:
         async def _enrich(
             payload: Mapping[str, object],
             is_draft: bool,
-        ) -> tuple[Mapping[str, object], bool, int | None, int]:
+        ) -> tuple[Mapping[str, object], bool, int | None, int | None, int | None, int]:
             iid = _required_positive_int(payload, "iid")
-            # Issue 2: diff stats are absent from the list endpoint; fetch them separately.
-            # Both fetches are independent — run them concurrently, under the shared semaphore.
+            # Diff stats and approvals are independent — run them concurrently under the semaphore.
             # TaskGroup cancels the sibling coroutine on error; asyncio.gather would leave it
             # orphaned (e.g. a 500 on /approvals keeps diff-stats in flight).
             # Use plain except (not except*) so the inner ExceptionGroup is unwrapped into a
@@ -293,25 +304,28 @@ class GitLabConnector:
                 try:
                     async with asyncio.TaskGroup() as tg:
                         diff_task = tg.create_task(
-                            self._resolve_diff_stats(project_id, iid, payload)
+                            self._resolve_diff_stats(project_api_id, iid, payload)
                         )
-                        approval_task = tg.create_task(self._fetch_approval_count(project_id, iid))
+                        approval_task = tg.create_task(
+                            self._fetch_approval_count(project_api_id, iid)
+                        )
                 except BaseExceptionGroup as eg:
                     if len(eg.exceptions) > 1:
                         _logger.warning(
                             "Multiple enrichment errors for MR; reporting first: %s", eg
                         )
                     raise eg.exceptions[0] from eg
-            return payload, is_draft, diff_task.result(), approval_task.result()
+            changed_files, additions, deletions = diff_task.result()
+            return payload, is_draft, changed_files, additions, deletions, approval_task.result()
 
         page = 1
         while True:
             payloads, next_page = await self._request_json_list_page(
-                f"api/v4/projects/{project_id}/merge_requests",
+                f"api/v4/projects/{project_api_id}/merge_requests",
                 params={**params, "page": page},
             )
 
-            # Issue 4: read state first so the draft heuristic can gate on it.
+            # Read state first so the draft heuristic can gate on it.
             # Filter before enrichment so skipped MRs never trigger extra network calls.
             accepted: list[tuple[Mapping[str, object], bool]] = []
             for payload in payloads:
@@ -348,9 +362,16 @@ class GitLabConnector:
             ) as eg:
                 raise eg.exceptions[0]
             results = [t.result() for t in tasks]
-            for payload, is_draft, changed_files_count, approval_count in results:
+            for payload, is_draft, changed_files_count, additions, deletions, approval_count in results:
                 mr = _mergerequest_from_payload(
-                    payload, project_id, is_draft, approval_count, changed_files_count
+                    payload,
+                    namespaced_project_id,
+                    self._instance_prefix,
+                    is_draft,
+                    approval_count,
+                    changed_files_count,
+                    additions,
+                    deletions,
                 )
                 if _mr_in_window(mr, window):
                     yield mr
@@ -401,23 +422,32 @@ class GitLabConnector:
         project_id: str,
         iid: int,
         list_payload: Mapping[str, object],
-    ) -> int | None:
-        """Return changed_files_count.
+    ) -> tuple[int | None, int | None, int | None]:
+        """Return (changed_files_count, additions, deletions).
 
         The REST list endpoint does not include diff stats; we try the list payload first
-        (forward-compatibility) and fall back to the single-MR endpoint when it is missing.
-        Line-level additions/deletions are not reliably exposed by the REST endpoints, so
-        they are intentionally not fetched.
+        for changed_files_count (forward-compatibility) and always fetch the single-MR
+        detail endpoint to obtain additions and deletions.  Top-level additions/deletions
+        on the detail response are preferred; diff_stats_summary is used as a fallback.
         """
         diff_stats = _optional_mapping(list_payload.get("diff_stats_summary"))
-        changed_files = _parse_changes_count(list_payload.get("changes_count"), diff_stats)
+        list_changed_files = _parse_changes_count(list_payload.get("changes_count"), diff_stats)
 
-        if changed_files is None:
-            detail = await self._fetch_mr_detail(project_id, iid)
-            detail_diff_stats = _optional_mapping(detail.get("diff_stats_summary"))
-            changed_files = _parse_changes_count(detail.get("changes_count"), detail_diff_stats)
+        detail = await self._fetch_mr_detail(project_id, iid)
+        detail_diff_stats = _optional_mapping(detail.get("diff_stats_summary"))
+        detail_changed_files = _parse_changes_count(detail.get("changes_count"), detail_diff_stats)
 
-        return changed_files
+        changed_files = list_changed_files if list_changed_files is not None else detail_changed_files
+
+        additions = _optional_nonneg_int(detail, "additions")
+        if additions is None and detail_diff_stats is not None:
+            additions = _optional_nonneg_int(detail_diff_stats, "additions")
+
+        deletions = _optional_nonneg_int(detail, "deletions")
+        if deletions is None and detail_diff_stats is not None:
+            deletions = _optional_nonneg_int(detail_diff_stats, "deletions")
+
+        return changed_files, additions, deletions
 
     async def list_repositories(self) -> list[Repository]:
         repositories: list[Repository] = []
@@ -435,7 +465,9 @@ class GitLabConnector:
                     "membership": True,
                 },
             )
-            repositories.extend(_repository_from_payload(payload) for payload in payloads)
+            repositories.extend(
+                _repository_from_payload(payload, self._instance_prefix) for payload in payloads
+            )
             if next_page is None:
                 return repositories
             if next_page <= page:
@@ -453,7 +485,9 @@ class GitLabConnector:
     async def _fetch_reviews_for_mr(self, mr_external_id: str) -> AsyncIterator[Review]:
         # Resolve project_id and iid from the global MR id.
         # GitLab exposes a non-project-scoped endpoint for this since 13.5.
-        mr_payload = await self._request_json(f"api/v4/merge_requests/{mr_external_id}")
+        # Strip the instance prefix (e.g. "gitlab.example.com/2001" → "2001") for the API call.
+        mr_api_id = mr_external_id.split("/", 1)[-1]
+        mr_payload = await self._request_json(f"api/v4/merge_requests/{mr_api_id}")
         project_id = str(_required_positive_int(mr_payload, "project_id"))
         iid = _required_positive_int(mr_payload, "iid")
         mr_id = _stable_id("mergerequest", mr_external_id)
@@ -484,7 +518,7 @@ class GitLabConnector:
                 },
             )
             for note_payload in payloads:
-                review = _review_from_note(note_payload, mr_id)
+                review = _review_from_note(note_payload, mr_id, self._instance_prefix)
                 if review is not None:
                     yield review
             if next_page is None:
@@ -513,7 +547,9 @@ class GitLabConnector:
                 # GitLab reviewers endpoint returns MergeRequestReviewer objects:
                 # {"user": {"id": ..., ...}, "state": "unreviewed"|"reviewed"|..., "created_at": ...}
                 user = _required_mapping(reviewer_payload, "user")
-                reviewer_id = _stable_id("user", str(_required_positive_int(user, "id")))
+                reviewer_id = _stable_id(
+                    "user", f"{self._instance_prefix}/{str(_required_positive_int(user, 'id'))}"
+                )
                 state = _optional_str(reviewer_payload, "state")
                 if state not in _REVIEWER_ACTED_STATES:
                     # Snapshot-derived: this row reflects the API state at fetch time.
@@ -599,12 +635,16 @@ def _stable_id(kind: str, external_id: str) -> UUID:
 
 def _mergerequest_from_payload(
     payload: Mapping[str, object],
-    project_id: str,
+    namespaced_project_id: str,
+    instance_prefix: str,
     is_draft: bool,
     approval_count: int,
     changed_files_count: int | None,
+    additions: int | None,
+    deletions: int | None,
 ) -> MergeRequest:
     mr_global_id = str(_required_positive_int(payload, "id"))
+    namespaced_mr_id = f"{instance_prefix}/{mr_global_id}"
     iid = _required_positive_int(payload, "iid")
     gl_state = _optional_str(payload, "state") or ""
     state = _mr_state(gl_state, is_draft)
@@ -617,18 +657,18 @@ def _mergerequest_from_payload(
         closed_at = _required_datetime(payload, "closed_at")
 
     author = _required_mapping(payload, "author")
-    author_id = _stable_id("user", str(_required_positive_int(author, "id")))
+    author_id = _stable_id("user", f"{instance_prefix}/{str(_required_positive_int(author, 'id'))}")
 
     pipeline_status, pipeline_updated_at = _pipeline_info(payload.get("head_pipeline"))
 
     comment_count = _optional_nonneg_int(payload, "user_notes_count") or 0
 
     return MergeRequest(
-        id=_stable_id("mergerequest", mr_global_id),
+        id=_stable_id("mergerequest", namespaced_mr_id),
         source=Source.GITLAB,
-        external_id=mr_global_id,
+        external_id=namespaced_mr_id,
         source_url=_optional_str(payload, "web_url"),
-        repository_id=_stable_id("repository", project_id),
+        repository_id=_stable_id("repository", namespaced_project_id),
         iid=iid,
         title=_required_str(payload, "title"),
         description=_optional_str(payload, "description"),
@@ -642,6 +682,8 @@ def _mergerequest_from_payload(
         merged_at=merged_at,
         closed_at=closed_at,
         changed_files_count=changed_files_count,
+        additions=additions,
+        deletions=deletions,
         pipeline_status=pipeline_status,
         pipeline_updated_at=pipeline_updated_at,
         approval_count=approval_count,
@@ -827,18 +869,18 @@ def _string_values(value: object) -> list[str]:
     return [item for item in value if isinstance(item, str)]
 
 
-def _repository_from_payload(payload: Mapping[str, object]) -> Repository:
+def _repository_from_payload(payload: Mapping[str, object], instance_prefix: str) -> Repository:
     default_branch = payload.get("default_branch")
     if default_branch is None:
         default_branch = ""
     if not isinstance(default_branch, str):
         raise ConnectorDataError("GitLab project contained an invalid default_branch")
 
-    project_id = str(_required_positive_int(payload, "id"))
+    namespaced_id = f"{instance_prefix}/{str(_required_positive_int(payload, 'id'))}"
     return Repository(
-        id=_stable_id("repository", project_id),
+        id=_stable_id("repository", namespaced_id),
         source=Source.GITLAB,
-        external_id=project_id,
+        external_id=namespaced_id,
         source_url=_optional_str(payload, "web_url"),
         name=_required_str(payload, "name"),
         full_path=_required_str(payload, "path_with_namespace"),
@@ -877,7 +919,9 @@ def _required_bool(payload: Mapping[str, object], key: str) -> bool:
     return value
 
 
-def _review_from_note(note_payload: Mapping[str, object], mr_id: UUID) -> Review | None:
+def _review_from_note(
+    note_payload: Mapping[str, object], mr_id: UUID, instance_prefix: str
+) -> Review | None:
     """Return a Review from a GitLab system note, or None if the note is not a review event."""
     if note_payload.get("system") is not True:
         return None
@@ -890,7 +934,9 @@ def _review_from_note(note_payload: Mapping[str, object], mr_id: UUID) -> Review
     if decision is None:
         return None
     author = _required_mapping(note_payload, "author")
-    reviewer_id = _stable_id("user", str(_required_positive_int(author, "id")))
+    reviewer_id = _stable_id(
+        "user", f"{instance_prefix}/{str(_required_positive_int(author, 'id'))}"
+    )
     submitted_at = _required_datetime(note_payload, "created_at")
     return Review(
         mergerequest_id=mr_id,

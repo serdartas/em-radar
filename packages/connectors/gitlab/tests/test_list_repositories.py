@@ -92,9 +92,9 @@ def test_list_repositories_normalizes_all_paginated_projects(
             )
             for repository in repositories
         ] == [
-            ("101", "API", "engineering/platform/api", "main", False),
-            ("102", "Legacy", "engineering/legacy", "master", True),
-            ("103", "Web", "product/web", "trunk", False),
+            ("gitlab.example.com/101", "API", "engineering/platform/api", "main", False),
+            ("gitlab.example.com/102", "Legacy", "engineering/legacy", "master", True),
+            ("gitlab.example.com/103", "Web", "product/web", "trunk", False),
         ]
         assert all(repository.source is Source.GITLAB for repository in repositories)
         assert repositories[0].source_url == ("https://gitlab.example.com/engineering/platform/api")
@@ -145,6 +145,7 @@ def test_list_repositories_keeps_projects_without_a_default_branch(
         await connector.close()
 
         assert len(repositories) == 1
+        assert repositories[0].external_id == "gitlab.example.com/104"
         assert repositories[0].default_branch == ""
 
     asyncio.run(run())

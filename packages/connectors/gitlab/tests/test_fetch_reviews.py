@@ -119,14 +119,14 @@ def test_fetch_reviews_normalizes_approved_note(monkeypatch: pytest.MonkeyPatch)
             raise AssertionError(f"unexpected path: {path}")
 
         connector = _make_connector(monkeypatch, handler)
-        reviews = await _collect(connector.fetch_reviews(["2001"]))
+        reviews = await _collect(connector.fetch_reviews(["gitlab.example.com/2001"]))
         await connector.close()
 
         assert len(reviews) == 1
         r = reviews[0]
         assert r.decision is ReviewDecision.APPROVED
-        assert r.reviewer_id == _stable_id("user", "42")
-        assert r.mergerequest_id == _stable_id("mergerequest", "2001")
+        assert r.reviewer_id == _stable_id("user", "gitlab.example.com/42")
+        assert r.mergerequest_id == _stable_id("mergerequest", "gitlab.example.com/2001")
         assert r.submitted_at == datetime(2026, 5, 10, 10, 0, 0, tzinfo=timezone.utc)
 
     asyncio.run(run())
@@ -149,7 +149,7 @@ def test_fetch_reviews_normalizes_dismissed_from_unapproved_note(
             raise AssertionError(f"unexpected path: {path}")
 
         connector = _make_connector(monkeypatch, handler)
-        reviews = await _collect(connector.fetch_reviews(["2001"]))
+        reviews = await _collect(connector.fetch_reviews(["gitlab.example.com/2001"]))
         await connector.close()
 
         assert len(reviews) == 1
@@ -189,13 +189,13 @@ def test_fetch_reviews_changes_requested_note_produces_row(
             raise AssertionError(f"unexpected path: {path}")
 
         connector = _make_connector(monkeypatch, handler)
-        reviews = await _collect(connector.fetch_reviews(["2001"]))
+        reviews = await _collect(connector.fetch_reviews(["gitlab.example.com/2001"]))
         await connector.close()
 
         assert len(reviews) == 1
         r = reviews[0]
         assert r.decision is ReviewDecision.CHANGES_REQUESTED
-        assert r.reviewer_id == _stable_id("user", "42")
+        assert r.reviewer_id == _stable_id("user", "gitlab.example.com/42")
         assert r.submitted_at == datetime(2026, 5, 10, 10, 0, 0, tzinfo=timezone.utc)
 
     asyncio.run(run())
@@ -218,15 +218,15 @@ def test_fetch_reviews_requested_row_has_null_submitted_at(
             raise AssertionError(f"unexpected path: {path}")
 
         connector = _make_connector(monkeypatch, handler)
-        reviews = await _collect(connector.fetch_reviews(["2001"]))
+        reviews = await _collect(connector.fetch_reviews(["gitlab.example.com/2001"]))
         await connector.close()
 
         assert len(reviews) == 1
         r = reviews[0]
         assert r.decision is ReviewDecision.REQUESTED
         assert r.submitted_at is None
-        assert r.reviewer_id == _stable_id("user", "99")
-        assert r.mergerequest_id == _stable_id("mergerequest", "2001")
+        assert r.reviewer_id == _stable_id("user", "gitlab.example.com/99")
+        assert r.mergerequest_id == _stable_id("mergerequest", "gitlab.example.com/2001")
 
     asyncio.run(run())
 
@@ -268,7 +268,7 @@ def test_fetch_reviews_approve_then_unapprove_yields_two_ordered_rows(
             raise AssertionError(f"unexpected path: {path}")
 
         connector = _make_connector(monkeypatch, handler)
-        reviews = await _collect(connector.fetch_reviews(["2001"]))
+        reviews = await _collect(connector.fetch_reviews(["gitlab.example.com/2001"]))
         await connector.close()
 
         assert len(reviews) == 2
@@ -309,7 +309,7 @@ def test_fetch_reviews_skips_non_system_notes(monkeypatch: pytest.MonkeyPatch) -
             raise AssertionError(f"unexpected path: {path}")
 
         connector = _make_connector(monkeypatch, handler)
-        reviews = await _collect(connector.fetch_reviews(["2001"]))
+        reviews = await _collect(connector.fetch_reviews(["gitlab.example.com/2001"]))
         await connector.close()
 
         assert reviews == []
@@ -343,7 +343,7 @@ def test_fetch_reviews_skips_unrecognised_system_notes(monkeypatch: pytest.Monke
             raise AssertionError(f"unexpected path: {path}")
 
         connector = _make_connector(monkeypatch, handler)
-        reviews = await _collect(connector.fetch_reviews(["2001"]))
+        reviews = await _collect(connector.fetch_reviews(["gitlab.example.com/2001"]))
         await connector.close()
 
         assert reviews == []
@@ -373,7 +373,7 @@ def test_fetch_reviews_yields_activity_then_requested(monkeypatch: pytest.Monkey
             raise AssertionError(f"unexpected path: {path}")
 
         connector = _make_connector(monkeypatch, handler)
-        reviews = await _collect(connector.fetch_reviews(["2001"]))
+        reviews = await _collect(connector.fetch_reviews(["gitlab.example.com/2001"]))
         await connector.close()
 
         assert len(reviews) == 2
@@ -415,12 +415,12 @@ def test_fetch_reviews_iterates_multiple_mr_ids(monkeypatch: pytest.MonkeyPatch)
             raise AssertionError(f"unexpected path: {path}")
 
         connector = _make_connector(monkeypatch, handler)
-        reviews = await _collect(connector.fetch_reviews(["2001", "3001"]))
+        reviews = await _collect(connector.fetch_reviews(["gitlab.example.com/2001", "gitlab.example.com/3001"]))
         await connector.close()
 
         assert len(reviews) == 2
-        assert reviews[0].mergerequest_id == _stable_id("mergerequest", "2001")
-        assert reviews[1].mergerequest_id == _stable_id("mergerequest", "3001")
+        assert reviews[0].mergerequest_id == _stable_id("mergerequest", "gitlab.example.com/2001")
+        assert reviews[1].mergerequest_id == _stable_id("mergerequest", "gitlab.example.com/3001")
 
     asyncio.run(run())
 
@@ -471,7 +471,7 @@ def test_fetch_reviews_paginates_notes(monkeypatch: pytest.MonkeyPatch) -> None:
             raise AssertionError(f"unexpected path: {path}")
 
         connector = _make_connector(monkeypatch, handler)
-        reviews = await _collect(connector.fetch_reviews(["2001"]))
+        reviews = await _collect(connector.fetch_reviews(["gitlab.example.com/2001"]))
         await connector.close()
 
         assert len(reviews) == 2
@@ -504,7 +504,7 @@ def test_fetch_reviews_acted_reviewer_does_not_produce_requested_row(
             raise AssertionError(f"unexpected path: {path}")
 
         connector = _make_connector(monkeypatch, handler)
-        reviews = await _collect(connector.fetch_reviews(["2001"]))
+        reviews = await _collect(connector.fetch_reviews(["gitlab.example.com/2001"]))
         await connector.close()
 
         assert reviews == []
@@ -531,13 +531,13 @@ def test_fetch_reviews_review_started_produces_requested_row(
             raise AssertionError(f"unexpected path: {path}")
 
         connector = _make_connector(monkeypatch, handler)
-        reviews = await _collect(connector.fetch_reviews(["2001"]))
+        reviews = await _collect(connector.fetch_reviews(["gitlab.example.com/2001"]))
         await connector.close()
 
         assert len(reviews) == 1
         assert reviews[0].decision is ReviewDecision.REQUESTED
         assert reviews[0].submitted_at is None
-        assert reviews[0].reviewer_id == _stable_id("user", "99")
+        assert reviews[0].reviewer_id == _stable_id("user", "gitlab.example.com/99")
 
     asyncio.run(run())
 
@@ -559,7 +559,7 @@ def test_fetch_reviews_reviewed_state_yields_no_row(
             raise AssertionError(f"unexpected path: {path}")
 
         connector = _make_connector(monkeypatch, handler)
-        reviews = await _collect(connector.fetch_reviews(["2001"]))
+        reviews = await _collect(connector.fetch_reviews(["gitlab.example.com/2001"]))
         await connector.close()
 
         assert reviews == []
@@ -601,14 +601,17 @@ def test_fetch_reviews_paginates_reviewers(monkeypatch: pytest.MonkeyPatch) -> N
             raise AssertionError(f"unexpected path: {path}")
 
         connector = _make_connector(monkeypatch, handler)
-        reviews = await _collect(connector.fetch_reviews(["2001"]))
+        reviews = await _collect(connector.fetch_reviews(["gitlab.example.com/2001"]))
         await connector.close()
 
         assert pages_fetched == ["1", "2"]
         assert len(reviews) == 2
         assert all(r.decision is ReviewDecision.REQUESTED for r in reviews)
         reviewer_ids = {r.reviewer_id for r in reviews}
-        assert reviewer_ids == {_stable_id("user", "99"), _stable_id("user", "100")}
+        assert reviewer_ids == {
+            _stable_id("user", "gitlab.example.com/99"),
+            _stable_id("user", "gitlab.example.com/100"),
+        }
 
     asyncio.run(run())
 
@@ -637,7 +640,7 @@ def test_fetch_reviews_reviewer_endpoint_unavailable_degrades_gracefully(
             raise AssertionError(f"unexpected path: {path}")
 
         connector = _make_connector(monkeypatch, handler)
-        reviews = await _collect(connector.fetch_reviews(["2001"]))
+        reviews = await _collect(connector.fetch_reviews(["gitlab.example.com/2001"]))
         await connector.close()
 
         # Activity row from note is still yielded even though reviewers was unavailable.
@@ -664,7 +667,7 @@ def test_fetch_reviews_mr_global_404_raises(monkeypatch: pytest.MonkeyPatch) -> 
         from em_radar_core.connectors import ConnectorNotFoundError
 
         with pytest.raises(ConnectorNotFoundError):
-            await _collect(connector.fetch_reviews(["9999"]))
+            await _collect(connector.fetch_reviews(["gitlab.example.com/9999"]))
         await connector.close()
 
     asyncio.run(run())
@@ -677,7 +680,7 @@ def test_fetch_reviews_network_error_raises_transient(monkeypatch: pytest.Monkey
 
         connector = _make_connector(monkeypatch, handler)
         with pytest.raises(ConnectorTransientError):
-            await _collect(connector.fetch_reviews(["2001"]))
+            await _collect(connector.fetch_reviews(["gitlab.example.com/2001"]))
         await connector.close()
 
     asyncio.run(run())
@@ -697,7 +700,7 @@ def test_fetch_reviews_notes_500_raises_transient(monkeypatch: pytest.MonkeyPatc
 
         connector = _make_connector(monkeypatch, handler)
         with pytest.raises(ConnectorTransientError):
-            await _collect(connector.fetch_reviews(["2001"]))
+            await _collect(connector.fetch_reviews(["gitlab.example.com/2001"]))
         await connector.close()
 
     asyncio.run(run())
@@ -726,7 +729,7 @@ def test_fetch_reviews_invalid_note_datetime_raises(monkeypatch: pytest.MonkeyPa
 
         connector = _make_connector(monkeypatch, handler)
         with pytest.raises(ConnectorDataError, match="not-a-date"):
-            await _collect(connector.fetch_reviews(["2001"]))
+            await _collect(connector.fetch_reviews(["gitlab.example.com/2001"]))
         await connector.close()
 
     asyncio.run(run())
@@ -763,7 +766,7 @@ def test_fetch_reviews_decision_mapping(
             raise AssertionError(f"unexpected path: {path}")
 
         connector = _make_connector(monkeypatch, handler)
-        reviews = await _collect(connector.fetch_reviews(["2001"]))
+        reviews = await _collect(connector.fetch_reviews(["gitlab.example.com/2001"]))
         await connector.close()
 
         assert len(reviews) == 1
