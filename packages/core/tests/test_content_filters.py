@@ -308,10 +308,116 @@ def test_branches_absent_evaluates_all_workitems() -> None:
 
 
 def test_matches_glob_operator_accepts_wildcard_pattern() -> None:
-    """Glob patterns using * and ? are matched via fnmatch."""
+    """Glob patterns using * and ? are matched via fnmatch (case-sensitive)."""
     from em_radar_core.evaluation.declarative import _compare
 
     assert _compare("feature/my-branch", "matches_glob", "feature/*") is True
     assert _compare("main", "matches_glob", "feature/*") is False
     assert _compare("release/1.0", "matches_glob", "release/?.*") is True
     assert _compare(None, "matches_glob", "feature/*") is False
+    # Matching is case-sensitive for determinism across platforms.
+    assert _compare("Feature/x", "matches_glob", "feature/*") is False
+
+
+# ---------------------------------------------------------------------------
+# workitem_types is / is_not operators
+# ---------------------------------------------------------------------------
+
+
+def test_workitem_types_is_matches_exact_type() -> None:
+    story = workitem(key="RAD-1", item_type=WorkItemType.STORY)
+    bug = workitem(key="RAD-2", item_type=WorkItemType.BUG)
+    expression = {
+        "type": "group",
+        "operator": "all",
+        "conditions": [
+            {"field": "workitem_types", "operator": "is", "value": "story"},
+        ],
+    }
+
+    findings = evaluate_signal_definition(
+        _definition(expression),
+        SignalData(report_id=uuid4(), projects=(project(),), workitems=(story, bug)),
+        context(),
+        JiraConnector.describe_signal_schema(),
+        [_scope()],
+    )
+
+    assert [f.title for f in findings] == ["RAD-1 - RAD-1 title"]
+
+
+def test_workitem_types_is_not_excludes_exact_type() -> None:
+    story = workitem(key="RAD-1", item_type=WorkItemType.STORY)
+    bug = workitem(key="RAD-2", item_type=WorkItemType.BUG)
+    expression = {
+        "type": "group",
+        "operator": "all",
+        "conditions": [
+            {"field": "workitem_types", "operator": "is_not", "value": "bug"},
+        ],
+    }
+
+    findings = evaluate_signal_definition(
+        _definition(expression),
+        SignalData(report_id=uuid4(), projects=(project(),), workitems=(story, bug)),
+        context(),
+        JiraConnector.describe_signal_schema(),
+        [_scope()],
+    )
+
+    assert [f.title for f in findings] == ["RAD-1 - RAD-1 title"]
+
+
+# ---------------------------------------------------------------------------
+# Composition: content filter combined with a domain condition
+# ---------------------------------------------------------------------------
+
+
+def test_workitem_types_filter_composes_with_domain_condition() -> None:
+    """Content filter and non-filter conditions must both be satisfied within a group."""
+    in_progress_story = workitem(key="RAD-1", item_type=WorkItemType.STORY)
+    in_progress_bug = workitem(key="RAD-2", item_type=WorkItemType.BUG)
+    expression = {
+        "type": "group",
+        "operator": "all",
+        "conditions": [
+            {"field": "workitem_types", "operator": "is_any_of", "value": ["story"]},
+            {"field": "status_category", "operator": "is", "value": "in_progress"},
+        ],
+    }
+
+    findings = evaluate_signal_definition(
+        _definition(expression),
+        SignalData(
+            report_id=uuid4(), projects=(project(),), workitems=(in_progress_story, in_progress_bug)
+        ),
+        context(),
+        JiraConnector.describe_signal_schema(),
+        [_scope()],
+    )
+
+    assert [f.title for f in findings] == ["RAD-1 - RAD-1 title"]
+
+
+def test_exclude_labels_composes_with_domain_condition() -> None:
+    """exclude_labels filter combined with a status condition narrows both simultaneously."""
+    keep = workitem(key="RAD-1", labels=[])
+    skip_label = workitem(key="RAD-2", labels=["wont-fix"])
+    expression = {
+        "type": "group",
+        "operator": "all",
+        "conditions": [
+            {"field": "status_category", "operator": "is", "value": "in_progress"},
+            {"field": "exclude_labels", "operator": "does_not_contain", "value": "wont-fix"},
+        ],
+    }
+
+    findings = evaluate_signal_definition(
+        _definition(expression),
+        SignalData(report_id=uuid4(), projects=(project(),), workitems=(keep, skip_label)),
+        context(),
+        JiraConnector.describe_signal_schema(),
+        [_scope()],
+    )
+
+    assert [f.title for f in findings] == ["RAD-1 - RAD-1 title"]

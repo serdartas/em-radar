@@ -326,7 +326,7 @@ def _compare(observed: object, operator: str, expected: object) -> bool:
     if operator == "matches_glob":
         if observed is None or not isinstance(expected, str):
             return False
-        return fnmatch.fnmatch(str(observed), expected)
+        return fnmatch.fnmatchcase(str(observed), expected)
     return False
 
 

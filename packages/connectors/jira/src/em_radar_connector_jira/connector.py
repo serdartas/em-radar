@@ -186,7 +186,7 @@ class JiraConnector:
                     "exclude_labels",
                     "Exclude Labels",
                     "string_list",
-                    ("contains", "does_not_contain", "contains_any", "does_not_contain_any"),
+                    ("does_not_contain", "does_not_contain_any"),
                     value_provider=labels_provider,
                 ),
                 SignalField(
