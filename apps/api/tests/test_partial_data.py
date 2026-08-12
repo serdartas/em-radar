@@ -5,7 +5,6 @@ Tests cover:
 - Board-source auth error → partial-data note + succeeded
 - Rate-limited error variant
 - Non-typed ConnectorError (ConnectorDataError) during fetch → still 502 (fatal)
-- All sources failing → report fails (not misleadingly "succeeded" with 0 data)
 - Clean run → no partial-data notes
 """
 
