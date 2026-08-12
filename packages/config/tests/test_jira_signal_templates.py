@@ -78,7 +78,7 @@ def test_all_eight_jira_templates_preserve_evidence_contracts() -> None:
         "epic-too-broad": ("child_count", "threshold"),
         "epic-without-measurable-description": ("description_length", "threshold"),
         "repeated-carry-over": ("sprint_count", "sprint_names"),
-        "sprint-scope-churn": ("original_count", "added_count", "churn_pct"),
+        "sprint-scope-churn": ("sprint_scope_added_pct",),
     }
 
     assert {template.key: template.evidence_shape for template in JIRA_SIGNAL_TEMPLATES} == expected
@@ -128,24 +128,26 @@ def test_jira_template_expressions_match_positive_and_negative_fixtures() -> Non
         capabilities=("sprint",),
         sprints=(carry_sprint,),
     ) == {"RAD-23"}
+    # Evidence is now generic: field_key → observed_value for each matched condition.
     assert set(_findings("story-without-acceptance-criteria", tuple(workitems))[0].evidence) >= {
         "scope_id",
-        "workitem_type",
-        "has_description",
+        "issue_type",
+        "acceptance_criteria",
     }
     assert set(_findings("story-without-parent-epic", tuple(workitems))[0].evidence) >= {
         "scope_id",
-        "workitem_type",
+        "issue_type",
+        "parent_id",
     }
     assert set(_findings("epic-too-broad", tuple(workitems))[0].evidence) >= {
         "scope_id",
+        "issue_type",
         "child_count",
-        "threshold",
     }
     assert set(_findings("epic-without-measurable-description", tuple(workitems))[0].evidence) >= {
         "scope_id",
+        "issue_type",
         "description_length",
-        "threshold",
     }
     assert set(
         _findings(
@@ -154,7 +156,7 @@ def test_jira_template_expressions_match_positive_and_negative_fixtures() -> Non
             capabilities=("sprint",),
             sprints=(carry_sprint,),
         )[0].evidence
-    ) >= {"scope_id", "sprint_count", "sprint_names"}
+    ) >= {"scope_id", "status_category", "sprint_count"}
     stale = _workitem("RAD-25", updated_at=NOW - timedelta(days=10))
     stale_findings = _findings(
         "stale-in-progress-work-item",
@@ -169,19 +171,18 @@ def test_jira_template_expressions_match_positive_and_negative_fixtures() -> Non
     )
     assert set(stale_findings[0].evidence) >= {
         "scope_id",
-        "days_idle",
-        "last_updated_at",
-        "threshold",
+        "status_category",
+        "age_in_current_status",
     }
     assert set(_findings("blocked-without-update", (blocked,))[0].evidence) >= {
         "scope_id",
-        "days_blocked_idle",
-        "last_updated_at",
-        "threshold",
+        "status_category",
+        "age_since_updated",
     }
 
 
 def test_sprint_scope_churn_template_uses_sprint_level_evidence() -> None:
+    """sprint-scope-churn now evaluates as entity_type=sprint using sprint_scope_added_pct."""
     sprint = Sprint(
         source=Source.JIRA,
         external_id="sprint-1",
@@ -208,14 +209,14 @@ def test_sprint_scope_churn_template_uses_sprint_level_evidence() -> None:
 
     assert len(findings) == 1
     assert findings[0].entity_type is EntityType.SPRINT
-    assert findings[0].evidence["original_count"] == 1
-    assert findings[0].evidence["added_count"] == 1
-    assert findings[0].evidence["churn_pct"] == 100.0
+    assert findings[0].evidence["sprint_scope_added_pct"] == 100.0
 
 
-def test_template_evidence_thresholds_use_edited_expression_values() -> None:
+def test_template_evidence_reflects_observed_field_values() -> None:
+    """Evidence now contains the actual observed field values from matched conditions."""
     item = _workitem("RAD-1", updated_at=NOW - timedelta(days=10))
     definition = instantiate_jira_signal_template("stale-in-progress-work-item")
+    # Edit the threshold; the evidence should reflect the observed age, not the threshold.
     definition.expression["conditions"][1]["value"] = {"amount": 5, "unit": "days"}
 
     findings = evaluate_signal_definition(
@@ -233,7 +234,8 @@ def test_template_evidence_thresholds_use_edited_expression_values() -> None:
     )
 
     assert len(findings) == 1
-    assert findings[0].evidence["threshold"] == 5
+    assert "age_in_current_status" in findings[0].evidence
+    assert findings[0].evidence["age_in_current_status"] == 8
 
 
 def test_sprint_scope_churn_template_ignores_non_board_scopes() -> None:

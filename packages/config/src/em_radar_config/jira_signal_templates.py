@@ -138,17 +138,22 @@ JIRA_SIGNAL_TEMPLATES: tuple[JiraSignalTemplate, ...] = (
     JiraSignalTemplate(
         key="sprint-scope-churn",
         name="Sprint scope churn",
-        description="Finds sprint scope changes above the default warning threshold.",
+        description="Finds sprints where scope was added after sprint start beyond the threshold.",
+        entity_type="sprint",
         expression={
             "type": "group",
             "operator": "all",
             "conditions": [
-                {"field": "sprint_day", "operator": "is_after", "value": 0},
+                {
+                    "field": "sprint_scope_added_pct",
+                    "operator": "greater_than",
+                    "value": 20.0,
+                },
             ],
         },
         report_settings=ReportSettings(severity="warning", category="delivery"),
         required_scope_capabilities=("sprint",),
-        evidence_shape=("original_count", "added_count", "churn_pct"),
+        evidence_shape=("sprint_scope_added_pct",),
     ),
 )
 

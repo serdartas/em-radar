@@ -260,6 +260,13 @@ class JiraConnector:
                     ("greater_than", "less_than", "between"),
                     availability=sprint_only,
                 ),
+                SignalField(
+                    "sprint_scope_added_pct",
+                    "Sprint scope added %",
+                    "number",
+                    ("greater_than", "less_than", "between"),
+                    availability=sprint_only,
+                ),
             ),
         )
 
