@@ -19,6 +19,7 @@ import pytest
 
 from em_radar_core.connectors import (
     Capabilities,
+    CommentProvider,
     ConnectionTestResult,
     ConnectorAuthError,
     ConnectorBase,
@@ -102,6 +103,75 @@ def _jira_auth_error_handler(request: httpx.Request) -> httpx.Response:
     return httpx.Response(401, json={"errorMessages": ["Unauthorized"]})
 
 
+def _jira_multipage_handler_factory():
+    """Return a Jira handler that simulates two pages of search results (page 1 + page 2)."""
+    _issue = lambda key: {  # noqa: E731
+        "key": key,
+        "id": key,
+        "fields": {
+            "summary": f"Issue {key}",
+            "issuetype": {"name": "Story"},
+            "status": {"name": "In Progress", "statusCategory": {"key": "indeterminate"}},
+            "project": {"key": "DEMO", "id": "10000"},
+            "labels": [],
+            "components": [],
+            "created": "2026-01-01T00:00:00.000+0000",
+            "updated": "2026-01-10T00:00:00.000+0000",
+            "resolutiondate": None,
+            "duedate": None,
+            "assignee": None,
+            "reporter": None,
+            "parent": None,
+            "description": None,
+        },
+    }
+    page_calls = [0]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if "myself" in path:
+            return httpx.Response(200, json={"displayName": "User", "accountId": "u"})
+        if "mypermissions" in path:
+            return httpx.Response(
+                200, json={"permissions": {"BROWSE_PROJECTS": {"havePermission": True}}}
+            )
+        if "search" in path:
+            page_calls[0] += 1
+            if page_calls[0] == 1:
+                return httpx.Response(
+                    200,
+                    json={"issues": [_issue("DEMO-1")], "total": 2, "nextPageToken": "page2"},
+                )
+            return httpx.Response(200, json={"issues": [_issue("DEMO-2")], "total": 2})
+        return httpx.Response(200, json={"values": [], "total": 0, "isLast": True})
+
+    return handler
+
+
+_GITLAB_MR_PAYLOAD = {
+    "id": 1,
+    "iid": 1,
+    "title": "Demo MR",
+    "description": None,
+    "state": "opened",
+    "draft": False,
+    "target_branch": "main",
+    "source_branch": "feature/demo",
+    "author": {"id": 42},
+    "created_at": "2026-01-01T00:00:00.000Z",
+    "updated_at": "2026-01-10T00:00:00.000Z",
+    "merged_at": None,
+    "closed_at": None,
+    "changes_count": None,
+    "additions": None,
+    "deletions": None,
+    "diff_stats_summary": None,
+    "head_pipeline": None,
+    "approvals_before_merge": None,
+    "user_notes_count": 0,
+}
+
+
 def _gitlab_success_handler(request: httpx.Request) -> httpx.Response:
     path = request.url.path
     if "/user" in path and "personal_access_tokens" not in path:
@@ -113,8 +183,19 @@ def _gitlab_success_handler(request: httpx.Request) -> httpx.Response:
             200,
             json=[{"id": 1, "name": "demo-repo", "path_with_namespace": "demo/demo-repo"}],
         )
+    if "approvals" in path:
+        return httpx.Response(200, json={"approved_by": []})
     if "merge_requests" in path:
-        return httpx.Response(200, json=[])
+        parts = path.rstrip("/").split("/")
+        # Single MR detail endpoint: path ends with /{iid} (a digit)
+        if parts[-1].isdigit():
+            return httpx.Response(200, json=_GITLAB_MR_PAYLOAD)
+        # MR list endpoint
+        return httpx.Response(
+            200,
+            json=[_GITLAB_MR_PAYLOAD],
+            headers={"x-next-page": ""},
+        )
     return httpx.Response(200, json=[])
 
 
@@ -168,7 +249,7 @@ def _setup_connector(connector_cls: type, monkeypatch: pytest.MonkeyPatch):
 
         return connector, bad_factory
 
-    raise pytest.skip(f"no test setup for connector: {name}")
+    pytest.skip(f"no test setup for connector: {name}")
 
 
 @pytest.fixture
@@ -263,6 +344,7 @@ def test_capabilities_match_implemented_protocols(conforming_connector) -> None:
     )
     _assert_cap_protocol_match(conforming_connector, caps.provides_reviews, ReviewProvider)
     _assert_cap_protocol_match(conforming_connector, caps.provides_transitions, TransitionProvider)
+    _assert_cap_protocol_match(conforming_connector, caps.provides_comments, CommentProvider)
 
 
 def _assert_cap_protocol_match(connector, declared: bool, protocol: type) -> None:
@@ -362,6 +444,23 @@ def test_mergerequest_provider_handles_empty_scope(conforming_connector) -> None
 
     mrs = asyncio.run(collect())
     assert isinstance(mrs, list)
+
+
+def test_workitem_pagination_collects_all_pages(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Multi-page Jira search (page 1 with nextPageToken + page 2 terminal) must yield both items."""
+    import em_radar_connector_jira.connector as jira_mod
+
+    handler = _jira_multipage_handler_factory()
+    monkeypatch.setattr(jira_mod, "CLIENT_FACTORY", _client_factory(handler))
+    connector = jira_mod.JiraConnector({"base_url": "https://jira.example.com", "token": "tok"})
+    scope = WorkItemScope(project_external_ids=["DEMO"])
+
+    async def collect():
+        return [item async for item in connector.fetch_workitems(scope, _date_range_window())]
+
+    items = asyncio.run(collect())
+    keys = {item.key for item in items}
+    assert keys == {"DEMO-1", "DEMO-2"}, f"Expected 2 items across pages, got: {keys}"
 
 
 def test_connector_errors_use_typed_hierarchy(

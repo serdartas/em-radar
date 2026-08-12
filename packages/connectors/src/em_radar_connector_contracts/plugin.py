@@ -14,11 +14,8 @@ def _discover_connector_classes() -> list[type]:
     eps = importlib.metadata.entry_points(group="em_radar.connectors")
     classes = []
     for ep in sorted(eps, key=lambda e: e.name):
-        try:
-            cls = ep.load()
-            classes.append(cls)
-        except Exception:  # noqa: BLE001 — skip unloadable connectors gracefully
-            pass
+        cls = ep.load()  # let ImportError propagate — a broken registered connector must be visible
+        classes.append(cls)
     return classes
 
 
