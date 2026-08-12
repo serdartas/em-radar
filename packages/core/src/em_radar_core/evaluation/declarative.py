@@ -63,7 +63,7 @@ def check_window_gate(
         return None
     return SignalSkipNote(
         signal_id=str(definition.id),
-        reason="skipped: requires a sprint window",
+        reason="requires a sprint window",
     )
 
 

@@ -563,10 +563,11 @@ def _skipped_signal_entries(
             entries.append(
                 {"id": str(defn.id), "name": defn.name, "reason": "code source not attached"}
             )
-    for defn in board_definitions:
-        skip = check_window_gate(defn, ctx)
-        if skip is not None:
-            entries.append({"id": str(defn.id), "name": defn.name, "reason": skip.reason})
+    if board_attached:
+        for defn in board_definitions:
+            skip = check_window_gate(defn, ctx)
+            if skip is not None:
+                entries.append({"id": str(defn.id), "name": defn.name, "reason": skip.reason})
     return entries
 
 
