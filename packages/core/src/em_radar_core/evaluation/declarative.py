@@ -211,7 +211,12 @@ def _evaluate_sprint_signal(
     severity: Severity,
     scopes: list[ScopeDescriptor],
 ) -> list[SignalFinding]:
-    """Evaluate a sprint entity signal over board sprints in scope."""
+    """Evaluate a sprint entity signal over board sprints in scope.
+
+    When the evaluation window is a sprint window, only the target sprint is evaluated;
+    otherwise all board sprints are evaluated.
+    """
+    target_sprint_id = ctx.window.sprint_id if ctx.window.window_type is WindowType.SPRINT else None
     findings: list[SignalFinding] = []
     for scope in scopes:
         if scope.scope_type != "board":
@@ -220,6 +225,8 @@ def _evaluate_sprint_signal(
         board_ids = {board.id for board in data.boards if board.external_id == external_id}
         for sprint in data.sprints:
             if sprint.board_id not in board_ids:
+                continue
+            if target_sprint_id is not None and sprint.id != target_sprint_id:
                 continue
             result = _evaluate_sprint_group(definition.expression, sprint, data, ctx)
             if not result.matched:
@@ -236,7 +243,7 @@ def _evaluate_sprint_signal(
                     title=sprint.name,
                     reason=result.reason,
                     evidence={"scope_id": scope.scope_id, **result.evidence},
-                    source_link=None,
+                    source_link=sprint.source_url,
                     created_at=ctx.now,
                 )
             )
@@ -294,44 +301,45 @@ def _sprint_field_value(
     ctx: EvaluationContext,
 ) -> object:
     if field_key == "sprint_scope_added_pct":
-        return _sprint_scope_added_pct(sprint, data)
+        return _sprint_scope_added_pct(sprint, data, ctx)
     raise ExpressionValidationError(f"unsupported sprint field: {field_key}")
 
 
-def _sprint_scope_added_pct(sprint: Sprint, data: SignalData) -> float | None:
+def _sprint_scope_added_pct(
+    sprint: Sprint, data: SignalData, ctx: EvaluationContext
+) -> float | None:
     """Return the percentage of sprint items added after sprint start (churn %).
 
     Returns None when sprint has no start_date or no items, so numeric operators
-    correctly produce no match.
+    correctly produce no match. Uses sprint_ids (not current_sprint_id) to match
+    items that were part of the sprint even if later moved to another sprint.
     """
     if sprint.start_date is None:
         return None
-    sprint_items = [wi for wi in data.workitems if wi.current_sprint_id == sprint.id]
+    sprint_items = [wi for wi in data.workitems if sprint.id in wi.sprint_ids]
     if not sprint_items:
         return None
-    # Compute first-seen time for each item: min(all its transitions, updated_at, created_at).
-    # Items whose first-seen time is before sprint start are "original"; the rest are "added".
-    original = sum(
-        1 for wi in sprint_items if _first_seen_in_sprint(wi, sprint, data) == "original"
-    )
+    original = 0
+    for wi in sprint_items:
+        first_seen = _first_seen_at(wi, data)
+        if first_seen is None or first_seen > ctx.now:
+            continue  # unknown or future-dated — skip
+        if first_seen <= sprint.start_date:
+            original += 1
     added = len(sprint_items) - original
     if original == 0:
         return None
     return round(added / original * 100.0, 2)
 
 
-def _first_seen_in_sprint(wi: WorkItem, sprint: Sprint, data: SignalData) -> str:
-    """Return 'original' if the item was in the sprint at sprint start, else 'added'."""
+def _first_seen_at(wi: WorkItem, data: SignalData) -> datetime | None:
+    """Return the first-seen datetime for a work item: min(transitions, updated_at, created_at)."""
     candidates = [t.occurred_at for t in data.transitions if t.entity_id == wi.id]
     if wi.updated_at is not None:
         candidates.append(wi.updated_at)
     if not candidates:
-        first_seen = wi.created_at
-    else:
-        first_seen = min(candidates)
-    if first_seen is None or first_seen > sprint.start_date:
-        return "added"
-    return "original"
+        return wi.created_at
+    return min(candidates)
 
 
 def preview_signal_definition(
