@@ -4,7 +4,7 @@ import { Label } from "@/components/ui/label"
 import { Select } from "@/components/ui/select"
 import { type SourceConnection } from "@/lib/connections"
 import { updateTeam, type TeamProfile } from "@/lib/teams"
-import { TEAMS_KEY } from "@/lib/teamSetup"
+import { TEAM_SOURCE_MUTATION_KEY, TEAMS_KEY } from "@/lib/teamSetup"
 
 export function CodeSourcePicker({
   codeConnections,
@@ -15,6 +15,7 @@ export function CodeSourcePicker({
 }) {
   const queryClient = useQueryClient()
   const updateMutation = useMutation({
+    mutationKey: TEAM_SOURCE_MUTATION_KEY,
     mutationFn: (connectionId: string | null) =>
       updateTeam(team.id, { code_connection_id: connectionId }),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: TEAMS_KEY }),

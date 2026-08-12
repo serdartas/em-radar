@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useState } from "react"
+import { type ReactNode, useEffect, useRef, useState } from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { Link } from "react-router-dom"
 
@@ -91,8 +91,12 @@ export function ConnectionForm({
   })
 
   const selectedConnector = connectors.find((connector) => connector.name === connectorName)
+  const prevEditingIdRef = useRef<string | null>(null)
 
   useEffect(() => {
+    const prevEditingId = prevEditingIdRef.current
+    prevEditingIdRef.current = editing?.id ?? null
+
     if (editing) {
       const connector = connectors.find((c) => c.name === editing.connector_name)
       setConnectorName(editing.connector_name)
@@ -101,14 +105,24 @@ export function ConnectionForm({
       testMutation.reset()
       return
     }
-    if (connectorName === "") {
-      const target =
-        lockConnectorName ?? SOURCE_TYPES.find((t) => implementedNames.has(t.name))?.name
-      if (target) {
-        const connector = connectors.find((c) => c.name === target)
-        setConnectorName(target)
-        setValues(connector ? defaultValues(connector.config_schema) : {})
-      }
+
+    const addTarget = lockConnectorName ?? SOURCE_TYPES.find((t) => implementedNames.has(t.name))?.name
+    const addConnector = addTarget ? connectors.find((c) => c.name === addTarget) : undefined
+
+    // Leaving edit mode (Cancel): wipe the edited connection's fields so a later submit does not
+    // create a new connection from the abandoned edit.
+    if (prevEditingId !== null) {
+      setConnectorName(addTarget ?? "")
+      setConnectionName("")
+      setValues(addConnector ? defaultValues(addConnector.config_schema) : {})
+      testMutation.reset()
+      return
+    }
+
+    // Initial mount in add mode: pick a default connector without clobbering an in-progress add.
+    if (connectorName === "" && addTarget) {
+      setConnectorName(addTarget)
+      setValues(addConnector ? defaultValues(addConnector.config_schema) : {})
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editing, connectors, lockConnectorName])

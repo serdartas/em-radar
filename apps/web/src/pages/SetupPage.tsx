@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { useMutation, useQueryClient } from "@tanstack/react-query"
+import { useIsMutating, useMutation, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "react-router-dom"
 
 import { ConnectionForm } from "@/components/connections/ConnectionForm"
@@ -15,11 +15,17 @@ import { type SourceConnection } from "@/lib/connections"
 import { runTeamReport } from "@/lib/reports"
 import { type SignalConfigGroup } from "@/lib/signalConfigGroups"
 import { createTeam, type TeamProfile } from "@/lib/teams"
-import { TEAMS_KEY, useTeamSetupData } from "@/lib/teamSetup"
+import { TEAM_SOURCE_MUTATION_KEY, TEAMS_KEY, useTeamSetupData } from "@/lib/teamSetup"
+import {
+  clearWizardProgress,
+  loadWizardProgress,
+  saveWizardProgress,
+  type WizardStep,
+} from "@/lib/wizardProgress"
 
 const DEFAULT_GROUP_NAME = "Default signals"
 
-type Step = "gitlab" | "jira" | "sources" | "team" | "welcome"
+type Step = WizardStep
 
 const STEP_ORDER: Step[] = ["welcome", "jira", "gitlab", "team", "sources"]
 const STEP_LABELS: Record<Step, string> = {
@@ -49,14 +55,57 @@ export function SetupPage() {
     codeConnections,
   } = useTeamSetupData()
 
+  const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const [step, setStep] = useState<Step>("welcome")
   const [currentTeamId, setCurrentTeamId] = useState<string | null>(null)
   const [initialized, setInitialized] = useState(false)
 
-  // Resumability: on first load, jump to the first incomplete step based on stored state.
+  const sourceMutating = useIsMutating({ mutationKey: TEAM_SOURCE_MUTATION_KEY })
+
+  const finishMutation = useMutation({
+    mutationFn: async () => {
+      // Read authoritative team state so a source saved moments before Finish is not missed
+      // due to a stale render closure or an in-flight refetch.
+      await queryClient.refetchQueries({ queryKey: TEAMS_KEY })
+      const fresh = queryClient.getQueryData<TeamProfile[]>(TEAMS_KEY) ?? []
+      for (const team of fresh) {
+        if (teamHasSources(team)) {
+          await runTeamReport(team.id)
+        }
+      }
+    },
+    onSuccess: () => {
+      saveWizardProgress({ step, currentTeamId, completed: true })
+      navigate("/", { replace: true })
+    },
+  })
+
+  // Resumability: prefer explicit persisted wizard progress; otherwise infer from stored data.
   // Rendering is gated until this resolves so returning users never see a Welcome flash.
   useEffect(() => {
     if (initialized || isLoading) return
+
+    const persisted = loadWizardProgress()
+    if (persisted?.completed) {
+      // A completed marker with teams present means onboarding is done; leave the wizard.
+      // With no teams (all deleted) the marker is stale, so drop it and restart onboarding.
+      if (teams.length > 0) {
+        navigate("/", { replace: true })
+        return
+      }
+      clearWizardProgress()
+    } else if (persisted) {
+      const teamValid =
+        persisted.currentTeamId !== null && teams.some((team) => team.id === persisted.currentTeamId)
+      const canResume = persisted.step !== "sources" || teamValid
+      if (canResume) {
+        setStep(persisted.step)
+        setCurrentTeamId(teamValid ? persisted.currentTeamId : null)
+        setInitialized(true)
+        return
+      }
+    }
 
     if (teams.length > 0) {
       const incomplete = teams.find((team) => !teamHasSources(team)) ?? teams[teams.length - 1]
@@ -70,7 +119,13 @@ export function SetupPage() {
       setStep("welcome")
     }
     setInitialized(true)
-  }, [initialized, isLoading, teams, jiraConnections, connections])
+  }, [initialized, isLoading, teams, jiraConnections, connections, navigate])
+
+  // Persist each transition so closing the browser mid-wizard resumes at the right step.
+  useEffect(() => {
+    if (!initialized || finishMutation.isSuccess) return
+    saveWizardProgress({ step, currentTeamId, completed: false })
+  }, [initialized, step, currentTeamId, finishMutation.isSuccess])
 
   const currentTeam = teams.find((team) => team.id === currentTeamId) ?? null
 
@@ -129,13 +184,17 @@ export function SetupPage() {
       {step === "sources" && (
         <SourcesStep
           boardScopes={boardScopes}
+          busy={sourceMutating > 0}
           codeConnections={codeConnections}
+          finishError={finishMutation.isError ? finishMutation.error : null}
+          finishPending={finishMutation.isPending}
           groups={groups}
           jiraConnections={jiraConnections}
           onAddAnother={() => {
             setCurrentTeamId(null)
             setStep("team")
           }}
+          onFinish={() => finishMutation.mutate()}
           team={currentTeam}
         />
       )}
@@ -317,33 +376,27 @@ function TeamStep({
 
 function SourcesStep({
   boardScopes,
+  busy,
   codeConnections,
+  finishError,
+  finishPending,
   groups,
   jiraConnections,
   onAddAnother,
+  onFinish,
   team,
 }: {
   boardScopes: Parameters<typeof TaskBoardPicker>[0]["boardScopes"]
+  busy: boolean
   codeConnections: SourceConnection[]
+  finishError: unknown
+  finishPending: boolean
   groups: SignalConfigGroup[]
   jiraConnections: SourceConnection[]
   onAddAnother: () => void
+  onFinish: () => void
   team: TeamProfile | null
 }) {
-  const navigate = useNavigate()
-  const { teams } = useTeamSetupData()
-
-  const finishMutation = useMutation({
-    mutationFn: async () => {
-      for (const t of teams) {
-        if (teamHasSources(t)) {
-          await runTeamReport(t.id)
-        }
-      }
-    },
-    onSuccess: () => navigate("/"),
-  })
-
   if (!team) {
     return <p className="text-sm text-slate-500">Loading team...</p>
   }
@@ -369,16 +422,16 @@ function SourcesStep({
       </Card>
 
       <div className="flex flex-wrap gap-3">
-        <Button onClick={onAddAnother} variant="outline">
+        <Button disabled={busy || finishPending} onClick={onAddAnother} variant="outline">
           Add another team
         </Button>
-        <Button disabled={finishMutation.isPending} onClick={() => finishMutation.mutate()}>
-          {finishMutation.isPending ? "Starting sync..." : "Finish setup"}
+        <Button disabled={busy || finishPending} onClick={onFinish}>
+          {finishPending ? "Starting sync..." : busy ? "Saving sources..." : "Finish setup"}
         </Button>
       </div>
-      {finishMutation.isError && (
+      {finishError !== null && (
         <p className="text-sm text-red-700" role="alert">
-          {apiErrorMessage(finishMutation.error, "The initial sync failed. Please try again.")}
+          {apiErrorMessage(finishError, "The initial sync failed. Please try again.")}
         </p>
       )}
     </div>

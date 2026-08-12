@@ -4,6 +4,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { SetupPage } from "@/pages/SetupPage"
+import { loadWizardProgress, saveWizardProgress } from "@/lib/wizardProgress"
 
 const jiraConnector = {
   name: "jira",
@@ -109,6 +110,40 @@ interface StoredTeam {
   member_user_keys: string[]
   created_at: string
   updated_at: string
+}
+
+function storedTeam(id: string, name: string): StoredTeam {
+  return {
+    id,
+    name,
+    description: null,
+    connection_ids: [],
+    scope_ids: [],
+    project_ids: [],
+    board_ids: [],
+    repository_ids: [],
+    signal_config_group_ids: [],
+    code_connection_id: null,
+    working_mode: "scrum",
+    sprint_length_days: 14,
+    member_user_keys: [],
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+  }
+}
+
+function readOnlyMock(teams: StoredTeam[]) {
+  return vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+    const url = typeof input === "string" ? input : input.toString()
+    const method = init?.method ?? "GET"
+    if (url.endsWith("/api/connectors"))
+      return Promise.resolve(jsonResponse([jiraConnector, gitlabConnector]))
+    if (url.endsWith("/api/connections") && method === "GET") return Promise.resolve(jsonResponse([]))
+    if (url.endsWith("/api/scopes") && method === "GET") return Promise.resolve(jsonResponse([]))
+    if (url.endsWith("/api/signal-config-groups")) return Promise.resolve(jsonResponse(groups))
+    if (url.endsWith("/api/teams") && method === "GET") return Promise.resolve(jsonResponse(teams))
+    throw new Error(`unexpected fetch: ${method} ${url}`)
+  })
 }
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -273,6 +308,7 @@ async function attachBoardSource() {
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
+  localStorage.clear()
 })
 
 describe("SetupPage onboarding wizard", () => {
@@ -339,8 +375,9 @@ describe("SetupPage onboarding wizard", () => {
       ).toBe(true)
     })
 
-    // Finish → initial sync runs the team report, then lands on the dashboard
-    fireEvent.click(screen.getByRole("button", { name: "Finish setup" }))
+    // Finish → initial sync runs the team report, then lands on the dashboard.
+    // findByRole waits until source saves settle and the button re-labels to "Finish setup".
+    fireEvent.click(await screen.findByRole("button", { name: "Finish setup" }))
     await screen.findByRole("heading", { name: "Dashboard landing" })
     const runCall = fetchMock.mock.calls.find(
       ([url, init]) => String(url).endsWith("/api/reports/run") && init?.method === "POST",
@@ -384,39 +421,8 @@ describe("SetupPage onboarding wizard", () => {
     expect(teamPosts).toHaveLength(2)
   })
 
-  it("resumes at the sources step when a team already exists", async () => {
-    mockApi()
-    // Pre-seed a connection and a team so the wizard is mid-flow.
-    // Re-mock with existing state:
-    vi.restoreAllMocks()
-    const existingTeam: StoredTeam = {
-      id: "team-1",
-      name: "Payments",
-      description: null,
-      connection_ids: [],
-      scope_ids: [],
-      project_ids: [],
-      board_ids: [],
-      repository_ids: [],
-      signal_config_group_ids: [],
-      code_connection_id: null,
-      working_mode: "scrum",
-      sprint_length_days: 14,
-      member_user_keys: [],
-      created_at: "2026-01-01T00:00:00Z",
-      updated_at: "2026-01-01T00:00:00Z",
-    }
-    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
-      const url = typeof input === "string" ? input : input.toString()
-      const method = init?.method ?? "GET"
-      if (url.endsWith("/api/connectors")) return Promise.resolve(jsonResponse([jiraConnector, gitlabConnector]))
-      if (url.endsWith("/api/connections") && method === "GET") return Promise.resolve(jsonResponse([]))
-      if (url.endsWith("/api/scopes") && method === "GET") return Promise.resolve(jsonResponse([]))
-      if (url.endsWith("/api/signal-config-groups")) return Promise.resolve(jsonResponse(groups))
-      if (url.endsWith("/api/teams") && method === "GET") return Promise.resolve(jsonResponse([existingTeam]))
-      throw new Error(`unexpected fetch: ${method} ${url}`)
-    })
-
+  it("resumes at the sources step when a team already exists (no persisted progress)", async () => {
+    readOnlyMock([storedTeam("team-1", "Payments")])
     renderWizard()
 
     expect(
@@ -425,5 +431,38 @@ describe("SetupPage onboarding wizard", () => {
     // The progress rail marks the Sources step as current.
     const rail = screen.getByRole("list", { name: "Setup progress" })
     expect(within(rail).getByText(/Sources/)).toHaveAttribute("aria-current", "step")
+  })
+
+  it("resumes at the persisted step/team rather than the source-presence heuristic", async () => {
+    // Two source-less teams: the heuristic would pick the first, but persisted progress points
+    // at the second — the wizard must honor where onboarding actually stopped.
+    readOnlyMock([storedTeam("team-1", "Payments"), storedTeam("team-2", "Search")])
+    saveWizardProgress({ step: "sources", currentTeamId: "team-2", completed: false })
+    renderWizard()
+
+    expect(
+      await screen.findByRole("heading", { name: /Attach sources for Search/ }),
+    ).toBeInTheDocument()
+  })
+
+  it("navigates to the dashboard when persisted progress is marked completed", async () => {
+    readOnlyMock([storedTeam("team-1", "Payments")])
+    saveWizardProgress({ step: "sources", currentTeamId: "team-1", completed: true })
+    renderWizard()
+
+    await screen.findByRole("heading", { name: "Dashboard landing" })
+  })
+
+  it("clears a stale completed marker and restarts onboarding when all teams are gone", async () => {
+    // A completed marker with zero teams (all deleted) must not bounce between Dashboard and
+    // Setup: the wizard drops the stale marker and falls back to the heuristic (welcome).
+    readOnlyMock([])
+    saveWizardProgress({ step: "sources", currentTeamId: "team-1", completed: true })
+    renderWizard()
+
+    expect(await screen.findByRole("heading", { name: "Welcome to EM Radar" })).toBeInTheDocument()
+    expect(screen.queryByRole("heading", { name: "Dashboard landing" })).not.toBeInTheDocument()
+    // The stale completed marker is dropped; onboarding restarts from a non-completed state.
+    expect(loadWizardProgress()?.completed ?? false).toBe(false)
   })
 })

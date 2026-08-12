@@ -8,6 +8,10 @@ import { listTeams } from "@/lib/teams"
 
 export const TEAMS_KEY = ["teams"]
 
+// Shared by every team-source mutation (board scope + code connection) so the wizard can
+// block "Finish" until in-flight source saves settle. See useIsMutating in SetupPage.
+export const TEAM_SOURCE_MUTATION_KEY = ["team-source"]
+
 export function useTeamSetupData() {
   const teamsQuery = useQuery({ queryKey: TEAMS_KEY, queryFn: listTeams })
   const scopesQuery = useQuery({ queryKey: ["scopes"], queryFn: listScopes })

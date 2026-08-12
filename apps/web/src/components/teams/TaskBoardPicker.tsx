@@ -15,7 +15,7 @@ import {
 } from "@/lib/connections"
 import { createScope, type ScopeDefinition } from "@/lib/scopes"
 import { updateTeam, type TeamProfile, type TeamProfileUpdate, type WorkingMode } from "@/lib/teams"
-import { TEAMS_KEY } from "@/lib/teamSetup"
+import { TEAM_SOURCE_MUTATION_KEY, TEAMS_KEY } from "@/lib/teamSetup"
 
 export const DEFAULT_SPRINT_DAYS = 14
 
@@ -47,8 +47,12 @@ export function TaskBoardPicker({
   const queryClient = useQueryClient()
   const invalidateTeams = () => void queryClient.invalidateQueries({ queryKey: TEAMS_KEY })
 
-  const createScopeMutation = useMutation({ mutationFn: createScope })
+  const createScopeMutation = useMutation({
+    mutationKey: TEAM_SOURCE_MUTATION_KEY,
+    mutationFn: createScope,
+  })
   const updateMutation = useMutation({
+    mutationKey: TEAM_SOURCE_MUTATION_KEY,
     mutationFn: (update: TeamProfileUpdate) => updateTeam(team.id, update),
     onSuccess: invalidateTeams,
   })
