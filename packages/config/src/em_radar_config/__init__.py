@@ -24,12 +24,14 @@ from em_radar_config.validation import (
     PackValidationContext,
     PackValidationError,
     PackValidationWarning,
+    apply_pack_defaults,
     load_signal_pack,
 )
 
 __all__ = [
     "FieldMappings",
     "EM_RADAR_VERSION",
+    "apply_pack_defaults",
     "GitLabFieldMappings",
     "JiraFieldMappings",
     "JIRA_SIGNAL_TEMPLATES",

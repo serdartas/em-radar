@@ -10,7 +10,7 @@ from yaml.events import AliasEvent, CollectionStartEvent, ScalarEvent
 from yaml.nodes import MappingNode
 
 from em_radar_config.catalog import SIGNAL_CATALOG
-from em_radar_config.models import FieldMappings, SignalPack, SignalScope
+from em_radar_config.models import FieldMappings, SignalEntry, SignalPack, SignalScope
 from em_radar_core.connectors import SignalCapabilitySchema, SignalField
 from em_radar_core.models import Severity
 
@@ -96,6 +96,23 @@ def load_signal_pack(
 
     _validate_pack(pack, validation_context)
     return PackLoadResult(pack=pack, warnings=tuple(_collect_warnings(pack, validation_context)))
+
+
+def apply_pack_defaults(pack: SignalPack) -> list[SignalEntry]:
+    """Return signal entries with pack-level severity_override applied where per-signal severity is absent.
+
+    Signals that already declare their own severity are left unchanged. When no
+    severity_override is set on the pack, the original entries are returned as-is.
+    """
+    severity_override = pack.spec.defaults.severity_override if pack.spec.defaults else None
+    if severity_override is None:
+        return list(pack.spec.signals)
+    return [
+        entry.model_copy(update={"severity": severity_override})
+        if entry.severity is None
+        else entry
+        for entry in pack.spec.signals
+    ]
 
 
 def _safe_load(yaml_text: str) -> object:
