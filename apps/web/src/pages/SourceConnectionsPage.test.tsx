@@ -30,6 +30,32 @@ const jiraConnector = {
   },
 }
 
+const gitlabConnector = {
+  name: "gitlab",
+  display_name: "GitLab",
+  config_schema: {
+    type: "object",
+    properties: {
+      base_url: { type: "string", title: "Base URL" },
+      token: { type: "string", title: "Token", writeOnly: true },
+      verify_tls: { type: "boolean", title: "Verify TLS", default: true },
+    },
+    required: ["base_url", "token"],
+  },
+  capabilities: {
+    provides_workitems: false,
+    provides_sprints: false,
+    provides_mergerequests: true,
+    provides_repositories: true,
+    provides_reviews: true,
+    provides_comments: false,
+    provides_transitions: false,
+    supports_incremental_fetch: true,
+    supports_pagination_cursor: false,
+    max_window_days: null,
+  },
+}
+
 const testResult = {
   ok: true,
   detail: "Connected",
@@ -332,6 +358,92 @@ describe("SourceConnectionsPage", () => {
 
     expect(screen.queryByLabelText(/Project/i)).not.toBeInTheDocument()
     expect(screen.queryByLabelText(/Board/i)).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /Run report/i })).not.toBeInTheDocument()
+  })
+
+  it("creates a named GitLab connection and shows it in the list", async () => {
+    const createdConnection = {
+      id: "new-gitlab",
+      name: "Acme GitLab",
+      connector_name: "gitlab",
+      config: { base_url: "https://gitlab.com", token: "****", verify_tls: true },
+      created_at: "2026-08-01T00:00:00Z",
+    }
+    let connectionsStore: (typeof createdConnection)[] = []
+
+    let createdBody: unknown
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = typeof input === "string" ? input : input.toString()
+      if (url.endsWith("/api/connectors")) {
+        return Promise.resolve(jsonResponse([gitlabConnector]))
+      }
+      if (url.endsWith("/api/connections") && (init?.method ?? "GET") === "GET") {
+        return Promise.resolve(jsonResponse(connectionsStore))
+      }
+      if (url.endsWith("/api/connections") && init?.method === "POST") {
+        createdBody = JSON.parse(String(init?.body))
+        connectionsStore = [createdConnection]
+        return Promise.resolve(jsonResponse(createdConnection, 201))
+      }
+      throw new Error(`unexpected fetch: ${init?.method ?? "GET"} ${url}`)
+    })
+
+    renderPage()
+
+    await screen.findByLabelText(/^Base URL/)
+    const select = screen.getByLabelText(/Source type/) as HTMLSelectElement
+    expect(select.value).toBe("gitlab")
+
+    fireEvent.change(screen.getByLabelText(/Connection name/), {
+      target: { value: "Acme GitLab" },
+    })
+    fireEvent.change(screen.getByLabelText(/^Base URL/), {
+      target: { value: "https://gitlab.com" },
+    })
+    fireEvent.change(screen.getByLabelText(/^Token/), { target: { value: "glpat-token" } })
+    fireEvent.click(screen.getByRole("button", { name: "Add connection" }))
+
+    expect(await screen.findByText("Acme GitLab")).toBeInTheDocument()
+    expect(createdBody).toMatchObject({ name: "Acme GitLab", connector_name: "gitlab" })
+  })
+
+  it("shows inline read-only token guidance for GitLab", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = typeof input === "string" ? input : input.toString()
+      if (url.endsWith("/api/connectors")) {
+        return Promise.resolve(jsonResponse([gitlabConnector]))
+      }
+      if (url.endsWith("/api/connections") && (init?.method ?? "GET") === "GET") {
+        return Promise.resolve(jsonResponse([]))
+      }
+      throw new Error(`unexpected fetch: ${init?.method ?? "GET"} ${url}`)
+    })
+    renderPage()
+
+    await screen.findByLabelText(/^Base URL/)
+    fireEvent.click(screen.getByRole("button", { name: "About Token" }))
+
+    expect(screen.getByText("read-only")).toBeInTheDocument()
+    expect(screen.getByText("read_api")).toBeInTheDocument()
+  })
+
+  it("has no repository picker and no run-report action for GitLab", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = typeof input === "string" ? input : input.toString()
+      if (url.endsWith("/api/connectors")) {
+        return Promise.resolve(jsonResponse([gitlabConnector]))
+      }
+      if (url.endsWith("/api/connections") && (init?.method ?? "GET") === "GET") {
+        return Promise.resolve(jsonResponse([]))
+      }
+      throw new Error(`unexpected fetch: ${init?.method ?? "GET"} ${url}`)
+    })
+    renderPage()
+
+    await screen.findByLabelText(/^Base URL/)
+
+    expect(screen.queryByLabelText(/Repositor/i)).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/Project/i)).not.toBeInTheDocument()
     expect(screen.queryByRole("button", { name: /Run report/i })).not.toBeInTheDocument()
   })
 })
