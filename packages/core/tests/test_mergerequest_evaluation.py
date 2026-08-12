@@ -490,8 +490,13 @@ def test_validate_expression_rejects_mr_field_in_jira_signal() -> None:
 
 
 def test_mr_closed_at_field_is_supported() -> None:
-    """closed_at is a schema-valid GitLab field; evaluating it must not raise."""
-    closed = _mr(1, state=MergeRequestState.CLOSED, updated_at=NOW - timedelta(days=2))
+    """closed_at is a schema-valid GitLab field; it resolves to the correct datetime."""
+    closed_earlier = _mr(
+        1,
+        state=MergeRequestState.CLOSED,
+        updated_at=NOW - timedelta(days=2),
+        closed_at=NOW - timedelta(days=2),
+    )
     open_mr = _mr(2)
     expression = {
         "type": "group",
@@ -499,19 +504,16 @@ def test_mr_closed_at_field_is_supported() -> None:
         "conditions": [{"field": "closed_at", "operator": "before", "value": NOW.isoformat()}],
     }
 
-    # closed MR has closed_at = NOW (set by _mr helper); NOW is not before NOW → no match.
-    # open MR has closed_at = None → _compare returns False for datetime ops on None.
     findings = evaluate_signal_definition(
         _mr_definition(expression),
-        _data(closed, open_mr),
+        _data(closed_earlier, open_mr),
         context(),
         GitLabConnector.describe_signal_schema(),
         [_scope()],
     )
 
-    # Both are non-matches (closed MR's closed_at == NOW, not strictly before NOW;
-    # open MR has no closed_at). Key assertion: no ExpressionValidationError is raised.
-    assert isinstance(findings, list)
+    assert len(findings) == 1
+    assert findings[0].entity_id == closed_earlier.id
 
 
 # ---------------------------------------------------------------------------
