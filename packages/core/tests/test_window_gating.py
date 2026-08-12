@@ -49,6 +49,17 @@ def _scope() -> ScopeDescriptor:
     )
 
 
+def _board_scope() -> ScopeDescriptor:
+    return ScopeDescriptor(
+        connector_id="jira-1",
+        scope_id="scope-1",
+        scope_type="board",
+        name="Radar Board",
+        external_ref={"id": "BOARD", "key": "RAD"},
+        capabilities=("statuses", "labels", "sprint"),
+    )
+
+
 def _signal(template_key: str, name: str = "Sprint signal") -> SignalDefinition:
     return SignalDefinition(
         name=name,
@@ -148,13 +159,14 @@ def test_date_range_run_skips_repeated_carry_over() -> None:
 
 
 def test_date_range_run_skips_sprint_scope_churn() -> None:
+    """Gate skips sprint-scope-churn before the board-scope filter in the template path."""
     item = workitem(key="RAD-1")
     findings = evaluate_signal_definition(
         _signal("sprint-scope-churn"),
         SignalData(report_id=uuid4(), projects=(project(),), workitems=(item,)),
         _date_range_ctx(),
         JiraConnector.describe_signal_schema(),
-        [_scope()],
+        [_board_scope()],
     )
 
     assert findings == []
