@@ -1,3 +1,4 @@
+import fnmatch
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TypeAlias
@@ -225,8 +226,14 @@ def _field_value(
         return workitem.status_category.value
     if field_key == "labels":
         return workitem.labels
+    if field_key == "exclude_labels":
+        return workitem.labels
+    if field_key == "workitem_types":
+        return workitem.type.value
     if field_key == "issue_type":
         return workitem.type.value
+    if field_key == "branches":
+        return None
     if field_key == "assignee":
         return str(workitem.assignee_id) if workitem.assignee_id is not None else None
     if field_key == "acceptance_criteria":
@@ -316,6 +323,10 @@ def _compare(observed: object, operator: str, expected: object) -> bool:
         return _numeric(observed) < _numeric(expected)
     if operator == "is_after":
         return _numeric(observed) > _numeric(expected)
+    if operator == "matches_glob":
+        if observed is None or not isinstance(expected, str):
+            return False
+        return fnmatch.fnmatch(str(observed), expected)
     return False
 
 

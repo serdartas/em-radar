@@ -36,7 +36,6 @@ from em_radar_core.models import (
     Review,
     ReviewDecision,
     Source,
-    WindowType,
 )
 
 _logger = logging.getLogger(__name__)
@@ -362,7 +361,14 @@ class GitLabConnector:
             ) as eg:
                 raise eg.exceptions[0]
             results = [t.result() for t in tasks]
-            for payload, is_draft, changed_files_count, additions, deletions, approval_count in results:
+            for (
+                payload,
+                is_draft,
+                changed_files_count,
+                additions,
+                deletions,
+                approval_count,
+            ) in results:
                 mr = _mergerequest_from_payload(
                     payload,
                     namespaced_project_id,
@@ -437,7 +443,9 @@ class GitLabConnector:
         detail_diff_stats = _optional_mapping(detail.get("diff_stats_summary"))
         detail_changed_files = _parse_changes_count(detail.get("changes_count"), detail_diff_stats)
 
-        changed_files = list_changed_files if list_changed_files is not None else detail_changed_files
+        changed_files = (
+            list_changed_files if list_changed_files is not None else detail_changed_files
+        )
 
         additions = _optional_nonneg_int(detail, "additions")
         if additions is None and detail_diff_stats is not None:

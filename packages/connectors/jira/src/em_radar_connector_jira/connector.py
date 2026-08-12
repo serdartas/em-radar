@@ -182,6 +182,20 @@ class JiraConnector:
                     ("contains", "does_not_contain", "contains_any", "does_not_contain_any"),
                     value_provider=labels_provider,
                 ),
+                SignalField(
+                    "exclude_labels",
+                    "Exclude Labels",
+                    "string_list",
+                    ("contains", "does_not_contain", "contains_any", "does_not_contain_any"),
+                    value_provider=labels_provider,
+                ),
+                SignalField(
+                    "workitem_types",
+                    "Workitem Types",
+                    "enum",
+                    ("is", "is_not", "is_any_of", "is_none_of"),
+                    values=("epic", "story", "task", "bug", "subtask", "spike", "other"),
+                ),
                 SignalField("issue_type", "Issue Type", "enum", ("is", "is_not", "is_any_of")),
                 SignalField("assignee", "Assignee", "nullable", ("is_empty", "is_not_empty")),
                 SignalField(
