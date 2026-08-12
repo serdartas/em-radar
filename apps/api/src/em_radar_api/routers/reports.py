@@ -15,7 +15,12 @@ from em_radar_core.connectors import (
     WorkItemProvider,
     WorkItemScope,
 )
-from em_radar_core.evaluation import ScopeDescriptor, check_window_gate, evaluate_signal_definition
+from em_radar_core.evaluation import (
+    ScopeDescriptor,
+    check_capability_gate,
+    check_window_gate,
+    evaluate_signal_definition,
+)
 from em_radar_core.models import (
     Board,
     Confidence,
@@ -50,7 +55,7 @@ from sqlmodel import Session, select
 from em_radar_api.signal_configs import SignalConfigTable
 
 from em_radar_api.db import get_session, get_write_session
-from em_radar_api.connector_registry import create_connector
+from em_radar_api.connector_registry import create_connector, get_connector_capabilities
 from em_radar_api.repositories.canonical import persist_fetch
 from em_radar_api.repositories.reports import (
     add_findings,
@@ -248,6 +253,9 @@ async def _run_team_report(
     session.commit()
 
     ctx = EvaluationContext(now=started_at, window=window, team=team)
+    board_scope_descriptor = (
+        _scope_descriptor(board_scope, connector_name="jira") if board_scope is not None else None
+    )
 
     skipped_signals = _skipped_signal_entries(
         board_definitions=board_definitions,
@@ -255,6 +263,7 @@ async def _run_team_report(
         board_attached=board_scope is not None,
         code_attached=has_code_source,
         ctx=ctx,
+        board_scope_descriptor=board_scope_descriptor,
     )
 
     report = create_report(
@@ -286,8 +295,12 @@ async def _run_team_report(
 
         # Evaluate board signals (workitem/sprint/issue entity types) when board source attached.
         findings: list[SignalFinding] = []
-        if board_data is not None and board_scope is not None:
-            scope_descriptor = _scope_descriptor(board_scope)
+        if (
+            board_data is not None
+            and board_scope is not None
+            and board_scope_descriptor is not None
+        ):
+            scope_descriptor = board_scope_descriptor
             for definition in board_definitions:
                 findings.extend(
                     evaluate_signal_definition(
@@ -550,8 +563,9 @@ def _skipped_signal_entries(
     board_attached: bool,
     code_attached: bool,
     ctx: EvaluationContext,
+    board_scope_descriptor: ScopeDescriptor | None = None,
 ) -> list[dict[str, object]]:
-    """Build skip-note entries for signal definitions whose required source is absent or window-gated."""
+    """Build skip-note entries for signal definitions whose required source is absent or gated."""
     entries: list[dict[str, object]] = []
     if not board_attached:
         for defn in board_definitions:
@@ -568,6 +582,18 @@ def _skipped_signal_entries(
             skip = check_window_gate(defn, ctx)
             if skip is not None:
                 entries.append({"id": str(defn.id), "name": defn.name, "reason": skip.reason})
+                continue
+            if (
+                board_scope_descriptor is not None
+                and board_scope_descriptor.connector_capabilities is not None
+            ):
+                cap_skip = check_capability_gate(
+                    defn, board_scope_descriptor.connector_capabilities
+                )
+                if cap_skip is not None:
+                    entries.append(
+                        {"id": str(defn.id), "name": defn.name, "reason": cap_skip.reason}
+                    )
     return entries
 
 
@@ -656,7 +682,13 @@ def _definition_from_row(row: SignalDefinitionTable) -> SignalDefinition:
     )
 
 
-def _scope_descriptor(scope: ScopeDefinitionTable) -> ScopeDescriptor:
+def _scope_descriptor(
+    scope: ScopeDefinitionTable,
+    connector_name: str | None = None,
+) -> ScopeDescriptor:
+    connector_capabilities = (
+        get_connector_capabilities(connector_name) if connector_name is not None else None
+    )
     return ScopeDescriptor(
         connector_id=str(scope.connection_id),
         scope_id=str(scope.id),
@@ -664,6 +696,7 @@ def _scope_descriptor(scope: ScopeDefinitionTable) -> ScopeDescriptor:
         name=scope.name,
         external_ref=dict(scope.external_ref),
         capabilities=tuple(scope.capabilities),
+        connector_capabilities=connector_capabilities,
     )
 
 

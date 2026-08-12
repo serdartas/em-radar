@@ -75,7 +75,11 @@ class JiraTestConnector:
     @classmethod
     def describe_capabilities(cls) -> Capabilities:
         del cls
-        return Capabilities()
+        return Capabilities(
+            provides_workitems=True,
+            provides_sprints=True,
+            provides_transitions=True,
+        )
 
     async def close(self) -> None:
         pass

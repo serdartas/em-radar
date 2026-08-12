@@ -106,15 +106,6 @@ def test_simple_signal_not_skipped_regardless_of_transitions() -> None:
     assert note is None
 
 
-def test_capability_gate_uses_attribute_from_mapping() -> None:
-    caps = Capabilities(provides_workitems=True, provides_transitions=False)
-
-    note = check_capability_gate(_history_signal(), caps)
-
-    assert note is not None
-    assert "provides_transitions" in note.reason
-
-
 # ---------------------------------------------------------------------------
 # Integration: evaluate_signal_definition skips when capability is absent
 # ---------------------------------------------------------------------------

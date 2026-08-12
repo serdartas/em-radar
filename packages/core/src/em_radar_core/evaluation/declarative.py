@@ -70,7 +70,7 @@ def check_capability_gate(
         if not isinstance(field_key, str):
             continue
         required_attr = _FIELD_CONNECTOR_CAPABILITY_MAP.get(field_key)
-        if required_attr is not None and not getattr(capabilities, required_attr, True):
+        if required_attr is not None and not getattr(capabilities, required_attr):
             return SignalSkipNote(
                 signal_id=str(definition.id),
                 reason=f"requires {required_attr}",
