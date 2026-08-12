@@ -45,6 +45,7 @@ where = [
 
 [tool.pytest.ini_options]
 pythonpath = ["apps/api/src"]
+markers = ["perf: performance benchmarks; run with -m perf"]
 
 [tool.ruff]
 line-length = 100

@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -172,6 +173,17 @@ class _BoardFetchResult:
 
 
 @dataclass
+class _BoardMetadata:
+    """Fast-fetched board metadata: project, board, sprints, evaluation window, and connector."""
+
+    project: Project
+    board: Board
+    sprints: list[Sprint]
+    window: EvaluationWindow
+    connector: WorkItemProvider
+
+
+@dataclass
 class _CodeFetchResult:
     repositories: list[Repository]
     mergerequests: list[MergeRequest]
@@ -205,21 +217,21 @@ async def _run_team_report(
     # and records a partial-data note (spec §9-§10, REQ-NF-070).
     partial_data_notes: list[dict[str, str]] = []
 
-    # Fetch board data (project, board, sprints, workitems, transitions) when board scope present.
-    board_data: _BoardFetchResult | None = None
+    # Phase 1: board metadata (project, board, sprints) — fast; determines evaluation window.
+    # Workitem and MR data fetches run concurrently in Phase 2 once the window is known.
+    board_meta: _BoardMetadata | None = None
     if board_scope is not None:
         try:
-            board_data = await _fetch_board_data(session, team, board_scope, started_at)
+            board_meta = await _fetch_board_metadata(session, team, board_scope, started_at)
         except (ConnectorRateLimitedError, ConnectorTransientError, ConnectorAuthError) as error:
             partial_data_notes.append(
                 {"source": "board", "reason": f"board data unavailable: {type(error).__name__}"}
             )
 
-    # Derive evaluation window from the board, or fall back to a 14-day date range for
-    # code-only teams.  Full working-mode window derivation for all source combinations
-    # is M6-02 and is out of scope here.
-    if board_data is not None:
-        window = board_data.window
+    # Derive evaluation window from sprint metadata, or fall back to a 14-day date range.
+    # Full working-mode window derivation for all source combinations is M6-02.
+    if board_meta is not None:
+        window = board_meta.window
     else:
         window = EvaluationWindow(
             window_type=WindowType.DATE_RANGE,
@@ -228,16 +240,59 @@ async def _run_team_report(
             team_profile_id=team.id,
         )
 
-    # Fetch code data (repositories, merge requests, reviews) when code source is present.
-    code_data: _CodeFetchResult | None = None
-    if has_code_source and team_row.code_connection_id is not None:
-        mr_window = _code_fetch_window(window, board_data.sprints if board_data else [], started_at)
-        try:
-            code_data = await _fetch_code_data(session, team_row.code_connection_id, mr_window)
-        except (ConnectorRateLimitedError, ConnectorTransientError, ConnectorAuthError) as error:
+    # Phase 2: concurrently fetch slow I/O — workitems and merge requests run in parallel.
+    wi_coro = (
+        _fetch_workitems_and_transitions(board_meta, window)
+        if board_meta is not None
+        else _resolved(([], []))
+    )
+    mr_window = _code_fetch_window(window, board_meta.sprints if board_meta else [], started_at)
+    code_coro = (
+        _fetch_code_data(session, team_row.code_connection_id, mr_window)
+        if has_code_source and team_row.code_connection_id is not None
+        else _resolved(None)
+    )
+    wi_result, code_result = await asyncio.gather(wi_coro, code_coro, return_exceptions=True)
+
+    board_workitems: list = []
+    board_transitions: list = []
+    if isinstance(wi_result, BaseException):
+        if isinstance(
+            wi_result, (ConnectorRateLimitedError, ConnectorTransientError, ConnectorAuthError)
+        ):
             partial_data_notes.append(
-                {"source": "code", "reason": f"code data unavailable: {type(error).__name__}"}
+                {"source": "board", "reason": f"board data unavailable: {type(wi_result).__name__}"}
             )
+        else:
+            raise wi_result
+    else:
+        board_workitems, board_transitions = wi_result
+
+    board_data: _BoardFetchResult | None = (
+        _BoardFetchResult(
+            project=board_meta.project,
+            board=board_meta.board,
+            sprints=board_meta.sprints,
+            workitems=board_workitems,
+            transitions=board_transitions,
+            window=window,
+        )
+        if board_meta is not None and not any(n["source"] == "board" for n in partial_data_notes)
+        else None
+    )
+
+    code_data: _CodeFetchResult | None = None
+    if isinstance(code_result, BaseException):
+        if isinstance(
+            code_result, (ConnectorRateLimitedError, ConnectorTransientError, ConnectorAuthError)
+        ):
+            partial_data_notes.append(
+                {"source": "code", "reason": f"code data unavailable: {type(code_result).__name__}"}
+            )
+        else:
+            raise code_result
+    else:
+        code_data = code_result
 
     board_workitems = board_data.workitems if board_data else []
     board_transitions = board_data.transitions if board_data else []
@@ -351,13 +406,16 @@ async def _run_team_report(
     return ReportDetailResponse.from_report_with_findings(report, persisted_findings)
 
 
-async def _fetch_board_data(
+async def _fetch_board_metadata(
     session: Session,
     team: TeamProfile,
     board_scope: ScopeDefinitionTable,
     started_at: datetime,
-) -> _BoardFetchResult:
-    """Fetch Jira board data (project, board, sprints, workitems, transitions) and derive window."""
+) -> _BoardMetadata:
+    """Fetch fast board metadata: project, board, sprints, and evaluation window.
+
+    Does not fetch workitems or transitions — those run concurrently with MR fetch in Phase 2.
+    """
     connection = get_source_connection(session, board_scope.connection_id)
     if connection is None:
         raise HTTPException(status_code=404, detail="connection not found")
@@ -384,10 +442,34 @@ async def _fetch_board_data(
             raise HTTPException(status_code=404, detail="Jira board not found")
         sprints = await connector.list_sprints(board_external_id)
         window = _jira_evaluation_window(team, sprints, team.id, started_at)
+    except (ConnectorRateLimitedError, ConnectorTransientError, ConnectorAuthError):
+        await connector.close()
+        raise
+    except ConnectorError as error:
+        await connector.close()
+        raise HTTPException(status_code=502, detail=str(error)) from error
+
+    return _BoardMetadata(
+        project=project,
+        board=board,
+        sprints=sprints,
+        window=window,
+        connector=connector,
+    )
+
+
+async def _fetch_workitems_and_transitions(
+    meta: _BoardMetadata,
+    window: EvaluationWindow,
+) -> tuple[list, list]:
+    """Fetch workitems and transitions for an already-initialized board connector."""
+    board_external_id = meta.board.external_id
+    connector = meta.connector
+    try:
         workitems = await _collect(
             connector.fetch_workitems(
                 WorkItemScope(
-                    project_external_ids=[project.external_id],
+                    project_external_ids=[meta.project.external_id],
                     board_external_ids=[board_external_id],
                 ),
                 window,
@@ -404,21 +486,13 @@ async def _fetch_board_data(
             else []
         )
     except (ConnectorRateLimitedError, ConnectorTransientError, ConnectorAuthError):
-        # Partial-data errors propagate to _run_team_report for graceful handling.
         raise
     except ConnectorError as error:
         raise HTTPException(status_code=502, detail=str(error)) from error
     finally:
         await connector.close()
 
-    return _BoardFetchResult(
-        project=project,
-        board=board,
-        sprints=sprints,
-        workitems=workitems,
-        transitions=transitions,
-        window=window,
-    )
+    return workitems, transitions
 
 
 async def _fetch_code_data(
@@ -802,3 +876,8 @@ def _counts_by_severity(findings: Sequence[SignalFinding]) -> dict[Severity, int
 
 async def _collect[T](iterator: AsyncIterator[T]) -> list[T]:
     return [item async for item in iterator]
+
+
+async def _resolved[T](value: T) -> T:
+    """Trivial coroutine that immediately returns value; used as a no-op in asyncio.gather."""
+    return value
