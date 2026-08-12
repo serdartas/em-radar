@@ -241,21 +241,25 @@ async def _run_team_report(
         )
 
     # Phase 2: concurrently fetch slow I/O — workitems and merge requests run in parallel.
-    wi_coro = (
-        _fetch_workitems_and_transitions(board_meta, window)
-        if board_meta is not None
-        else _resolved(([], []))
-    )
+    # Compute derived values before creating coroutines to avoid an unawaited-coroutine leak
+    # if a pure-Python step raises between coroutine construction and gather.
     mr_window = _code_fetch_window(window, board_meta.sprints if board_meta else [], started_at)
-    code_coro = (
-        _fetch_code_data(session, team_row.code_connection_id, mr_window)
-        if has_code_source and team_row.code_connection_id is not None
-        else _resolved(None)
+    wi_result, code_result = await asyncio.gather(
+        (
+            _fetch_workitems_and_transitions(board_meta, window)
+            if board_meta is not None
+            else _resolved(([], []))
+        ),
+        (
+            _fetch_code_data(session, team_row.code_connection_id, mr_window)
+            if has_code_source and team_row.code_connection_id is not None
+            else _resolved(None)
+        ),
+        return_exceptions=True,
     )
-    wi_result, code_result = await asyncio.gather(wi_coro, code_coro, return_exceptions=True)
 
-    board_workitems: list = []
-    board_transitions: list = []
+    board_workitems: list[WorkItem] = []
+    board_transitions: list[Transition] = []
     if isinstance(wi_result, BaseException):
         if isinstance(
             wi_result, (ConnectorRateLimitedError, ConnectorTransientError, ConnectorAuthError)
@@ -294,8 +298,6 @@ async def _run_team_report(
     else:
         code_data = code_result
 
-    board_workitems = board_data.workitems if board_data else []
-    board_transitions = board_data.transitions if board_data else []
     code_mergerequests = code_data.mergerequests if code_data else []
     code_reviews = code_data.reviews if code_data else []
 
@@ -461,7 +463,7 @@ async def _fetch_board_metadata(
 async def _fetch_workitems_and_transitions(
     meta: _BoardMetadata,
     window: EvaluationWindow,
-) -> tuple[list, list]:
+) -> tuple[list[WorkItem], list[Transition]]:
     """Fetch workitems and transitions for an already-initialized board connector."""
     board_external_id = meta.board.external_id
     connector = meta.connector
