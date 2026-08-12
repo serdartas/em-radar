@@ -42,6 +42,7 @@ from em_radar_core.models import (
     WorkingMode,
 )
 from em_radar_core.signals import SignalData
+from em_radar_normalizer import DEFAULT_WORKITEM_KEY_PATTERN, populate_merge_request_links
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, JsonValue, model_validator
 from sqlmodel import Session, select
@@ -218,6 +219,11 @@ async def _run_team_report(
     board_transitions = board_data.transitions if board_data else []
     code_mergerequests = code_data.mergerequests if code_data else []
     code_reviews = code_data.reviews if code_data else []
+
+    # Extract work-item keys from each MR and resolve them against the fetched board work
+    # items so linked_workitem_keys/ids are persisted (mutates each MR in place).
+    for merge_request in code_mergerequests:
+        populate_merge_request_links(merge_request, board_workitems, DEFAULT_WORKITEM_KEY_PATTERN)
 
     identity = persist_fetch(
         session,

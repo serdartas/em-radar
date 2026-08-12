@@ -206,10 +206,11 @@ def test_fetch_mergerequests_normalizes_open_mr(monkeypatch: pytest.MonkeyPatch)
         assert mr.merged_at is None
         assert mr.closed_at is None
 
-        # Diff stats sourced from the single-MR detail endpoint.
+        # changed_files_count is sourced from the single-MR detail endpoint; the REST
+        # endpoints do not reliably expose additions/deletions so they stay None.
         assert mr.changed_files_count == 5
-        assert mr.additions == 20
-        assert mr.deletions == 8
+        assert mr.additions is None
+        assert mr.deletions is None
 
         assert mr.pipeline_status is PipelineStatus.SUCCESS
         assert mr.pipeline_updated_at == datetime(2026, 5, 10, 11, 0, 0, tzinfo=timezone.utc)
@@ -703,7 +704,7 @@ def test_fetch_mergerequests_no_pipeline_yields_none_status(
 def test_fetch_mergerequests_diff_stats_from_detail_endpoint(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """changed_files_count, additions, deletions come from the detail endpoint, not the list."""
+    """changed_files_count comes from the detail endpoint when the list omits it."""
 
     async def run() -> None:
         detail_paths: list[str] = []
@@ -735,8 +736,8 @@ def test_fetch_mergerequests_diff_stats_from_detail_endpoint(
 
         assert len(mrs) == 1
         assert mrs[0].changed_files_count == 7
-        assert mrs[0].additions == 30
-        assert mrs[0].deletions == 12
+        assert mrs[0].additions is None
+        assert mrs[0].deletions is None
         # Verify the detail endpoint was actually called.
         assert len(detail_paths) == 1
         assert detail_paths[0].endswith("/7")
@@ -781,10 +782,11 @@ def test_fetch_mergerequests_parses_changes_count_string(
     asyncio.run(run())
 
 
-def test_fetch_mergerequests_diff_stats_from_detail_diff_stats_summary(
+def test_fetch_mergerequests_changed_files_from_detail_diff_stats_summary(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """additions/deletions fall back to detail diff_stats_summary when top-level fields are absent."""
+    """changed_files_count is read from detail diff_stats_summary file_count; additions/deletions
+    are never populated even when present in the payload."""
 
     async def run() -> None:
         def handler(request: httpx.Request) -> httpx.Response:
@@ -792,9 +794,7 @@ def test_fetch_mergerequests_diff_stats_from_detail_diff_stats_summary(
                 return httpx.Response(
                     200,
                     json={
-                        "changes_count": "5",
                         "diff_stats_summary": {"additions": 15, "deletions": 7, "file_count": 5},
-                        # No top-level "additions" or "deletions"
                     },
                 )
             if request.url.path.endswith("/approvals"):
@@ -816,8 +816,8 @@ def test_fetch_mergerequests_diff_stats_from_detail_diff_stats_summary(
 
         assert len(mrs) == 1
         assert mrs[0].changed_files_count == 5
-        assert mrs[0].additions == 15
-        assert mrs[0].deletions == 7
+        assert mrs[0].additions is None
+        assert mrs[0].deletions is None
 
     asyncio.run(run())
 
@@ -1088,14 +1088,14 @@ def test_fetch_mergerequests_enrichment_paired_per_mr(
 
         mr1 = by_iid[1]
         assert mr1.changed_files_count == 3
-        assert mr1.additions == 10
-        assert mr1.deletions == 2
+        assert mr1.additions is None
+        assert mr1.deletions is None
         assert mr1.approval_count == 1
 
         mr2 = by_iid[2]
         assert mr2.changed_files_count == 7
-        assert mr2.additions == 30
-        assert mr2.deletions == 5
+        assert mr2.additions is None
+        assert mr2.deletions is None
         assert mr2.approval_count == 2
 
     asyncio.run(run())

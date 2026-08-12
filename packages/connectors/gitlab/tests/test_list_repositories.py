@@ -105,7 +105,7 @@ def test_list_repositories_normalizes_all_paginated_projects(
     assert all(request.url.params["per_page"] == "100" for request in requests)
     assert all(request.url.params["order_by"] == "id" for request in requests)
     assert all(request.url.params["sort"] == "asc" for request in requests)
-    assert all("membership" not in request.url.params for request in requests)
+    assert all(request.url.params["membership"] == "true" for request in requests)
     assert all("archived" not in request.url.params for request in requests)
 
 

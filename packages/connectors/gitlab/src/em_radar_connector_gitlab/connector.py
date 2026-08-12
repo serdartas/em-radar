@@ -185,24 +185,6 @@ class GitLabConnector:
                     ("greater_than", "less_than", "between"),
                 ),
                 SignalField(
-                    "additions",
-                    "Lines added",
-                    "number",
-                    ("greater_than", "less_than", "between"),
-                ),
-                SignalField(
-                    "deletions",
-                    "Lines deleted",
-                    "number",
-                    ("greater_than", "less_than", "between"),
-                ),
-                SignalField(
-                    "total_changes",
-                    "Total line changes",
-                    "number",
-                    ("greater_than", "less_than", "between"),
-                ),
-                SignalField(
                     "pipeline_status",
                     "Pipeline status",
                     "enum",
@@ -298,7 +280,7 @@ class GitLabConnector:
         async def _enrich(
             payload: Mapping[str, object],
             is_draft: bool,
-        ) -> tuple[Mapping[str, object], bool, tuple[int | None, int | None, int | None], int]:
+        ) -> tuple[Mapping[str, object], bool, int | None, int]:
             iid = _required_positive_int(payload, "iid")
             # Issue 2: diff stats are absent from the list endpoint; fetch them separately.
             # Both fetches are independent — run them concurrently, under the shared semaphore.
@@ -366,9 +348,9 @@ class GitLabConnector:
             ) as eg:
                 raise eg.exceptions[0]
             results = [t.result() for t in tasks]
-            for payload, is_draft, diff_stats, approval_count in results:
+            for payload, is_draft, changed_files_count, approval_count in results:
                 mr = _mergerequest_from_payload(
-                    payload, project_id, is_draft, approval_count, diff_stats
+                    payload, project_id, is_draft, approval_count, changed_files_count
                 )
                 if _mr_in_window(mr, window):
                     yield mr
@@ -419,40 +401,23 @@ class GitLabConnector:
         project_id: str,
         iid: int,
         list_payload: Mapping[str, object],
-    ) -> tuple[int | None, int | None, int | None]:
-        """Return (changed_files_count, additions, deletions).
+    ) -> int | None:
+        """Return changed_files_count.
 
         The REST list endpoint does not include diff stats; we try the list payload first
-        (forward-compatibility) and fall back to the single-MR endpoint for any missing field.
+        (forward-compatibility) and fall back to the single-MR endpoint when it is missing.
+        Line-level additions/deletions are not reliably exposed by the REST endpoints, so
+        they are intentionally not fetched.
         """
         diff_stats = _optional_mapping(list_payload.get("diff_stats_summary"))
         changed_files = _parse_changes_count(list_payload.get("changes_count"), diff_stats)
-        additions = (
-            _optional_nonneg_int(diff_stats, "additions") if diff_stats is not None else None
-        )
-        deletions = (
-            _optional_nonneg_int(diff_stats, "deletions") if diff_stats is not None else None
-        )
 
-        if changed_files is None or additions is None or deletions is None:
+        if changed_files is None:
             detail = await self._fetch_mr_detail(project_id, iid)
             detail_diff_stats = _optional_mapping(detail.get("diff_stats_summary"))
-            if changed_files is None:
-                changed_files = _parse_changes_count(detail.get("changes_count"), detail_diff_stats)
-            if additions is None:
-                raw = detail.get("additions")
-                if isinstance(raw, int) and not isinstance(raw, bool) and raw >= 0:
-                    additions = raw
-                elif detail_diff_stats is not None:
-                    additions = _optional_nonneg_int(detail_diff_stats, "additions")
-            if deletions is None:
-                raw = detail.get("deletions")
-                if isinstance(raw, int) and not isinstance(raw, bool) and raw >= 0:
-                    deletions = raw
-                elif detail_diff_stats is not None:
-                    deletions = _optional_nonneg_int(detail_diff_stats, "deletions")
+            changed_files = _parse_changes_count(detail.get("changes_count"), detail_diff_stats)
 
-        return changed_files, additions, deletions
+        return changed_files
 
     async def list_repositories(self) -> list[Repository]:
         repositories: list[Repository] = []
@@ -465,6 +430,9 @@ class GitLabConnector:
                     "per_page": PAGE_SIZE,
                     "order_by": "id",
                     "sort": "asc",
+                    # Restrict discovery to projects the authenticated account is a member of;
+                    # without this GitLab.com returns unrelated public projects.
+                    "membership": True,
                 },
             )
             repositories.extend(_repository_from_payload(payload) for payload in payloads)
@@ -634,7 +602,7 @@ def _mergerequest_from_payload(
     project_id: str,
     is_draft: bool,
     approval_count: int,
-    diff_stats: tuple[int | None, int | None, int | None],
+    changed_files_count: int | None,
 ) -> MergeRequest:
     mr_global_id = str(_required_positive_int(payload, "id"))
     iid = _required_positive_int(payload, "iid")
@@ -652,8 +620,6 @@ def _mergerequest_from_payload(
     author_id = _stable_id("user", str(_required_positive_int(author, "id")))
 
     pipeline_status, pipeline_updated_at = _pipeline_info(payload.get("head_pipeline"))
-
-    changed_files_count, additions, deletions = diff_stats
 
     comment_count = _optional_nonneg_int(payload, "user_notes_count") or 0
 
@@ -676,8 +642,6 @@ def _mergerequest_from_payload(
         merged_at=merged_at,
         closed_at=closed_at,
         changed_files_count=changed_files_count,
-        additions=additions,
-        deletions=deletions,
         pipeline_status=pipeline_status,
         pipeline_updated_at=pipeline_updated_at,
         approval_count=approval_count,

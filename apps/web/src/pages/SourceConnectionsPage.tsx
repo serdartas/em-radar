@@ -224,7 +224,7 @@ export function SourceConnectionsPage() {
 
             {selectedConnector && (
               <SchemaForm
-                fieldHelp={selectedConnector.name === "jira" ? JIRA_FIELD_HELP : undefined}
+                fieldHelp={FIELD_HELP_BY_CONNECTOR[selectedConnector.name]}
                 idPrefix="connection"
                 onChange={changeField}
                 schema={selectedConnector.config_schema}
@@ -325,6 +325,37 @@ const JIRA_FIELD_HELP: Record<string, ReactNode> = {
       </p>
     </>
   ),
+}
+
+const GITLAB_FIELD_HELP: Record<string, ReactNode> = {
+  base_url: (
+    <p>
+      The root URL of your GitLab instance. For GitLab SaaS this is{" "}
+      <code className="rounded bg-blue-100 px-1">https://gitlab.com</code>; for a self-managed
+      instance it is your self-hosted address. Open GitLab in a browser and copy the address up to
+      the domain.
+    </p>
+  ),
+  token: (
+    <p>
+      Use a <strong>read-only</strong> GitLab personal access token with the{" "}
+      <code className="rounded bg-blue-100 px-1">read_api</code> scope. Create one under Preferences
+      &rarr; Access Tokens for an account that can see the projects you report on. A read-only token
+      keeps EM Radar from making any changes to your GitLab data.
+    </p>
+  ),
+  verify_tls: (
+    <p>
+      Whether EM Radar checks the server&apos;s TLS (HTTPS) certificate. Keep this on for GitLab
+      SaaS and any instance with a valid certificate. Only turn it off for a self-managed server
+      that uses a self-signed or internal certificate. Doing so is less secure.
+    </p>
+  ),
+}
+
+const FIELD_HELP_BY_CONNECTOR: Record<string, Record<string, ReactNode>> = {
+  jira: JIRA_FIELD_HELP,
+  gitlab: GITLAB_FIELD_HELP,
 }
 
 interface ConnectionListProps {
