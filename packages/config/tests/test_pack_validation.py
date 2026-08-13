@@ -177,7 +177,7 @@ def test_standard_safe_anchor_is_accepted() -> None:
 def test_valid_default_pack_passes() -> None:
     result = load_signal_pack(DEFAULT_PACK_PATH.read_text())
 
-    assert result.pack.metadata.name == "default"
+    assert result.pack.metadata.name == "default-signals"
     assert result.warnings == ()
 
 

@@ -14,8 +14,9 @@ def test_default_pack_parses_correctly() -> None:
 
     assert pack.api_version == "emradar.dev/v1"
     assert pack.kind == "SignalPack"
-    assert len(pack.spec.signals) == 13
+    assert len(pack.spec.signals) == 8
     assert all(signal.enabled for signal in pack.spec.signals)
+    assert all(signal.expression is not None for signal in pack.spec.signals)
 
 
 def test_pack_models_cover_defaults_scopes_and_field_mappings() -> None:
