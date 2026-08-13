@@ -154,7 +154,7 @@ class JiraConnector:
         sprint_only = FieldAvailability(requires_scope_capability=("sprint",))
         return SignalCapabilitySchema(
             connector_type="jira",
-            entity_types=("issue",),
+            entity_types=("issue", "sprint"),
             scope_types=(
                 SignalScopeType("project", "Project", ("statuses", "labels")),
                 SignalScopeType("board", "Board", ("statuses", "labels", "sprint", "kanban")),
