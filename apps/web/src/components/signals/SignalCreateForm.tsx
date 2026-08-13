@@ -43,7 +43,9 @@ export function SignalCreateForm({
   errorMessage,
 }: SignalCreateFormProps) {
   const [name, setName] = useState("")
-  const [entityType, setEntityType] = useState(SIGNAL_TYPES[0].value)
+  const [entityType, setEntityType] = useState(
+    () => SIGNAL_TYPES.find((t) => (fieldsByEntityType[t.value] ?? []).length > 0)?.value ?? SIGNAL_TYPES[0].value,
+  )
   const [groupOperator, setGroupOperator] = useState<Connector>("")
   const [severity, setSeverity] = useState<Severity>("warning")
   const [category, setCategory] = useState(CATEGORIES[0])

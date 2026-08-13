@@ -285,6 +285,49 @@ describe("SignalSettingsPage", () => {
     })
   })
 
+  it("with only GitLab connector shows only merge_request type and saves correctly", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = typeof input === "string" ? input : input.toString()
+      const method = init?.method ?? "GET"
+      if (url.endsWith("/api/signal-definitions") && method === "GET") {
+        return Promise.resolve(jsonResponse([]))
+      }
+      if (url.endsWith("/api/connectors")) {
+        return Promise.resolve(jsonResponse([connectors[1]])) // GitLab only
+      }
+      if (url.endsWith("/api/signal-definitions") && method === "POST") {
+        return Promise.resolve(jsonResponse({ id: "signal-1", ...JSON.parse(String(init?.body)) }))
+      }
+      throw new Error(`unexpected fetch: ${method} ${url}`)
+    })
+    renderPage()
+    await openForm()
+
+    const typeSelect = screen.getByLabelText("Type") as HTMLSelectElement
+    const options = Array.from(typeSelect.options).map((o) => o.value)
+    // Only merge_request is available — issue has no fields
+    expect(options).toContain("merge_request")
+    expect(options).not.toContain("issue")
+
+    // Default entity type snapped to merge_request → MR fields are visible
+    expect(screen.getAllByRole("option", { name: "State" })).not.toHaveLength(0)
+    expect(screen.queryByRole("option", { name: "Status Category" })).not.toBeInTheDocument()
+
+    // Saving emits merge_request
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "MR signal" } })
+    const fetchMock = vi.mocked(globalThis.fetch)
+    fireEvent.click(screen.getByRole("button", { name: "Save signal" }))
+
+    await waitFor(() => {
+      const call = fetchMock.mock.calls.find(
+        ([url, init]) => String(url).endsWith("/api/signal-definitions") && init?.method === "POST",
+      )
+      expect(call).toBeTruthy()
+      const body = JSON.parse(String((call?.[1] as RequestInit).body))
+      expect(body.entity_type).toBe("merge_request")
+    })
+  })
+
   it("saves a merge_request signal with entity_type merge_request", async () => {
     const fetchMock = mockApi()
     renderPage()

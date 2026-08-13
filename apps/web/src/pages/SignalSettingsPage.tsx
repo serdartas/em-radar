@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Switch } from "@/components/ui/switch"
 import { apiErrorMessage } from "@/lib/api"
-import { getConnectors } from "@/lib/connectors"
+import { getConnectors, type SignalField } from "@/lib/connectors"
 import {
   createSignalDefinition,
   deleteSignalDefinition,
@@ -27,7 +27,7 @@ export function SignalSettingsPage() {
 
   // Build fieldsByEntityType from all registered connector schemas.
   // issue fields come from Jira; merge_request fields come from GitLab.
-  const fieldsByEntityType: Record<string, import("@/lib/connectors").SignalField[]> =
+  const fieldsByEntityType: Record<string, SignalField[]> =
     connectorsQuery.data?.reduce(
       (acc, connector) => {
         for (const entityType of connector.signal_schema?.entity_types ?? []) {
@@ -37,7 +37,7 @@ export function SignalSettingsPage() {
         }
         return acc
       },
-      {} as Record<string, import("@/lib/connectors").SignalField[]>,
+      {} as Record<string, SignalField[]>,
     ) ?? {}
 
   const createMutation = useMutation({
