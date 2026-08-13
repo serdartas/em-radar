@@ -109,20 +109,42 @@ def check_window_gate(
     )
 
 
+def _guarantees_link_emptiness(expression: object) -> bool:
+    """Return True when every match of the expression has an empty ``linked_workitem_keys``.
+
+    Section metadata is signal-wide, so link-emptiness must be guaranteed for all matches:
+    a mandatory ``all`` conjunct suffices, but every branch of an ``any`` must guarantee it.
+    """
+    if not isinstance(expression, dict):
+        return False
+    if expression.get("type") != "group":
+        return (
+            expression.get("field") == "linked_workitem_keys"
+            and expression.get("operator") == "is_empty"
+        )
+    conditions = expression.get("conditions")
+    if not isinstance(conditions, list):
+        return False
+    checks = [_guarantees_link_emptiness(c) for c in conditions if isinstance(c, dict)]
+    if not checks:
+        return False
+    operator = expression.get("operator")
+    if operator == "all":
+        return any(checks)
+    if operator == "any":
+        return all(checks)
+    return False
+
+
 def is_source_linking_signal(definition: SignalDefinition) -> bool:
     """Return True when the definition flags entities missing a linked work item.
 
-    A source-linking signal has a leaf condition checking ``linked_workitem_keys``
-    for emptiness. Detecting it here lets user-created signals (no template key)
-    route their findings to the Source Linking report section.
+    A source-linking signal's expression guarantees an empty ``linked_workitem_keys``
+    for every match (see ``_guarantees_link_emptiness``). Detecting it here lets
+    user-created signals (no template key) route their findings to the Source Linking
+    report section.
     """
-    expression = definition.expression
-    if not isinstance(expression, dict):
-        return False
-    return any(
-        leaf.get("field") == "linked_workitem_keys" and leaf.get("operator") == "is_empty"
-        for leaf in _leaf_conditions(expression)
-    )
+    return _guarantees_link_emptiness(definition.expression)
 
 
 def resolve_severity(

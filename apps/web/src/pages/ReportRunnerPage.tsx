@@ -74,7 +74,12 @@ export function ReportRunnerPage() {
       return
     }
     const start = `${startDate}T00:00:00Z`
-    const end = `${endDate}T23:59:59.999Z`
+    // window.end is inclusive (Jira `updated <= end`, GitLab window bounds). Jira truncates
+    // to the minute, so the robust inclusive boundary for the selected day is the next day at
+    // midnight UTC: it survives truncation and never drops updates from the final minute.
+    const endBoundary = new Date(`${endDate}T00:00:00Z`)
+    endBoundary.setUTCDate(endBoundary.getUTCDate() + 1)
+    const end = endBoundary.toISOString()
     if (start >= end) {
       setDateError("The start date must be before the end date.")
       return

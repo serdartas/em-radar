@@ -202,7 +202,7 @@ describe("ReportRunnerPage", () => {
               team_profile_id: "team-1",
               window_type: "date_range",
               start: "2026-05-01T00:00:00Z",
-              end: "2026-05-15T23:59:59.999Z",
+              end: "2026-05-16T00:00:00.000Z",
             }),
       ),
     ).toBe(true)
@@ -243,7 +243,7 @@ describe("ReportRunnerPage", () => {
               team_profile_id: "team-1",
               window_type: "date_range",
               start: "2026-05-15T00:00:00Z",
-              end: "2026-05-15T23:59:59.999Z",
+              end: "2026-05-16T00:00:00.000Z",
             }),
       ),
     ).toBe(true)
