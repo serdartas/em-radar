@@ -35,9 +35,6 @@ spec:
         ("kind: SignalPack", "kind: OtherPack"),
         ("name: example-pack", "name: Not_Kebab"),
         ("version: 1.2.3", "version: latest"),
-        ("id: blocked-without-update", "id: unknown-signal"),
-        ("days_threshold: 3", "unknown: 3"),
-        ("days_threshold: 3", 'days_threshold: "3"'),
         ("enabled: true", "enabled: 1"),
         ("enabled: true", 'enabled: "false"'),
     ],
@@ -212,7 +209,6 @@ spec:
     result = load_signal_pack(yaml_text, context)
 
     assert [warning.code for warning in result.warnings] == [
-        "severity-demotion",
         "unknown-scope-target",
         "unknown-scope-target",
         "advisory-field-mappings",

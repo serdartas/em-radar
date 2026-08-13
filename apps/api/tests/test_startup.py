@@ -2,76 +2,40 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import sessionmaker
-from sqlmodel import SQLModel, Session
+from sqlmodel import SQLModel, Session, select
 
 from em_radar_api.db import create_db_engine, create_session_factory
 from em_radar_api.main import create_app
-from em_radar_api.repositories.signal_configs import list_signal_configs, upsert_signal_config
-from em_radar_api.signal_configs import SignalConfigUpsert
-from em_radar_config import load_signal_pack
-
-DEFAULT_PACK_PATH = (
-    Path(__file__).parents[3] / "packages" / "config" / "defaults" / "default-pack.yaml"
-)
-EDITED_SIGNAL_ID = "stale-in-progress-work-item"
+from em_radar_api.signal_definitions import SignalDefinitionTable
 
 
-def test_first_startup_seeds_signal_configs_matching_default_pack(tmp_path: Path) -> None:
+def test_first_startup_seeds_default_signal_group(tmp_path: Path) -> None:
+    """Startup seeds the default signal group with 8 Jira template signals."""
     session_factory = _empty_session_factory(tmp_path)
 
     with TestClient(create_app(app_session_factory=session_factory)):
         pass
 
     with session_factory() as session:
-        stored = list_signal_configs(session)
+        count = session.exec(select(SignalDefinitionTable)).all()
 
-    pack = load_signal_pack(DEFAULT_PACK_PATH.read_text()).pack
-    expected = {
-        signal.id: {
-            "enabled": signal.enabled,
-            "severity_override": signal.severity,
-            "params": signal.params,
-        }
-        for signal in pack.spec.signals
-    }
-
-    assert len(stored) == 13
-    assert {
-        config.signal_id: {
-            "enabled": config.enabled,
-            "severity_override": config.severity_override,
-            "params": config.params,
-        }
-        for config in stored
-    } == expected
+    assert len(count) == 8
 
 
-def test_subsequent_startup_preserves_user_edit(tmp_path: Path) -> None:
+def test_subsequent_startup_does_not_duplicate_signals(tmp_path: Path) -> None:
     session_factory = _empty_session_factory(tmp_path)
     app = create_app(app_session_factory=session_factory)
 
     with TestClient(app):
         pass
 
-    with session_factory() as session:
-        upsert_signal_config(
-            session,
-            SignalConfigUpsert(
-                signal_id=EDITED_SIGNAL_ID,
-                enabled=False,
-                params={"days_threshold": 2},
-            ),
-        )
-
     with TestClient(app):
         pass
 
     with session_factory() as session:
-        stored = {config.signal_id: config for config in list_signal_configs(session)}
+        count = session.exec(select(SignalDefinitionTable)).all()
 
-    assert len(stored) == 13
-    assert not stored[EDITED_SIGNAL_ID].enabled
-    assert stored[EDITED_SIGNAL_ID].params == {"days_threshold": 2, "exclude_labels": []}
+    assert len(count) == 8
 
 
 def _empty_session_factory(tmp_path: Path) -> sessionmaker[Session]:
