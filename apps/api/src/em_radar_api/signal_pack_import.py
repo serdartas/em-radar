@@ -70,6 +70,7 @@ class SignalPackImportPreview(BaseModel):
     pack_name: str
     warnings: list[ImportWarning] = []
     changes: list[SignalImportDiff] = []
+    unresolved_mappings: list[str] = []
     imported_signal_names: list[str] = []
     signal_name_clashes: list[str] = []
     group_name_clashes: list[str] = []

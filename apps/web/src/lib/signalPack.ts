@@ -1,8 +1,7 @@
 import { API_BASE_URL, ApiError, apiFetch } from "@/lib/api"
 import type { Severity } from "@/lib/severity"
 
-export type ExportMode = "full" | "minimal"
-export type ExportType = "legacy" | "private_backup" | "public_template"
+export type ExportType = "private_backup" | "public_template"
 export type ImportMode = "additive" | "replace_all"
 export type ConflictMode = "skip" | "overwrite" | "keep_both" | "cancel"
 
@@ -50,18 +49,9 @@ export interface ImportRequest {
   conflict?: ConflictMode
 }
 
-export async function exportSignalPack(mode: ExportMode, exportType: ExportType): Promise<string> {
-  const params = new URLSearchParams({ mode, export_type: exportType })
-  const response = await fetch(`${API_BASE_URL}/signal-pack/export?${params.toString()}`)
-  if (!response.ok) {
-    throw new ApiError(response.status, `Export failed with status ${response.status}.`)
-  }
-  return response.text()
-}
-
 export async function exportSignalGroupsPack(
   groupIds: string[],
-  exportType: Exclude<ExportType, "legacy">,
+  exportType: ExportType,
 ): Promise<string> {
   const params = new URLSearchParams({ export_type: exportType })
   for (const groupId of groupIds) {
