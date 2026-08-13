@@ -4,6 +4,7 @@ from em_radar_core.models import SignalFinding, WindowType
 from em_radar_reports import (
     PartialDataNote,
     ReportMetadata,
+    SectionedReport,
     SignalMeta,
     SkipNote,
     build_sections,
@@ -11,6 +12,26 @@ from em_radar_reports import (
 )
 
 from em_radar_api.tables import EvaluationWindowTable, ReportTable, TeamProfileTable
+
+
+def build_sectioned_report(
+    report: ReportTable,
+    findings: Sequence[SignalFinding],
+) -> SectionedReport:
+    """Reconstruct the sectioned model (M6-01) from a persisted report.
+
+    Section-assignment metadata (category, template_key) and the skip / partial-data
+    notes are read back from the report's ``signal_pack_snapshot`` so the sections
+    reflect the signal configuration captured at run time, not the signals' current
+    state. Shared by the Markdown export and the detail API response.
+    """
+    snapshot = report.signal_pack_snapshot
+    return build_sections(
+        findings,
+        _signal_meta_from_snapshot(snapshot),
+        skip_notes=_skip_notes_from_snapshot(snapshot),
+        partial_data_notes=_partial_data_notes_from_snapshot(snapshot),
+    )
 
 
 def build_report_markdown(
@@ -29,13 +50,7 @@ def build_report_markdown(
     ``EvaluationContext.now`` the run evaluated against — never a wall-clock read, so
     identical reports export byte-identically.
     """
-    snapshot = report.signal_pack_snapshot
-    sectioned = build_sections(
-        findings,
-        _signal_meta_from_snapshot(snapshot),
-        skip_notes=_skip_notes_from_snapshot(snapshot),
-        partial_data_notes=_partial_data_notes_from_snapshot(snapshot),
-    )
+    sectioned = build_sectioned_report(report, findings)
     metadata = ReportMetadata(
         report_id=report.id,
         generated_at=report.started_at,
@@ -68,6 +83,7 @@ def _signal_meta_from_snapshot(snapshot: object) -> dict[str, SignalMeta]:
         meta[signal_id] = SignalMeta(
             category=category if isinstance(category, str) else "",
             template_key=template_key if isinstance(template_key, str) else None,
+            is_source_linking=bool(entry.get("is_source_linking")),
         )
     return meta
 

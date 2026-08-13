@@ -4,9 +4,18 @@ import { Link, useNavigate } from "react-router-dom"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
+import { Label } from "@/components/ui/label"
+import { Select } from "@/components/ui/select"
 import { apiErrorMessage } from "@/lib/api"
 import { runTeamReport, type ReportDetail } from "@/lib/reports"
 import { listTeams, type TeamProfile } from "@/lib/teams"
+
+type WindowMode = "date_range" | "sprint"
+
+interface TeamRunInput {
+  teamIds: string[]
+  window?: { start: string; end: string }
+}
 
 /** A team with no board scope and no code connection has no sources and cannot run a report. */
 function teamHasNoSources(team: TeamProfile): boolean {
@@ -18,6 +27,10 @@ export function ReportRunnerPage() {
   const queryClient = useQueryClient()
   const teamsQuery = useQuery({ queryKey: ["teams"], queryFn: listTeams })
   const [selectedTeamIds, setSelectedTeamIds] = useState<string[]>([])
+  const [windowMode, setWindowMode] = useState<WindowMode>("sprint")
+  const [startDate, setStartDate] = useState("")
+  const [endDate, setEndDate] = useState("")
+  const [dateError, setDateError] = useState<string | null>(null)
 
   const openReport = (report: ReportDetail) => {
     void queryClient.invalidateQueries({ queryKey: ["reports"], exact: true })
@@ -25,10 +38,10 @@ export function ReportRunnerPage() {
   }
 
   const teamRun = useMutation({
-    mutationFn: async (teamIds: string[]) => {
+    mutationFn: async ({ teamIds, window }: TeamRunInput) => {
       let last: ReportDetail | null = null
       for (const teamId of teamIds) {
-        last = await runTeamReport(teamId)
+        last = await runTeamReport(teamId, window)
       }
       return last
     },
@@ -48,6 +61,30 @@ export function ReportRunnerPage() {
         ? current.filter((id) => id !== teamId)
         : [...current, teamId],
     )
+  }
+
+  function handleRun() {
+    setDateError(null)
+    if (windowMode === "sprint") {
+      teamRun.mutate({ teamIds: selectedTeamIds })
+      return
+    }
+    if (!startDate || !endDate) {
+      setDateError("Choose both a start and an end date.")
+      return
+    }
+    const start = `${startDate}T00:00:00Z`
+    // window.end is inclusive (Jira `updated <= end`, GitLab window bounds). Jira truncates
+    // to the minute, so the robust inclusive boundary for the selected day is the next day at
+    // midnight UTC: it survives truncation and never drops updates from the final minute.
+    const endBoundary = new Date(`${endDate}T00:00:00Z`)
+    endBoundary.setUTCDate(endBoundary.getUTCDate() + 1)
+    const end = endBoundary.toISOString()
+    if (start >= end) {
+      setDateError("The start date must be before the end date.")
+      return
+    }
+    teamRun.mutate({ teamIds: selectedTeamIds, window: { start, end } })
   }
 
   return (
@@ -96,10 +133,54 @@ export function ReportRunnerPage() {
               })}
             </ul>
           )}
-          <Button
-            disabled={running || selectedTeamIds.length === 0}
-            onClick={() => teamRun.mutate(selectedTeamIds)}
-          >
+          <div className="space-y-3 border-t pt-4">
+            <div className="space-y-1">
+              <Label htmlFor="window-mode">Window</Label>
+              <Select
+                className="sm:max-w-xs"
+                id="window-mode"
+                onChange={(event) => setWindowMode(event.target.value as WindowMode)}
+                value={windowMode}
+              >
+                <option value="sprint">Active sprint</option>
+                <option value="date_range">Date range</option>
+              </Select>
+            </div>
+            {windowMode === "sprint" ? (
+              <p className="text-xs text-slate-500">
+                Runs each team&apos;s active sprint. Kanban teams use their default rolling window.
+              </p>
+            ) : (
+              <div className="flex flex-col gap-3 sm:flex-row">
+                <div className="space-y-1">
+                  <Label htmlFor="window-start">Start date</Label>
+                  <input
+                    className="flex h-9 rounded-md border border-border bg-background px-3 py-1 text-sm shadow-sm"
+                    id="window-start"
+                    onChange={(event) => setStartDate(event.target.value)}
+                    type="date"
+                    value={startDate}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="window-end">End date</Label>
+                  <input
+                    className="flex h-9 rounded-md border border-border bg-background px-3 py-1 text-sm shadow-sm"
+                    id="window-end"
+                    onChange={(event) => setEndDate(event.target.value)}
+                    type="date"
+                    value={endDate}
+                  />
+                </div>
+              </div>
+            )}
+            {dateError && (
+              <p className="text-sm text-red-700" role="alert">
+                {dateError}
+              </p>
+            )}
+          </div>
+          <Button disabled={running || selectedTeamIds.length === 0} onClick={handleRun}>
             {teamRun.isPending ? "Running team reports…" : "Run team reports"}
           </Button>
         </CardContent>

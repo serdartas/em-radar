@@ -40,6 +40,26 @@ function mockReportAndExportFetch() {
   })
 }
 
+const SECTION_ORDER = [
+  ["summary", "Summary"],
+  ["top_risks", "Top Risks"],
+  ["planning_hygiene", "Planning Hygiene"],
+  ["delivery_flow", "Delivery Flow"],
+  ["sprint_health", "Sprint Health"],
+  ["merge_request_flow", "Merge Request Flow"],
+  ["source_linking", "Source Linking"],
+  ["detailed_findings", "Detailed Findings"],
+  ["suggested_actions", "Suggested Actions"],
+] as const
+
+function buildSections(assignments: Record<string, string[]>) {
+  return SECTION_ORDER.map(([section, title]) => ({
+    section,
+    title,
+    finding_ids: assignments[section] ?? [],
+  }))
+}
+
 const report = {
   id: "report-1",
   evaluation_window_id: "window-1",
@@ -49,8 +69,12 @@ const report = {
   error: null,
   findings_count_by_severity: { info: 0, warning: 2, critical: 1 },
   signal_pack_snapshot: {},
+  summary: { counts_by_severity: { info: 0, warning: 2, critical: 1 }, total: 1 },
+  skip_notes: [],
+  sections: buildSections({ detailed_findings: ["finding-9"] }),
   findings: [
     {
+      id: "finding-9",
       signal_id: "blocked-without-update",
       signal_name: "Blocked without update",
       severity: "critical",
@@ -98,6 +122,106 @@ describe("ReportResultsPage", () => {
     const counts = screen.getByRole("list", { name: "Findings by severity" })
     expect(counts).toHaveTextContent("1 critical")
     expect(counts).toHaveTextContent("2 warning")
+  })
+
+  it("omits the Evidence block for empty evidence and pluralizes the total", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify(report), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    )
+
+    renderReportResults()
+    await screen.findByText("PLAT-9 blocked for 6 days")
+
+    // The single finding carries `evidence: {}`, which must render no Evidence block.
+    expect(screen.queryByRole("heading", { name: "Evidence" })).toBeNull()
+    expect(screen.getByText("1 finding in total.")).toBeInTheDocument()
+  })
+
+  it("renders all nine sections, severity-ordered findings, and a source link each", async () => {
+    const sectionedReport = {
+      ...report,
+      findings_count_by_severity: { info: 1, warning: 1, critical: 1 },
+      summary: { counts_by_severity: { info: 1, warning: 1, critical: 1 }, total: 3 },
+      sections: buildSections({
+        top_risks: ["f-crit", "f-warn", "f-info"],
+        detailed_findings: ["f-crit", "f-warn", "f-info"],
+      }),
+      findings: [
+        {
+          id: "f-info",
+          signal_id: "sig-info",
+          signal_name: "Info signal",
+          severity: "info",
+          confidence: "low",
+          entity_type: "workitem",
+          entity_id: "entity-info",
+          title: "INFO-3 minor note",
+          reason: "Minor.",
+          recommendation: null,
+          evidence: null,
+          source_link: "https://demo.invalid/browse/INFO-3",
+        },
+        {
+          id: "f-crit",
+          signal_id: "sig-crit",
+          signal_name: "Critical signal",
+          severity: "critical",
+          confidence: "high",
+          entity_type: "workitem",
+          entity_id: "entity-crit",
+          title: "CRIT-1 blocked",
+          reason: "Blocked.",
+          recommendation: "Escalate.",
+          evidence: { days_blocked: 6 },
+          source_link: "https://demo.invalid/browse/CRIT-1",
+        },
+        {
+          id: "f-warn",
+          signal_id: "sig-warn",
+          signal_name: "Warning signal",
+          severity: "warning",
+          confidence: "medium",
+          entity_type: "workitem",
+          entity_id: "entity-warn",
+          title: "WARN-2 stale",
+          reason: "Stale.",
+          recommendation: "Review.",
+          evidence: { days_idle: 12 },
+          source_link: "https://demo.invalid/browse/WARN-2",
+        },
+      ],
+    }
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify(sectionedReport), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    )
+
+    renderReportResults()
+    await screen.findByRole("heading", { level: 2, name: "Detailed Findings" })
+
+    for (const [, title] of SECTION_ORDER) {
+      expect(screen.getByRole("heading", { level: 2, name: title })).toBeInTheDocument()
+    }
+
+    const detailedSection = screen
+      .getByRole("heading", { level: 2, name: "Detailed Findings" })
+      .closest("section") as HTMLElement
+    const orderedTitles = Array.from(
+      detailedSection.querySelectorAll("h3"),
+      (heading) => heading.textContent,
+    )
+    expect(orderedTitles).toEqual(["CRIT-1 blocked", "WARN-2 stale", "INFO-3 minor note"])
+
+    const sourceLinks = detailedSection.querySelectorAll('a[href*="/browse/"]')
+    expect(sourceLinks).toHaveLength(3)
+    for (const link of Array.from(sourceLinks)) {
+      expect(link).toHaveAttribute("href")
+    }
   })
 
   it("shows failed report errors before empty findings", async () => {
