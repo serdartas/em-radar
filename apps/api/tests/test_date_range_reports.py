@@ -8,10 +8,13 @@ Scenarios:
   - Sprint-only signals are window-gated on a date-range run (skipped with a note).
   - A scrum team runs an ad-hoc date-range report even when its board has no active sprint
     (the explicit window bypasses sprint derivation; no 422).
-  - Request validation: missing end / start >= end return 422.
+  - An explicit date-range run never touches the Agile sprint endpoint.
+  - The scrum no-active-sprint 422 path closes the board connector (no HTTP-client leak).
+  - Request validation: missing end / start >= end / explicit sprint / stray start-end → 422.
 """
 
 from datetime import datetime
+from typing import ClassVar
 from uuid import UUID, uuid4
 
 import pytest
@@ -19,7 +22,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import sessionmaker
 from sqlmodel import Session
 
-from em_radar_core.models import WindowType
+from em_radar_core.models import Sprint, WindowType
 
 from em_radar_api.tables import EvaluationWindowTable, ReportTable
 from test_report_window import _JiraNoActiveSprintConnector
@@ -30,6 +33,24 @@ from test_source_connection_routes import (
     _create_jira_connection,
     _create_jira_team,
 )
+
+
+class _SprintEndpointForbiddenConnector(JiraTestConnector):
+    """Jira fake whose Agile sprint endpoint must never be called (date-range runs skip it)."""
+
+    async def list_sprints(self, board_id: str) -> list[Sprint]:
+        del board_id
+        raise RuntimeError("list_sprints must not be called for an explicit date-range run")
+
+
+class _ClosableNoActiveSprintConnector(_JiraNoActiveSprintConnector):
+    """No-active-sprint fake that records close() calls, to prove the 422 path releases it."""
+
+    close_calls: ClassVar[int] = 0
+
+    async def close(self) -> None:
+        type(self).close_calls += 1
+
 
 _BOARD_CAPABILITIES = ["sprint", "statuses", "labels"]
 _RANGE_START = "2026-05-01T00:00:00Z"
@@ -188,6 +209,62 @@ def test_scrum_ad_hoc_date_range_bypasses_no_active_sprint(
     assert window.sprint_id is None
     assert window.start == _RANGE_START_NAIVE
     assert window.end == _RANGE_END_NAIVE
+
+
+def test_date_range_run_skips_sprint_endpoint(
+    api_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A date-range run must not depend on Agile sprint access: with a connector whose
+    list_sprints() raises, the run still succeeds (proving the endpoint is skipped)."""
+    monkeypatch.setattr(
+        "em_radar_api.connector_registry._connector_types",
+        lambda: [_SprintEndpointForbiddenConnector],
+    )
+    monkeypatch.setattr("em_radar_api.routers.reports.datetime", FrozenReportDateTime)
+
+    connection_id = _create_jira_connection(api_client)
+    scope_id = _create_board_scope(api_client, connection_id, _BOARD_CAPABILITIES)
+    team_id = _create_jira_team(api_client, connection_id, scope_id, "scrum", sprint_length_days=14)
+
+    response = api_client.post(
+        "/api/reports/run",
+        json={
+            "connector": "jira",
+            "team_profile_id": team_id,
+            "window_type": "date_range",
+            "start": _RANGE_START,
+            "end": _RANGE_END,
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "succeeded"
+
+
+def test_no_active_sprint_default_run_closes_connector(
+    api_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A default scrum run whose board has no active sprint 422s AFTER the board connector is
+    opened; that connector must be closed on the error path (no HTTP-client leak)."""
+    _ClosableNoActiveSprintConnector.close_calls = 0
+    monkeypatch.setattr(
+        "em_radar_api.connector_registry._connector_types",
+        lambda: [_ClosableNoActiveSprintConnector],
+    )
+    monkeypatch.setattr("em_radar_api.routers.reports.datetime", FrozenReportDateTime)
+
+    connection_id = _create_jira_connection(api_client)
+    scope_id = _create_board_scope(api_client, connection_id, _BOARD_CAPABILITIES)
+    team_id = _create_jira_team(api_client, connection_id, scope_id, "scrum", sprint_length_days=14)
+
+    response = api_client.post(
+        "/api/reports/run", json={"connector": "jira", "team_profile_id": team_id}
+    )
+
+    assert response.status_code == 422
+    assert "no active sprint" in response.json()["detail"]
+    assert _ClosableNoActiveSprintConnector.close_calls == 1
 
 
 def test_naive_date_range_treated_as_utc(

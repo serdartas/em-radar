@@ -260,7 +260,12 @@ async def _run_team_report(
     board_meta: _BoardMetadata | None = None
     if board_scope is not None:
         try:
-            board_meta = await _fetch_board_metadata(session, board_scope)
+            # An explicit date-range run needs no sprints (sprint signals are window-gated out
+            # and _code_fetch_window passes a date_range through unchanged), so skip the Agile
+            # sprint endpoint — a range report must not depend on sprint access (REQ-F-051).
+            board_meta = await _fetch_board_metadata(
+                session, board_scope, fetch_sprints=requested_window is None
+            )
         except (ConnectorRateLimitedError, ConnectorTransientError, ConnectorAuthError) as error:
             partial_data_notes.append(
                 {"source": "board", "reason": f"board data unavailable: {type(error).__name__}"}
@@ -271,9 +276,17 @@ async def _run_team_report(
     # derive the default window from the team's working mode (flows §6): with a board it is the
     # active sprint (scrum) or a rolling range (kanban); without one it falls back to a date
     # range (sprints=None) for both working modes.
-    window = requested_window or _default_evaluation_window(
-        team, board_meta.sprints if board_meta is not None else None, started_at
-    )
+    try:
+        window = requested_window or _default_evaluation_window(
+            team, board_meta.sprints if board_meta is not None else None, started_at
+        )
+    except HTTPException:
+        # Default derivation can 422 (scrum board with no active sprint). The board connector
+        # opened in Phase 1 is normally closed by the Phase 2 workitem fetch, which never runs
+        # here — close it explicitly so repeated invalid runs don't leak the HTTP client.
+        if board_meta is not None:
+            await board_meta.connector.close()
+        raise
 
     # Phase 2: concurrently fetch slow I/O — workitems and merge requests run in parallel.
     # Compute derived values before creating coroutines to avoid an unawaited-coroutine leak
@@ -483,11 +496,14 @@ async def _run_team_report(
 async def _fetch_board_metadata(
     session: Session,
     board_scope: ScopeDefinitionTable,
+    fetch_sprints: bool = True,
 ) -> _BoardMetadata:
     """Fetch fast board metadata: project, board, sprints, and connector.
 
     Does not fetch workitems or transitions — those run concurrently with MR fetch in Phase 2.
-    The evaluation window is picked by the caller, not derived here.
+    The evaluation window is picked by the caller, not derived here. When ``fetch_sprints`` is
+    False (explicit date-range run) the Agile sprint endpoint is skipped so the report does not
+    depend on sprint access.
     """
     connection = get_source_connection(session, board_scope.connection_id)
     if connection is None:
@@ -513,7 +529,7 @@ async def _fetch_board_metadata(
         project, board = await _find_jira_board(connector, board_external_id)
         if project is None or board is None:
             raise HTTPException(status_code=404, detail="Jira board not found")
-        sprints = await connector.list_sprints(board_external_id)
+        sprints = await connector.list_sprints(board_external_id) if fetch_sprints else []
     except (ConnectorRateLimitedError, ConnectorTransientError, ConnectorAuthError):
         await connector.close()
         raise
