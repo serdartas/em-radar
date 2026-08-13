@@ -228,17 +228,13 @@ async def _run_team_report(
                 {"source": "board", "reason": f"board data unavailable: {type(error).__name__}"}
             )
 
-    # Derive evaluation window from sprint metadata, or fall back to a 14-day date range.
-    # Full working-mode window derivation for all source combinations is M6-02.
+    # Derive the default window from the team's working mode (flows §6). With a board the
+    # window comes from board metadata (sprint for scrum, date range for kanban); without one
+    # the same helper falls back to a date range (sprints=None) for both working modes.
     if board_meta is not None:
         window = board_meta.window
     else:
-        window = EvaluationWindow(
-            window_type=WindowType.DATE_RANGE,
-            start=started_at - timedelta(days=DEFAULT_KANBAN_REPORT_DAYS),
-            end=started_at,
-            team_profile_id=team.id,
-        )
+        window = _default_evaluation_window(team, None, started_at)
 
     # Phase 2: concurrently fetch slow I/O — workitems and merge requests run in parallel.
     # Compute derived values before creating coroutines to avoid an unawaited-coroutine leak
@@ -483,7 +479,7 @@ async def _fetch_board_metadata(
         if project is None or board is None:
             raise HTTPException(status_code=404, detail="Jira board not found")
         sprints = await connector.list_sprints(board_external_id)
-        window = _jira_evaluation_window(team, sprints, team.id, started_at)
+        window = _default_evaluation_window(team, sprints, started_at)
     except (ConnectorRateLimitedError, ConnectorTransientError, ConnectorAuthError):
         await connector.close()
         raise
@@ -606,18 +602,26 @@ async def get_report_endpoint(
     return ReportDetailResponse.from_report_with_findings(report, get_findings(session, report_id))
 
 
-def _jira_evaluation_window(
+def _default_evaluation_window(
     team: TeamProfile,
-    sprints: list[Sprint],
-    team_id: UUID,
+    sprints: list[Sprint] | None,
     now: datetime,
 ) -> EvaluationWindow:
-    if team.working_mode is WorkingMode.KANBAN:
+    """Derive the team's default evaluation window from its working mode (flows §6).
+
+    - kanban → rolling DATE_RANGE of the last ``DEFAULT_KANBAN_REPORT_DAYS`` days.
+    - scrum with a board → the board's active sprint (422 if the board has none).
+    - scrum without a board (code-only team) → DATE_RANGE fallback: there is no sprint
+      source, and flows §7 allows a source-valid team that has only a code connection.
+
+    ``sprints`` is None when no board is attached; a list (possibly empty) when one is.
+    """
+    if team.working_mode is WorkingMode.KANBAN or sprints is None:
         return EvaluationWindow(
             window_type=WindowType.DATE_RANGE,
             start=now - timedelta(days=DEFAULT_KANBAN_REPORT_DAYS),
             end=now,
-            team_profile_id=team_id,
+            team_profile_id=team.id,
         )
 
     active_sprint = next(
@@ -629,7 +633,7 @@ def _jira_evaluation_window(
     return EvaluationWindow(
         window_type=WindowType.SPRINT,
         sprint_id=active_sprint.id,
-        team_profile_id=team_id,
+        team_profile_id=team.id,
     )
 
 
