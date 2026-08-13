@@ -1,12 +1,17 @@
 """Evidence conformance tests (M5-04).
 
 Parametrized over all 13 seeded default signals. Asserts:
-1. A firing fixture produces evidence containing the fields its expression references.
-2. Evidence is generic (expression-derived) — no template_key-keyed branches in the engine.
-3. confidence is HIGH for every deterministic signal.
+1. A firing fixture produces evidence whose keys are exactly the fields its expression references
+   (plus `scope_id` for WI/sprint signals). This is the generic evidence contract established in
+   M5-11: {field_key: observed_value} for each matched condition, with no hardcoded per-signal
+   evidence maps.
+2. Evidence is stable — no extra or missing keys relative to the expression.
+3. confidence is HIGH for every deterministic signal (data model §6.6).
+4. No template_key == branches exist in declarative.py (M5-11 invariant).
 
-Evidence key expectations match signal spec §12.1–12.13 and what the generic evidence builder
-emits: {field_key: observed_value} for each matched condition in the expression tree.
+Note: The generic builder emits observed expression-field values, not the legacy threshold/alias
+keys documented in signal spec §12 (those described the now-deleted _template_evidence() function).
+The spec §12 evidence shapes will be updated in a follow-up doc ticket.
 """
 
 from __future__ import annotations
@@ -77,7 +82,7 @@ def _defn(template_key: str) -> SignalDefinition:
     )
 
 
-def _ctx(sprint_id=None) -> EvaluationContext:
+def _ctx(sprint_id: str | None = None) -> EvaluationContext:
 
     team = TeamProfile(name="t", created_at=NOW, updated_at=NOW)
     if sprint_id is not None:
@@ -458,25 +463,38 @@ SIGNAL_FIXTURES = [
 
 
 @pytest.mark.parametrize(
-    "template_key,fixture_fn", SIGNAL_FIXTURES, ids=[t[0] for t in SIGNAL_FIXTURES]
+    "template_key,fixture_fn",
+    SIGNAL_FIXTURES,
+    ids=[t[0] for t in SIGNAL_FIXTURES],
 )
-def test_signal_evidence_contains_expression_fields(template_key: str, fixture_fn) -> None:
-    """Each signal's evidence must contain every field its expression references."""
-    data, ctx, schema, scopes, expected_keys = fixture_fn()
+def test_signal_evidence_contains_expression_fields(template_key: str, fixture_fn: object) -> None:
+    """Each signal's evidence must contain exactly the fields its expression references.
+
+    WI/sprint signals also include scope_id; MR signals do not (no per-scope iteration).
+    The exact key set is stable: no extra or missing keys from the generic builder.
+    """
+    data, ctx, schema, scopes, expected_keys = fixture_fn()  # type: ignore[call-arg]
     definition = _defn(template_key)
 
     findings = evaluate_signal_definition(definition, data, ctx, schema, scopes)
 
     assert len(findings) >= 1, f"{template_key}: expected at least one finding from the fixture"
     ev = findings[0].evidence
-    missing = expected_keys - set(ev)
+    # WI and sprint signals include scope_id; MR signals do not
+    wi_or_sprint = definition.entity_type in ("issue", "sprint")
+    expected_exact = (expected_keys | {"scope_id"}) if wi_or_sprint else expected_keys
+    missing = expected_exact - set(ev)
     assert not missing, f"{template_key}: evidence missing keys {missing}. Got: {set(ev)}"
+    extra = set(ev) - expected_exact
+    assert not extra, (
+        f"{template_key}: evidence has unexpected keys {extra}. Expected: {expected_exact}"
+    )
 
 
 @pytest.mark.parametrize(
     "template_key,fixture_fn", SIGNAL_FIXTURES, ids=[t[0] for t in SIGNAL_FIXTURES]
 )
-def test_signal_confidence_is_high(template_key: str, fixture_fn) -> None:
+def test_signal_confidence_is_high(template_key: str, fixture_fn: object) -> None:
     """All deterministic signals must emit HIGH confidence (data model §6.6)."""
     data, ctx, schema, scopes, _ = fixture_fn()
     definition = _defn(template_key)
