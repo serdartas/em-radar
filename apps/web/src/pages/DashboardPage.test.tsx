@@ -240,6 +240,40 @@ describe("DashboardPage", () => {
     })
   })
 
+  it("refetches report history after a failed run so the card shows the new latest report", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = typeof input === "string" ? input : input.toString()
+      if (url.endsWith("/api/teams")) {
+        return Promise.resolve(jsonResponse([platformTeam]))
+      }
+      if (url.endsWith("/api/reports") && init?.method !== "POST") {
+        return Promise.resolve(jsonResponse([platformSummary]))
+      }
+      if (url.endsWith("/api/reports/report-1")) {
+        return Promise.resolve(jsonResponse(platformDetail))
+      }
+      if (url.endsWith("/api/reports/run")) {
+        return Promise.resolve(new Response("boom", { status: 500 }))
+      }
+      throw new Error(`unexpected fetch: ${url}`)
+    })
+    renderPage()
+
+    await screen.findByText("PLAT-3 blocked for a week")
+    const listCallsBefore = fetchMock.mock.calls.filter(
+      ([url, init]) => String(url).endsWith("/api/reports") && init?.method !== "POST",
+    ).length
+
+    fireEvent.click(within(cardFor("Platform")).getByRole("button", { name: "Refresh" }))
+
+    await waitFor(() => {
+      const listCallsAfter = fetchMock.mock.calls.filter(
+        ([url, init]) => String(url).endsWith("/api/reports") && init?.method !== "POST",
+      ).length
+      expect(listCallsAfter).toBeGreaterThan(listCallsBefore)
+    })
+  })
+
   it("links Open report to the sectioned results view", async () => {
     mockApi()
     renderPage()

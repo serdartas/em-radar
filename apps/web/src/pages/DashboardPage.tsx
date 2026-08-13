@@ -116,7 +116,9 @@ function TeamCard({
 
   const refresh = useMutation({
     mutationFn: () => runTeamReport(team.id),
-    onSuccess: () => {
+    // A failed run is still persisted as the team's latest report, and the backend re-raises
+    // after committing it, so invalidate on settlement rather than success alone.
+    onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: ["reports"] })
     },
   })
