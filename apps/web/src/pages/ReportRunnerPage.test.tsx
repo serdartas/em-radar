@@ -15,8 +15,22 @@ const report = {
   error: null,
   findings_count_by_severity: { info: 0, warning: 1, critical: 0 },
   signal_pack_snapshot: {},
+  summary: { counts_by_severity: { info: 0, warning: 1, critical: 0 }, total: 1 },
+  skip_notes: [],
+  sections: [
+    { section: "summary", title: "Summary", finding_ids: [] },
+    { section: "top_risks", title: "Top Risks", finding_ids: [] },
+    { section: "planning_hygiene", title: "Planning Hygiene", finding_ids: [] },
+    { section: "delivery_flow", title: "Delivery Flow", finding_ids: [] },
+    { section: "sprint_health", title: "Sprint Health", finding_ids: [] },
+    { section: "merge_request_flow", title: "Merge Request Flow", finding_ids: [] },
+    { section: "source_linking", title: "Source Linking", finding_ids: [] },
+    { section: "detailed_findings", title: "Detailed Findings", finding_ids: ["finding-1"] },
+    { section: "suggested_actions", title: "Suggested Actions", finding_ids: [] },
+  ],
   findings: [
     {
+      id: "finding-1",
       signal_id: "stale-in-progress-work-item",
       signal_name: "Stale in-progress work item",
       severity: "warning",
@@ -131,6 +145,113 @@ describe("ReportRunnerPage", () => {
             JSON.stringify({ connector: "jira", team_profile_id: "team-1" }),
       ),
     ).toBe(true)
+  })
+
+  it("exposes a sprint and date-range window picker", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = typeof input === "string" ? input : input.toString()
+      if (url.endsWith("/api/teams")) {
+        return Promise.resolve(jsonResponse([team]))
+      }
+      throw new Error(`unexpected fetch: ${url}`)
+    })
+
+    renderPage()
+    const modeSelect = (await screen.findByLabelText("Window")) as HTMLSelectElement
+    const options = Array.from(modeSelect.options, (option) => option.value)
+    expect(options).toEqual(["sprint", "date_range"])
+
+    expect(screen.queryByLabelText("Start date")).toBeNull()
+    fireEvent.change(modeSelect, { target: { value: "date_range" } })
+    expect(screen.getByLabelText("Start date")).toBeInTheDocument()
+    expect(screen.getByLabelText("End date")).toBeInTheDocument()
+  })
+
+  it("posts a date-range window when date-range mode is selected", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = typeof input === "string" ? input : input.toString()
+      if (url.endsWith("/api/teams")) {
+        return Promise.resolve(jsonResponse([team]))
+      }
+      if (url.endsWith("/api/reports/run")) {
+        return Promise.resolve(jsonResponse(report))
+      }
+      if (url.endsWith("/api/reports/report-1")) {
+        return Promise.resolve(jsonResponse(report))
+      }
+      throw new Error(`unexpected fetch: ${url}`)
+    })
+
+    renderApp()
+
+    fireEvent.click(await screen.findByLabelText("Platform"))
+    fireEvent.change(screen.getByLabelText("Window"), { target: { value: "date_range" } })
+    fireEvent.change(screen.getByLabelText("Start date"), { target: { value: "2026-05-01" } })
+    fireEvent.change(screen.getByLabelText("End date"), { target: { value: "2026-05-15" } })
+    fireEvent.click(screen.getByRole("button", { name: "Run team reports" }))
+
+    expect(await screen.findByText("PLAT-2 stale for 12 days")).toBeInTheDocument()
+    expect(
+      fetchMock.mock.calls.some(
+        ([url, requestInit]) =>
+          String(url).endsWith("/api/reports/run") &&
+          requestInit?.method === "POST" &&
+          String(requestInit?.body) ===
+            JSON.stringify({
+              connector: "jira",
+              team_profile_id: "team-1",
+              window_type: "date_range",
+              start: "2026-05-01T00:00:00Z",
+              end: "2026-05-15T00:00:00Z",
+            }),
+      ),
+    ).toBe(true)
+  })
+
+  it("blocks a date-range run when the dates are invalid", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = typeof input === "string" ? input : input.toString()
+      if (url.endsWith("/api/teams")) {
+        return Promise.resolve(jsonResponse([team]))
+      }
+      throw new Error(`unexpected fetch: ${url}`)
+    })
+
+    renderApp()
+
+    fireEvent.click(await screen.findByLabelText("Platform"))
+    fireEvent.change(screen.getByLabelText("Window"), { target: { value: "date_range" } })
+    fireEvent.click(screen.getByRole("button", { name: "Run team reports" }))
+
+    expect(await screen.findByText("Choose both a start and an end date.")).toBeInTheDocument()
+    expect(
+      fetchMock.mock.calls.some(([url]) => String(url).endsWith("/api/reports/run")),
+    ).toBe(false)
+  })
+
+  it("blocks a date-range run when the start is not before the end", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = typeof input === "string" ? input : input.toString()
+      if (url.endsWith("/api/teams")) {
+        return Promise.resolve(jsonResponse([team]))
+      }
+      throw new Error(`unexpected fetch: ${url}`)
+    })
+
+    renderApp()
+
+    fireEvent.click(await screen.findByLabelText("Platform"))
+    fireEvent.change(screen.getByLabelText("Window"), { target: { value: "date_range" } })
+    fireEvent.change(screen.getByLabelText("Start date"), { target: { value: "2026-05-15" } })
+    fireEvent.change(screen.getByLabelText("End date"), { target: { value: "2026-05-01" } })
+    fireEvent.click(screen.getByRole("button", { name: "Run team reports" }))
+
+    expect(
+      await screen.findByText("The start date must be before the end date."),
+    ).toBeInTheDocument()
+    expect(
+      fetchMock.mock.calls.some(([url]) => String(url).endsWith("/api/reports/run")),
+    ).toBe(false)
   })
 
   it("shows an error when the team run fails", async () => {

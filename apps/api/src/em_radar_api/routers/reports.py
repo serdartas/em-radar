@@ -59,7 +59,7 @@ from sqlmodel import Session, select
 
 
 from em_radar_api.db import get_session, get_write_session
-from em_radar_api.report_export import build_report_markdown
+from em_radar_api.report_export import build_report_markdown, build_sectioned_report
 from em_radar_api.connector_registry import create_connector, get_connector_capabilities
 from em_radar_api.repositories.canonical import persist_fetch
 from em_radar_api.repositories.reports import (
@@ -137,6 +137,7 @@ class ReportRunRequest(BaseModel):
 
 
 class FindingResponse(BaseModel):
+    id: UUID
     signal_id: str
     signal_name: str
     severity: Severity
@@ -152,6 +153,22 @@ class FindingResponse(BaseModel):
     @classmethod
     def from_finding(cls, finding: SignalFinding) -> Self:
         return cls.model_validate(finding, from_attributes=True)
+
+
+class ReportSummaryCounts(BaseModel):
+    counts_by_severity: dict[Severity, int]
+    total: int
+
+
+class SectionRef(BaseModel):
+    section: str
+    title: str
+    finding_ids: list[UUID]
+
+
+class SkipNoteResponse(BaseModel):
+    signal_id: str
+    reason: str
 
 
 class ReportSummaryResponse(BaseModel):
@@ -181,6 +198,9 @@ class ReportSummaryResponse(BaseModel):
 class ReportDetailResponse(ReportSummaryResponse):
     signal_pack_snapshot: JsonValue
     findings: list[FindingResponse]
+    summary: ReportSummaryCounts
+    sections: list[SectionRef]
+    skip_notes: list[SkipNoteResponse]
 
     @classmethod
     def from_report_with_findings(
@@ -190,11 +210,28 @@ class ReportDetailResponse(ReportSummaryResponse):
         team_profile_id: UUID | None = None,
         team_name: str | None = None,
     ) -> Self:
-        summary = ReportSummaryResponse.from_report(report, team_profile_id, team_name)
+        report_summary = ReportSummaryResponse.from_report(report, team_profile_id, team_name)
+        sectioned = build_sectioned_report(report, findings)
         return cls(
-            **summary.model_dump(),
+            **report_summary.model_dump(),
             signal_pack_snapshot=report.signal_pack_snapshot,
             findings=[FindingResponse.from_finding(finding) for finding in findings],
+            summary=ReportSummaryCounts(
+                counts_by_severity=sectioned.summary.counts_by_severity,
+                total=sectioned.summary.total,
+            ),
+            sections=[
+                SectionRef(
+                    section=section.section.value,
+                    title=section.title,
+                    finding_ids=[finding.id for finding in section.findings],
+                )
+                for section in sectioned.sections
+            ],
+            skip_notes=[
+                SkipNoteResponse(signal_id=note.signal_id, reason=note.reason)
+                for note in sectioned.skip_notes
+            ],
         )
 
 

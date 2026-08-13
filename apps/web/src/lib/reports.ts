@@ -6,6 +6,7 @@ export type EntityType = "mergerequest" | "repository" | "sprint" | "workitem"
 export type ReportStatus = "failed" | "pending" | "running" | "succeeded"
 
 export interface Finding {
+  id: string
   signal_id: string
   signal_name: string
   severity: Severity
@@ -31,9 +32,28 @@ export interface ReportSummary {
   findings_count_by_severity: Partial<Record<Severity, number>>
 }
 
+export interface ReportSectionRef {
+  section: string
+  title: string
+  finding_ids: string[]
+}
+
+export interface SkipNote {
+  signal_id: string
+  reason: string
+}
+
+export interface ReportSummaryCounts {
+  counts_by_severity: Partial<Record<Severity, number>>
+  total: number
+}
+
 export interface ReportDetail extends ReportSummary {
   signal_pack_snapshot: unknown
   findings: Finding[]
+  summary: ReportSummaryCounts
+  sections: ReportSectionRef[]
+  skip_notes: SkipNote[]
 }
 
 export interface PartialDataNote {
@@ -93,10 +113,22 @@ export async function runJiraSprintReport(
   })
 }
 
-export async function runTeamReport(teamProfileId: string): Promise<ReportDetail> {
+export async function runTeamReport(
+  teamProfileId: string,
+  window?: { start: string; end: string },
+): Promise<ReportDetail> {
+  const body = window
+    ? {
+        connector: "jira",
+        team_profile_id: teamProfileId,
+        window_type: "date_range",
+        start: window.start,
+        end: window.end,
+      }
+    : { connector: "jira", team_profile_id: teamProfileId }
   return apiFetch<ReportDetail>("/reports/run", {
     method: "POST",
-    body: JSON.stringify({ connector: "jira", team_profile_id: teamProfileId }),
+    body: JSON.stringify(body),
   })
 }
 
