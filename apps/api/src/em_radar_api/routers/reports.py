@@ -94,14 +94,43 @@ DEFAULT_KANBAN_REPORT_DAYS = 14
 _CODE_ENTITY_TYPES: frozenset[str] = frozenset({"merge_request", "mergerequest", "repository"})
 
 
+def _ensure_utc(value: datetime) -> datetime:
+    """Normalize a datetime to timezone-aware UTC.
+
+    Windows and evaluation comparisons run on tz-aware UTC (evaluator is tz-safe per
+    M3.5-01); naive inputs are assumed UTC and aware inputs are converted, so an explicit
+    date-range window compares consistently against the rest of the runner.
+    """
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 class ReportRunRequest(BaseModel):
     connector: Literal["jira"]
     team_profile_id: UUID | None = None
+    window_type: WindowType | None = None
+    start: datetime | None = None
+    end: datetime | None = None
 
     @model_validator(mode="after")
     def validate_connector_scope(self) -> Self:
         if self.connector == "jira" and self.team_profile_id is None:
             raise ValueError("jira reports require a team_profile_id")
+        if self.window_type is WindowType.SPRINT:
+            raise ValueError(
+                "explicit sprint selection is not supported here; "
+                "sprint windows use the team's working-mode default"
+            )
+        if self.window_type is WindowType.DATE_RANGE:
+            if self.start is None or self.end is None:
+                raise ValueError("date_range windows require both start and end")
+            self.start = _ensure_utc(self.start)
+            self.end = _ensure_utc(self.end)
+            if self.start >= self.end:
+                raise ValueError("date_range start must be before end")
+        elif self.start is not None or self.end is not None:
+            raise ValueError("start/end are only valid with window_type=date_range")
         return self
 
 
@@ -159,7 +188,15 @@ async def run_report(
     session: Session = Depends(get_write_session),
 ) -> ReportDetailResponse:
     assert request.team_profile_id is not None  # enforced by model validator
-    return await _run_team_report(request.team_profile_id, session)
+    requested_window: EvaluationWindow | None = None
+    if request.window_type is WindowType.DATE_RANGE:
+        requested_window = EvaluationWindow(
+            window_type=WindowType.DATE_RANGE,
+            start=request.start,
+            end=request.end,
+            team_profile_id=request.team_profile_id,
+        )
+    return await _run_team_report(request.team_profile_id, session, requested_window)
 
 
 @dataclass
@@ -167,20 +204,22 @@ class _BoardFetchResult:
     project: Project
     board: Board
     sprints: list[Sprint]
-    workitems: list[WorkItem]
-    transitions: list[Transition]
-    window: EvaluationWindow
 
 
 @dataclass
 class _BoardMetadata:
-    """Fast-fetched board metadata: project, board, sprints, evaluation window, and connector."""
+    """Fast-fetched board metadata: project, board, sprints, and connector.
+
+    The evaluation window is chosen by the caller (explicit request window or working-mode
+    default), not here, so an explicit date range can bypass sprint derivation entirely.
+    ``sprints_unavailable`` flags a date-range run whose sprint fetch was degraded away.
+    """
 
     project: Project
     board: Board
     sprints: list[Sprint]
-    window: EvaluationWindow
     connector: WorkItemProvider
+    sprints_unavailable: bool = False
 
 
 @dataclass
@@ -193,6 +232,7 @@ class _CodeFetchResult:
 async def _run_team_report(
     team_profile_id: UUID,
     session: Session,
+    requested_window: EvaluationWindow | None = None,
 ) -> ReportDetailResponse:
     started_at = datetime.now(timezone.utc)
     team_row = session.get(TeamProfileTable, team_profile_id)
@@ -222,19 +262,46 @@ async def _run_team_report(
     board_meta: _BoardMetadata | None = None
     if board_scope is not None:
         try:
-            board_meta = await _fetch_board_metadata(session, team, board_scope, started_at)
+            # Sprint metadata is fetched even for a date-range run so persisted work-item→sprint
+            # links resolve on the normal path and a range run does not clobber cached linkage.
+            # For a date-range run (sprints_optional) a sprint-endpoint failure degrades to empty
+            # sprints instead of failing/emptying the board, so the range report never *depends*
+            # on the Agile endpoint (REQ-F-051); a default run still needs sprints to derive its
+            # active-sprint window and propagates the failure as before.
+            board_meta = await _fetch_board_metadata(
+                session, board_scope, sprints_optional=requested_window is not None
+            )
         except (ConnectorRateLimitedError, ConnectorTransientError, ConnectorAuthError) as error:
             partial_data_notes.append(
                 {"source": "board", "reason": f"board data unavailable: {type(error).__name__}"}
             )
 
-    # Derive the default window from the team's working mode (flows §6). With a board the
-    # window comes from board metadata (sprint for scrum, date range for kanban); without one
-    # the same helper falls back to a date range (sprints=None) for both working modes.
-    if board_meta is not None:
-        window = board_meta.window
-    else:
-        window = _default_evaluation_window(team, None, started_at)
+    # A degraded sprint fetch (date-range run, Agile endpoint unavailable) is a distinct,
+    # non-"board" partial note so board work items are still persisted and evaluated.
+    if board_meta is not None and board_meta.sprints_unavailable:
+        partial_data_notes.append(
+            {
+                "source": "sprints",
+                "reason": "sprint metadata unavailable; work-item sprint links not refreshed",
+            }
+        )
+
+    # An explicit date-range request wins over working-mode derivation and bypasses sprint
+    # selection (so a scrum team can run an ad-hoc range without an active sprint). Otherwise
+    # derive the default window from the team's working mode (flows §6): with a board it is the
+    # active sprint (scrum) or a rolling range (kanban); without one it falls back to a date
+    # range (sprints=None) for both working modes.
+    try:
+        window = requested_window or _default_evaluation_window(
+            team, board_meta.sprints if board_meta is not None else None, started_at
+        )
+    except HTTPException:
+        # Default derivation can 422 (scrum board with no active sprint). The board connector
+        # opened in Phase 1 is normally closed by the Phase 2 workitem fetch, which never runs
+        # here — close it explicitly so repeated invalid runs don't leak the HTTP client.
+        if board_meta is not None:
+            await board_meta.connector.close()
+        raise
 
     # Phase 2: concurrently fetch slow I/O — workitems and merge requests run in parallel.
     # Compute derived values before creating coroutines to avoid an unawaited-coroutine leak
@@ -273,9 +340,6 @@ async def _run_team_report(
             project=board_meta.project,
             board=board_meta.board,
             sprints=board_meta.sprints,
-            workitems=board_workitems,
-            transitions=board_transitions,
-            window=window,
         )
         if board_meta is not None and not any(n["source"] == "board" for n in partial_data_notes)
         else None
@@ -317,6 +381,9 @@ async def _run_team_report(
         repositories=code_data.repositories if code_data else [],
         mergerequests=code_mergerequests,
         reviews=code_reviews,
+        # Degraded sprint fetch: keep cached work-item sprint links rather than clobbering them
+        # with unresolved connector ids (there is no sprint identity map on this path).
+        preserve_sprint_links=board_meta is not None and board_meta.sprints_unavailable,
     )
     persisted_window = _persisted_window(window, identity.identity_map)
     session.add(EvaluationWindowTable(**persisted_window.model_dump()))
@@ -446,13 +513,15 @@ async def _run_team_report(
 
 async def _fetch_board_metadata(
     session: Session,
-    team: TeamProfile,
     board_scope: ScopeDefinitionTable,
-    started_at: datetime,
+    sprints_optional: bool = False,
 ) -> _BoardMetadata:
-    """Fetch fast board metadata: project, board, sprints, and evaluation window.
+    """Fetch fast board metadata: project, board, sprints, and connector.
 
     Does not fetch workitems or transitions — those run concurrently with MR fetch in Phase 2.
+    The evaluation window is picked by the caller, not derived here. Sprints are always
+    attempted (so work-item sprint links resolve on the normal path); when ``sprints_optional``
+    (a date-range run) a sprint-endpoint failure degrades to empty sprints instead of failing.
     """
     connection = get_source_connection(session, board_scope.connection_id)
     if connection is None:
@@ -478,8 +547,6 @@ async def _fetch_board_metadata(
         project, board = await _find_jira_board(connector, board_external_id)
         if project is None or board is None:
             raise HTTPException(status_code=404, detail="Jira board not found")
-        sprints = await connector.list_sprints(board_external_id)
-        window = _default_evaluation_window(team, sprints, started_at)
     except (ConnectorRateLimitedError, ConnectorTransientError, ConnectorAuthError):
         await connector.close()
         raise
@@ -490,13 +557,45 @@ async def _fetch_board_metadata(
         await connector.close()
         raise
 
+    sprints, sprints_unavailable = await _list_sprints_best_effort(
+        connector, board_external_id, sprints_optional
+    )
+
     return _BoardMetadata(
         project=project,
         board=board,
         sprints=sprints,
-        window=window,
         connector=connector,
+        sprints_unavailable=sprints_unavailable,
     )
+
+
+async def _list_sprints_best_effort(
+    connector: WorkItemProvider,
+    board_external_id: str,
+    optional: bool,
+) -> tuple[list[Sprint], bool]:
+    """Return (sprints, unavailable) for the board.
+
+    Sprints are fetched even for date-range runs so persisted work-item→sprint links resolve
+    against current sprint identities. When ``optional`` (date-range), an Agile-endpoint failure
+    degrades to empty sprints (unavailable=True) so the run does not depend on that endpoint;
+    a non-optional (default) run propagates the error, as it needs the active-sprint window.
+    On the non-optional error path the connector is closed before the error escapes; on the
+    degraded path it stays open for the Phase 2 workitem fetch to close.
+    """
+    try:
+        return await connector.list_sprints(board_external_id), False
+    except (ConnectorRateLimitedError, ConnectorTransientError, ConnectorAuthError):
+        if not optional:
+            await connector.close()
+            raise
+        return [], True
+    except ConnectorError as error:
+        if not optional:
+            await connector.close()
+            raise HTTPException(status_code=502, detail=str(error)) from error
+        return [], True
 
 
 async def _fetch_workitems_and_transitions(
