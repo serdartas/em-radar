@@ -381,6 +381,9 @@ async def _run_team_report(
         repositories=code_data.repositories if code_data else [],
         mergerequests=code_mergerequests,
         reviews=code_reviews,
+        # Degraded sprint fetch: keep cached work-item sprint links rather than clobbering them
+        # with unresolved connector ids (there is no sprint identity map on this path).
+        preserve_sprint_links=board_meta is not None and board_meta.sprints_unavailable,
     )
     persisted_window = _persisted_window(window, identity.identity_map)
     session.add(EvaluationWindowTable(**persisted_window.model_dump()))

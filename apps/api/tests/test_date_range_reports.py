@@ -9,7 +9,9 @@ Scenarios:
   - A scrum team runs an ad-hoc date-range report even when its board has no active sprint
     (the explicit window bypasses sprint derivation; no 422).
   - A date-range run whose Agile sprint endpoint is available preserves cached work-item→sprint
-    linkage (no clobbering); a run whose endpoint is unavailable still succeeds (best-effort).
+    linkage (no clobbering); a degraded run (endpoint unavailable) still succeeds AND keeps
+    existing links / writes no unresolved connector ids; a healthy no-sprints fetch still
+    reconciles (nulls dangling links) as before.
   - The scrum no-active-sprint 422 path closes the board connector (no HTTP-client leak).
   - Request validation: missing end / start >= end / explicit sprint / stray start-end → 422.
 """
@@ -43,6 +45,15 @@ class _SprintEndpointUnavailableConnector(JiraTestConnector):
     async def list_sprints(self, board_id: str) -> list[Sprint]:
         del board_id
         raise ConnectorTransientError("Agile sprint endpoint unavailable")
+
+
+class _SprintlessLinkedItemConnector(JiraTestConnector):
+    """Healthy board that genuinely returns no sprints; its work item still carries sprint refs
+    (so a normal fetch must reconcile the dangling current_sprint_id to null, as before)."""
+
+    async def list_sprints(self, board_id: str) -> list[Sprint]:
+        del board_id
+        return []
 
 
 class _ClosableNoActiveSprintConnector(_JiraNoActiveSprintConnector):
@@ -306,11 +317,110 @@ def test_date_range_run_degrades_when_sprints_unavailable(
     notes = response.json()["signal_pack_snapshot"]["partial_data_notes"]
     assert any(note["source"] == "sprints" for note in notes)
 
+    # No prior linkage exists here, so the new work item must be written without unresolved
+    # connector sprint ids (null current_sprint_id, empty sprint_ids) rather than corrupted.
     with session_factory() as session:
         workitem = session.exec(
             select(WorkItemTable).where(WorkItemTable.external_id == "PLAT-1")
         ).one_or_none()
     assert workitem is not None
+    assert workitem.current_sprint_id is None
+    assert workitem.sprint_ids == []
+
+
+def test_date_range_degraded_run_preserves_existing_sprint_links(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A degraded date-range run (list_sprints fails) must NOT clobber sprint links cached by a
+    prior healthy run: PLAT-1's current_sprint_id and sprint_ids stay unchanged."""
+    monkeypatch.setattr("em_radar_api.routers.reports.datetime", FrozenReportDateTime)
+    connection_id = _create_jira_connection(api_client)
+    scope_id = _create_board_scope(api_client, connection_id, _BOARD_CAPABILITIES)
+    team_id = _create_jira_team(api_client, connection_id, scope_id, "scrum", sprint_length_days=14)
+
+    # A first healthy (default sprint) run caches the resolved work-item→sprint linkage.
+    monkeypatch.setattr(
+        "em_radar_api.connector_registry._connector_types",
+        lambda: [JiraTestConnector],
+    )
+    assert (
+        api_client.post(
+            "/api/reports/run", json={"connector": "jira", "team_profile_id": team_id}
+        ).status_code
+        == 200
+    )
+    with session_factory() as session:
+        sprint = session.exec(
+            select(SprintTable).where(
+                SprintTable.source == Source.JIRA, SprintTable.external_id == "30000"
+            )
+        ).one()
+        workitem = session.exec(
+            select(WorkItemTable).where(WorkItemTable.external_id == "PLAT-1")
+        ).one()
+        assert workitem.current_sprint_id == sprint.id
+        assert workitem.sprint_ids == [sprint.id]
+    cached_sprint_id = sprint.id
+
+    # A degraded date-range run (sprint endpoint down) must leave that linkage untouched.
+    monkeypatch.setattr(
+        "em_radar_api.connector_registry._connector_types",
+        lambda: [_SprintEndpointUnavailableConnector],
+    )
+    degraded = api_client.post(
+        "/api/reports/run",
+        json={
+            "connector": "jira",
+            "team_profile_id": team_id,
+            "window_type": "date_range",
+            "start": _RANGE_START,
+            "end": _RANGE_END,
+        },
+    )
+    assert degraded.status_code == 200
+
+    with session_factory() as session:
+        workitem = session.exec(
+            select(WorkItemTable).where(WorkItemTable.external_id == "PLAT-1")
+        ).one()
+        assert workitem.current_sprint_id == cached_sprint_id
+        assert workitem.sprint_ids == [cached_sprint_id]
+
+
+def test_healthy_run_without_sprints_reconciles_sprint_links(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A healthy fetch that genuinely returns no sprints must still reconcile normally: a work
+    item's dangling current_sprint_id is nulled, as before (preservation only applies when the
+    sprint endpoint is unavailable, not when there are legitimately no sprints)."""
+    monkeypatch.setattr(
+        "em_radar_api.connector_registry._connector_types",
+        lambda: [_SprintlessLinkedItemConnector],
+    )
+    monkeypatch.setattr("em_radar_api.routers.reports.datetime", FrozenReportDateTime)
+
+    connection_id = _create_jira_connection(api_client)
+    scope_id = _create_board_scope(api_client, connection_id, _BOARD_CAPABILITIES)
+    team_id = _create_jira_team(api_client, connection_id, scope_id, "kanban")
+
+    response = api_client.post(
+        "/api/reports/run", json={"connector": "jira", "team_profile_id": team_id}
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "succeeded"
+
+    notes = response.json()["signal_pack_snapshot"]["partial_data_notes"]
+    assert all(note["source"] != "sprints" for note in notes)
+
+    with session_factory() as session:
+        workitem = session.exec(
+            select(WorkItemTable).where(WorkItemTable.external_id == "PLAT-1")
+        ).one()
+    assert workitem.current_sprint_id is None
 
 
 def test_no_active_sprint_default_run_closes_connector(
