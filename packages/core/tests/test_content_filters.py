@@ -75,7 +75,7 @@ def test_workitem_types_narrows_by_type() -> None:
         "type": "group",
         "operator": "all",
         "conditions": [
-            {"field": "workitem_types", "operator": "is_any_of", "value": ["story"]},
+            {"field": "workitem_types", "operator": "is", "value": "story"},
         ],
     }
 
@@ -112,14 +112,14 @@ def test_workitem_types_absent_evaluates_all() -> None:
     assert len(findings) == 2
 
 
-def test_workitem_types_is_none_of_excludes_matching_type() -> None:
+def test_workitem_types_excludes_matching_type() -> None:
     story = workitem(key="RAD-1", item_type=WorkItemType.STORY)
     bug = workitem(key="RAD-2", item_type=WorkItemType.BUG)
     expression = {
         "type": "group",
         "operator": "all",
         "conditions": [
-            {"field": "workitem_types", "operator": "is_none_of", "value": ["bug"]},
+            {"field": "workitem_types", "operator": "is_not", "value": "bug"},
         ],
     }
 
@@ -381,7 +381,7 @@ def test_workitem_types_filter_composes_with_domain_condition() -> None:
         "type": "group",
         "operator": "all",
         "conditions": [
-            {"field": "workitem_types", "operator": "is_any_of", "value": ["story"]},
+            {"field": "workitem_types", "operator": "is", "value": "story"},
             {"field": "status_category", "operator": "is", "value": "in_progress"},
         ],
     }

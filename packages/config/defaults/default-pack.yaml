@@ -202,15 +202,18 @@ spec:
       template_key: mergerequest-without-linked-workitem
 
     - name: Large merge request risk
-      description: Finds merge requests exceeding the default file-count threshold.
+      description: Finds merge requests exceeding the file-count or line-change threshold.
       entity_type: merge_request
       expression:
         type: group
-        operator: all
+        operator: any
         conditions:
           - field: changed_files_count
             operator: greater_than
             value: 20
+          - field: total_changes
+            operator: greater_than
+            value: 500
       report_settings:
         severity: warning
         category: quality

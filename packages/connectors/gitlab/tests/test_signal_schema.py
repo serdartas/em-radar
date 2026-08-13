@@ -38,10 +38,10 @@ def test_signal_schema_contains_expected_merge_request_fields_and_operators() ->
         "approval_count",
         "changed_files_count",
     }.issubset(field_keys)
-    # The REST endpoint does not reliably expose line-level stats, so they are not advertised.
+    # Individual addition/deletion counts are not advertised; only the computed aggregate is.
     assert "additions" not in field_keys
     assert "deletions" not in field_keys
-    assert "total_changes" not in field_keys
+    assert "total_changes" in field_keys
 
 
 def test_signal_schema_has_no_source_selection_fields() -> None:

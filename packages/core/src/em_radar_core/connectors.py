@@ -52,6 +52,7 @@ class SignalField:
     values: tuple[object, ...] = ()
     value_provider: ValueProvider | None = None
     availability: FieldAvailability | None = None
+    entity_type: str | None = None
 
 
 @dataclass(frozen=True)

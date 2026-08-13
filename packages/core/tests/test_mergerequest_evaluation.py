@@ -70,7 +70,7 @@ def _mr(
     is_draft: bool = False,
     source_branch: str = "feature/my-branch",
     target_branch: str = "main",
-    approval_count: int = 0,
+    approval_count: int | None = None,
     changed_files_count: int | None = None,
     pipeline_status: PipelineStatus | None = None,
     pipeline_updated_at=None,
@@ -282,9 +282,10 @@ def test_mr_age_since_last_review_activity() -> None:
     assert findings[0].entity_id == mr1.id
 
 
-def test_mr_no_review_returns_no_match_for_age_since_last_review() -> None:
-    """An MR with no reviews has None age_since_last_review_activity → no match."""
-    mr = _mr(1)
+def test_mr_no_review_falls_back_to_created_at() -> None:
+    """An MR with no reviews falls back to created_at for age_since_last_review_activity."""
+    old_mr = _mr(1, created_at=NOW - timedelta(days=10))
+    fresh_mr = _mr(2, created_at=NOW - timedelta(days=1))
     expression = {
         "type": "group",
         "operator": "all",
@@ -292,20 +293,21 @@ def test_mr_no_review_returns_no_match_for_age_since_last_review() -> None:
             {
                 "field": "age_since_last_review_activity",
                 "operator": "greater_than",
-                "value": {"amount": 0, "unit": "days"},
+                "value": {"amount": 5, "unit": "days"},
             }
         ],
     }
 
     findings = evaluate_signal_definition(
         _mr_definition(expression),
-        _data(mr, reviews=()),
+        _data(old_mr, fresh_mr, reviews=()),
         context(),
         GitLabConnector.describe_signal_schema(),
         [_scope()],
     )
 
-    assert findings == []
+    assert len(findings) == 1
+    assert findings[0].entity_id == old_mr.id
 
 
 # ---------------------------------------------------------------------------
@@ -597,3 +599,79 @@ def test_mr_age_since_updated() -> None:
 
     assert len(findings) == 1
     assert findings[0].entity_id == stale.id
+
+
+# ---------------------------------------------------------------------------
+# total_changes (item 3)
+# ---------------------------------------------------------------------------
+
+
+def test_total_changes_triggers_large_mr_signal() -> None:
+    large = _mr(1, additions=400, deletions=200)
+    small = _mr(2, additions=10, deletions=5)
+    expression = {
+        "type": "group",
+        "operator": "any",
+        "conditions": [
+            {"field": "changed_files_count", "operator": "greater_than", "value": 20},
+            {"field": "total_changes", "operator": "greater_than", "value": 500},
+        ],
+    }
+
+    findings = evaluate_signal_definition(
+        _mr_definition(expression),
+        _data(large, small),
+        context(),
+        GitLabConnector.describe_signal_schema(),
+        [_scope()],
+    )
+
+    assert len(findings) == 1
+    assert findings[0].entity_id == large.id
+
+
+def test_total_changes_none_when_both_additions_deletions_none() -> None:
+    mr = _mr(1, additions=None, deletions=None)
+    expression = {
+        "type": "group",
+        "operator": "all",
+        "conditions": [
+            {"field": "total_changes", "operator": "greater_than", "value": 0},
+        ],
+    }
+
+    findings = evaluate_signal_definition(
+        _mr_definition(expression),
+        _data(mr),
+        context(),
+        GitLabConnector.describe_signal_schema(),
+        [_scope()],
+    )
+
+    assert findings == []
+
+
+# ---------------------------------------------------------------------------
+# approval_count nullable sentinel (item 15)
+# ---------------------------------------------------------------------------
+
+
+def test_approval_count_none_does_not_fire_approval_signal() -> None:
+    mr = _mr(1, state=MergeRequestState.MERGED, approval_count=None)
+    expression = {
+        "type": "group",
+        "operator": "all",
+        "conditions": [
+            {"field": "approval_count", "operator": "less_than", "value": 2},
+        ],
+    }
+
+    findings = evaluate_signal_definition(
+        _mr_definition(expression),
+        _data(mr),
+        context(),
+        GitLabConnector.describe_signal_schema(),
+        [_scope()],
+    )
+
+    assert findings == []

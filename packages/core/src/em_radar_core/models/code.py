@@ -43,7 +43,7 @@ class MergeRequest(CommonFields):
     deletions: int | None = None
     pipeline_status: PipelineStatus | None = None
     pipeline_updated_at: datetime | None = None
-    approval_count: int = 0
+    approval_count: int | None = None
     comment_count: int = 0
     linked_workitem_keys: list[str] = Field(default_factory=list, sa_type=JSON)
     linked_workitem_ids: list[UUID] = Field(default_factory=list, sa_type=UUIDListJSON)

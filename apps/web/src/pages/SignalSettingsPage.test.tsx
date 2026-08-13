@@ -255,12 +255,10 @@ describe("SignalSettingsPage", () => {
     renderPage()
     await openForm()
 
-    // Default is issue — status_category is present
     expect(screen.getAllByRole("option", { name: "Status Category" })).not.toHaveLength(0)
 
     fireEvent.change(screen.getByLabelText("Type"), { target: { value: "merge_request" } })
 
-    // After switch: MR fields visible, issue fields gone
     await waitFor(() => {
       expect(screen.queryByRole("option", { name: "Status Category" })).not.toBeInTheDocument()
       expect(screen.getAllByRole("option", { name: "State" })).not.toHaveLength(0)

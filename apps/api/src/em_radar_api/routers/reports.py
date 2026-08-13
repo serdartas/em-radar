@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Literal, Self
 from uuid import UUID
 
+from em_radar_connector_gitlab.connector import GitLabConnector
 from em_radar_connector_jira.connector import JiraConnector
 from em_radar_core.connectors import (
     ConnectorAuthError,
@@ -354,6 +355,25 @@ async def _run_team_report(
     save_report(session, report)
 
     try:
+        # All data sources failed — persist FAILED and return early rather than succeeding
+        # with zero findings (would violate REQ-NF-070). Only fires when both sources
+        # are configured; a single-source team with a partial failure keeps "succeeded".
+        if (
+            board_scope is not None
+            and has_code_source
+            and board_data is None
+            and code_data is None
+            and partial_data_notes
+        ):
+            report.status = ReportStatus.FAILED
+            report.finished_at = datetime.now(timezone.utc)
+            report.error = "all data sources failed: " + "; ".join(
+                n["reason"] for n in partial_data_notes
+            )
+            report.findings_count_by_severity = _counts_by_severity([])
+            save_report(session, report)
+            return ReportDetailResponse.from_report_with_findings(report, [])
+
         signal_data = SignalData(
             report_id=report.id,
             projects=(board_data.project,) if board_data else (),
@@ -385,8 +405,29 @@ async def _run_team_report(
                     )
                 )
 
-        # Code signals (mergerequest entity type) are evaluated when code source is attached.
-        # Full MR signal evaluation ships in M4; currently produces no findings.
+        # Evaluate code signals (merge_request entity type) when code source attached and data available.
+        if code_data is not None and team_row.code_connection_id is not None:
+            code_connection = get_source_connection(session, team_row.code_connection_id)
+            code_scope_descriptor = ScopeDescriptor(
+                connector_id=str(team_row.code_connection_id),
+                scope_id=str(team_row.code_connection_id),
+                scope_type="repository",
+                name="code",
+                capabilities=("reviews", "pipelines"),
+                connector_capabilities=get_connector_capabilities(
+                    str(code_connection.connector_name) if code_connection else None
+                ),
+            )
+            for definition in code_definitions:
+                findings.extend(
+                    evaluate_signal_definition(
+                        definition,
+                        signal_data,
+                        ctx,
+                        GitLabConnector.describe_signal_schema(),
+                        [code_scope_descriptor],
+                    )
+                )
 
         persisted_findings = [
             _persisted_finding(finding, identity.identity_map) for finding in findings
@@ -449,6 +490,9 @@ async def _fetch_board_metadata(
     except ConnectorError as error:
         await connector.close()
         raise HTTPException(status_code=502, detail=str(error)) from error
+    except HTTPException:
+        await connector.close()
+        raise
 
     return _BoardMetadata(
         project=project,

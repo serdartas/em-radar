@@ -3,7 +3,7 @@
 from em_radar_config import SignalPack, apply_pack_defaults
 
 
-def _pack(signals: list[dict], severity_override: str | None = None) -> SignalPack:
+def _pack(signals: list[dict[str, object]], severity_override: str | None = None) -> SignalPack:
     spec: dict = {"signals": signals}
     if severity_override is not None:
         spec["defaults"] = {"severity_override": severity_override}
