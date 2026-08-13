@@ -9,7 +9,7 @@ Asserts that:
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterator
 from types import SimpleNamespace
@@ -48,9 +48,7 @@ MR_TEMPLATE_KEYS = {
 _REPO_ID = uuid4()
 _AUTHOR_ID = uuid4()
 
-_NOW_DT = __import__("datetime").datetime(
-    2026, 1, 20, 12, tzinfo=__import__("datetime").timezone.utc
-)
+_NOW_DT = datetime(2026, 1, 20, 12, tzinfo=timezone.utc)
 
 
 def _scope(capabilities: tuple[str, ...] = ()) -> ScopeDescriptor:
@@ -71,12 +69,12 @@ def _mr(
     linked_workitem_keys: list[str] | None = None,
     changed_files_count: int | None = None,
     pipeline_status: PipelineStatus | None = None,
-    pipeline_updated_at=None,
+    pipeline_updated_at: datetime | None = None,
     approval_count: int = 0,
-    merged_at=None,
-    closed_at=None,
-    created_at=None,
-    updated_at=None,
+    merged_at: datetime | None = None,
+    closed_at: datetime | None = None,
+    created_at: datetime | None = None,
+    updated_at: datetime | None = None,
 ) -> MergeRequest:
     if state is MergeRequestState.MERGED and merged_at is None:
         merged_at = _NOW_DT
