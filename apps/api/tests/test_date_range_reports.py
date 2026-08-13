@@ -8,7 +8,8 @@ Scenarios:
   - Sprint-only signals are window-gated on a date-range run (skipped with a note).
   - A scrum team runs an ad-hoc date-range report even when its board has no active sprint
     (the explicit window bypasses sprint derivation; no 422).
-  - An explicit date-range run never touches the Agile sprint endpoint.
+  - A date-range run whose Agile sprint endpoint is available preserves cached work-item→sprint
+    linkage (no clobbering); a run whose endpoint is unavailable still succeeds (best-effort).
   - The scrum no-active-sprint 422 path closes the board connector (no HTTP-client leak).
   - Request validation: missing end / start >= end / explicit sprint / stray start-end → 422.
 """
@@ -20,11 +21,12 @@ from uuid import UUID, uuid4
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import sessionmaker
-from sqlmodel import Session
+from sqlmodel import Session, select
 
-from em_radar_core.models import Sprint, WindowType
+from em_radar_core.connectors import ConnectorTransientError
+from em_radar_core.models import Source, Sprint, WindowType
 
-from em_radar_api.tables import EvaluationWindowTable, ReportTable
+from em_radar_api.tables import EvaluationWindowTable, ReportTable, SprintTable, WorkItemTable
 from test_report_window import _JiraNoActiveSprintConnector
 from test_source_connection_routes import (
     FrozenReportDateTime,
@@ -35,12 +37,12 @@ from test_source_connection_routes import (
 )
 
 
-class _SprintEndpointForbiddenConnector(JiraTestConnector):
-    """Jira fake whose Agile sprint endpoint must never be called (date-range runs skip it)."""
+class _SprintEndpointUnavailableConnector(JiraTestConnector):
+    """Jira fake whose Agile sprint endpoint is unavailable; a date-range run must degrade."""
 
     async def list_sprints(self, board_id: str) -> list[Sprint]:
         del board_id
-        raise RuntimeError("list_sprints must not be called for an explicit date-range run")
+        raise ConnectorTransientError("Agile sprint endpoint unavailable")
 
 
 class _ClosableNoActiveSprintConnector(_JiraNoActiveSprintConnector):
@@ -211,15 +213,76 @@ def test_scrum_ad_hoc_date_range_bypasses_no_active_sprint(
     assert window.end == _RANGE_END_NAIVE
 
 
-def test_date_range_run_skips_sprint_endpoint(
+def test_date_range_run_preserves_sprint_linkage(
     api_client: TestClient,
+    session_factory: sessionmaker[Session],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A date-range run must not depend on Agile sprint access: with a connector whose
-    list_sprints() raises, the run still succeeds (proving the endpoint is skipped)."""
+    """When the Agile endpoint is available, a date-range run re-resolves work-item→sprint links
+    against current sprint identities instead of clobbering linkage cached by a prior run."""
     monkeypatch.setattr(
         "em_radar_api.connector_registry._connector_types",
-        lambda: [_SprintEndpointForbiddenConnector],
+        lambda: [JiraTestConnector],
+    )
+    monkeypatch.setattr("em_radar_api.routers.reports.datetime", FrozenReportDateTime)
+
+    connection_id = _create_jira_connection(api_client)
+    scope_id = _create_board_scope(api_client, connection_id, _BOARD_CAPABILITIES)
+    team_id = _create_jira_team(api_client, connection_id, scope_id, "scrum", sprint_length_days=14)
+
+    # First a default (sprint) run persists PLAT-1 with a resolved current_sprint_id.
+    default_run = api_client.post(
+        "/api/reports/run", json={"connector": "jira", "team_profile_id": team_id}
+    )
+    assert default_run.status_code == 200
+    with session_factory() as session:
+        sprint = session.exec(
+            select(SprintTable).where(
+                SprintTable.source == Source.JIRA, SprintTable.external_id == "30000"
+            )
+        ).one()
+        workitem = session.exec(
+            select(WorkItemTable).where(WorkItemTable.external_id == "PLAT-1")
+        ).one()
+        assert workitem.current_sprint_id == sprint.id
+        assert sprint.id in workitem.sprint_ids
+
+    # A date-range run must keep that linkage (sprints fetched best-effort and re-resolved).
+    range_run = api_client.post(
+        "/api/reports/run",
+        json={
+            "connector": "jira",
+            "team_profile_id": team_id,
+            "window_type": "date_range",
+            "start": _RANGE_START,
+            "end": _RANGE_END,
+        },
+    )
+    assert range_run.status_code == 200
+
+    with session_factory() as session:
+        sprint = session.exec(
+            select(SprintTable).where(
+                SprintTable.source == Source.JIRA, SprintTable.external_id == "30000"
+            )
+        ).one()
+        workitem = session.exec(
+            select(WorkItemTable).where(WorkItemTable.external_id == "PLAT-1")
+        ).one()
+        assert workitem.current_sprint_id == sprint.id
+        assert sprint.id in workitem.sprint_ids
+
+
+def test_date_range_run_degrades_when_sprints_unavailable(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A date-range run must not depend on Agile sprint access: when list_sprints() fails, the
+    run degrades to empty sprints (partial note), still succeeds, and persists work items."""
+    monkeypatch.setattr(
+        "em_radar_api.connector_registry._connector_types",
+        lambda: [_SprintEndpointUnavailableConnector],
     )
     monkeypatch.setattr("em_radar_api.routers.reports.datetime", FrozenReportDateTime)
 
@@ -239,6 +302,15 @@ def test_date_range_run_skips_sprint_endpoint(
     )
     assert response.status_code == 200
     assert response.json()["status"] == "succeeded"
+
+    notes = response.json()["signal_pack_snapshot"]["partial_data_notes"]
+    assert any(note["source"] == "sprints" for note in notes)
+
+    with session_factory() as session:
+        workitem = session.exec(
+            select(WorkItemTable).where(WorkItemTable.external_id == "PLAT-1")
+        ).one_or_none()
+    assert workitem is not None
 
 
 def test_no_active_sprint_default_run_closes_connector(

@@ -212,12 +212,14 @@ class _BoardMetadata:
 
     The evaluation window is chosen by the caller (explicit request window or working-mode
     default), not here, so an explicit date range can bypass sprint derivation entirely.
+    ``sprints_unavailable`` flags a date-range run whose sprint fetch was degraded away.
     """
 
     project: Project
     board: Board
     sprints: list[Sprint]
     connector: WorkItemProvider
+    sprints_unavailable: bool = False
 
 
 @dataclass
@@ -260,16 +262,29 @@ async def _run_team_report(
     board_meta: _BoardMetadata | None = None
     if board_scope is not None:
         try:
-            # An explicit date-range run needs no sprints (sprint signals are window-gated out
-            # and _code_fetch_window passes a date_range through unchanged), so skip the Agile
-            # sprint endpoint — a range report must not depend on sprint access (REQ-F-051).
+            # Sprint metadata is fetched even for a date-range run so persisted work-item→sprint
+            # links resolve on the normal path and a range run does not clobber cached linkage.
+            # For a date-range run (sprints_optional) a sprint-endpoint failure degrades to empty
+            # sprints instead of failing/emptying the board, so the range report never *depends*
+            # on the Agile endpoint (REQ-F-051); a default run still needs sprints to derive its
+            # active-sprint window and propagates the failure as before.
             board_meta = await _fetch_board_metadata(
-                session, board_scope, fetch_sprints=requested_window is None
+                session, board_scope, sprints_optional=requested_window is not None
             )
         except (ConnectorRateLimitedError, ConnectorTransientError, ConnectorAuthError) as error:
             partial_data_notes.append(
                 {"source": "board", "reason": f"board data unavailable: {type(error).__name__}"}
             )
+
+    # A degraded sprint fetch (date-range run, Agile endpoint unavailable) is a distinct,
+    # non-"board" partial note so board work items are still persisted and evaluated.
+    if board_meta is not None and board_meta.sprints_unavailable:
+        partial_data_notes.append(
+            {
+                "source": "sprints",
+                "reason": "sprint metadata unavailable; work-item sprint links not refreshed",
+            }
+        )
 
     # An explicit date-range request wins over working-mode derivation and bypasses sprint
     # selection (so a scrum team can run an ad-hoc range without an active sprint). Otherwise
@@ -496,14 +511,14 @@ async def _run_team_report(
 async def _fetch_board_metadata(
     session: Session,
     board_scope: ScopeDefinitionTable,
-    fetch_sprints: bool = True,
+    sprints_optional: bool = False,
 ) -> _BoardMetadata:
     """Fetch fast board metadata: project, board, sprints, and connector.
 
     Does not fetch workitems or transitions — those run concurrently with MR fetch in Phase 2.
-    The evaluation window is picked by the caller, not derived here. When ``fetch_sprints`` is
-    False (explicit date-range run) the Agile sprint endpoint is skipped so the report does not
-    depend on sprint access.
+    The evaluation window is picked by the caller, not derived here. Sprints are always
+    attempted (so work-item sprint links resolve on the normal path); when ``sprints_optional``
+    (a date-range run) a sprint-endpoint failure degrades to empty sprints instead of failing.
     """
     connection = get_source_connection(session, board_scope.connection_id)
     if connection is None:
@@ -529,7 +544,6 @@ async def _fetch_board_metadata(
         project, board = await _find_jira_board(connector, board_external_id)
         if project is None or board is None:
             raise HTTPException(status_code=404, detail="Jira board not found")
-        sprints = await connector.list_sprints(board_external_id) if fetch_sprints else []
     except (ConnectorRateLimitedError, ConnectorTransientError, ConnectorAuthError):
         await connector.close()
         raise
@@ -540,12 +554,45 @@ async def _fetch_board_metadata(
         await connector.close()
         raise
 
+    sprints, sprints_unavailable = await _list_sprints_best_effort(
+        connector, board_external_id, sprints_optional
+    )
+
     return _BoardMetadata(
         project=project,
         board=board,
         sprints=sprints,
         connector=connector,
+        sprints_unavailable=sprints_unavailable,
     )
+
+
+async def _list_sprints_best_effort(
+    connector: WorkItemProvider,
+    board_external_id: str,
+    optional: bool,
+) -> tuple[list[Sprint], bool]:
+    """Return (sprints, unavailable) for the board.
+
+    Sprints are fetched even for date-range runs so persisted work-item→sprint links resolve
+    against current sprint identities. When ``optional`` (date-range), an Agile-endpoint failure
+    degrades to empty sprints (unavailable=True) so the run does not depend on that endpoint;
+    a non-optional (default) run propagates the error, as it needs the active-sprint window.
+    On the non-optional error path the connector is closed before the error escapes; on the
+    degraded path it stays open for the Phase 2 workitem fetch to close.
+    """
+    try:
+        return await connector.list_sprints(board_external_id), False
+    except (ConnectorRateLimitedError, ConnectorTransientError, ConnectorAuthError):
+        if not optional:
+            await connector.close()
+            raise
+        return [], True
+    except ConnectorError as error:
+        if not optional:
+            await connector.close()
+            raise HTTPException(status_code=502, detail=str(error)) from error
+        return [], True
 
 
 async def _fetch_workitems_and_transitions(
