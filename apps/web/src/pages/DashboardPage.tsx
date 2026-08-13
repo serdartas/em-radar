@@ -79,6 +79,7 @@ export function DashboardPage() {
             <TeamCard
               key={team.id}
               latestSummary={latestByTeam?.get(team.id)}
+              reportsError={reportsQuery.isError}
               reportsLoading={reportsQuery.isLoading}
               team={team}
             />
@@ -91,21 +92,26 @@ export function DashboardPage() {
 
 function TeamCard({
   latestSummary,
+  reportsError,
   reportsLoading,
   team,
 }: {
   latestSummary: ReportSummary | undefined
+  reportsError: boolean
   reportsLoading: boolean
   team: TeamProfile
 }) {
   const queryClient = useQueryClient()
   const reportId = latestSummary?.id
   const succeeded = latestSummary?.status === "succeeded"
+  // Failed runs still persist partial-data notes worth surfacing; running/pending have no
+  // meaningful snapshot yet, so skip them.
+  const detailAvailable = succeeded || latestSummary?.status === "failed"
 
   const detailQuery = useQuery({
     queryKey: ["reports", reportId],
     queryFn: () => getReport(reportId as string),
-    enabled: Boolean(reportId) && succeeded,
+    enabled: Boolean(reportId) && detailAvailable,
   })
 
   const refresh = useMutation({
@@ -205,6 +211,13 @@ function TeamCard({
               </>
             )}
           </>
+        ) : reportsError ? (
+          <p
+            className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700"
+            role="alert"
+          >
+            Report history could not be loaded.
+          </p>
         ) : reportsLoading ? (
           <p className="text-sm text-slate-500">Loading report...</p>
         ) : (

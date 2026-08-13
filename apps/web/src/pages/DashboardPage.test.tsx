@@ -300,12 +300,19 @@ describe("DashboardPage", () => {
     expect(await screen.findByText("Partial data")).toBeInTheDocument()
   })
 
-  it("shows the failure indicator for a failed latest report and no risk block", async () => {
+  it("shows the failure indicator and partial-data badge for a failed report, no risk block", async () => {
     const failedSummary = {
       ...platformSummary,
       id: "report-fail",
       status: "failed",
       error: "Jira request timed out.",
+    }
+    const failedDetail = {
+      ...platformDetail,
+      ...failedSummary,
+      signal_pack_snapshot: {
+        partial_data_notes: [{ source: "jira", reason: "Source timed out." }],
+      },
     }
     vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
       const url = typeof input === "string" ? input : input.toString()
@@ -315,18 +322,43 @@ describe("DashboardPage", () => {
       if (url.endsWith("/api/reports") && init?.method !== "POST") {
         return Promise.resolve(jsonResponse([failedSummary]))
       }
+      if (url.endsWith("/api/reports/report-fail")) {
+        return Promise.resolve(jsonResponse(failedDetail))
+      }
       throw new Error(`unexpected fetch: ${url}`)
     })
     renderPage()
 
-    await screen.findByText(/Last run failed\./)
+    expect(await screen.findByText("Partial data")).toBeInTheDocument()
     const card = within(cardFor("Platform"))
+    expect(card.getByText(/Last run failed\./)).toBeInTheDocument()
     expect(card.getByText(/Jira request timed out\./)).toBeInTheDocument()
     expect(card.queryByText("No risks flagged.")).toBeNull()
+    expect(card.queryByText("PLAT-3 blocked for a week")).toBeNull()
     expect(card.getByRole("button", { name: "Refresh" })).toBeInTheDocument()
     expect(card.getByRole("link", { name: "Open report" })).toHaveAttribute(
       "href",
       "/reports/results/report-fail",
     )
+  })
+
+  it("shows a report-history error state when the reports list fails to load", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = typeof input === "string" ? input : input.toString()
+      if (url.endsWith("/api/teams")) {
+        return Promise.resolve(jsonResponse([platformTeam]))
+      }
+      if (url.endsWith("/api/reports") && init?.method !== "POST") {
+        return Promise.resolve(new Response("boom", { status: 500 }))
+      }
+      throw new Error(`unexpected fetch: ${url}`)
+    })
+    renderPage()
+
+    const card = within(await screen.findByRole("article"))
+    expect(await card.findByText("Report history could not be loaded.")).toBeInTheDocument()
+    expect(card.queryByText("No report yet.")).toBeNull()
+    expect(card.getByRole("button", { name: "Refresh" })).toBeInTheDocument()
+    expect(card.queryByRole("link", { name: "Open report" })).toBeNull()
   })
 })
