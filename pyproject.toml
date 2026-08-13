@@ -38,6 +38,7 @@ where = [
     "packages/connectors/src",
     "packages/config/src",
     "packages/normalizer/src",
+    "packages/reports/src",
 ]
 
 [tool.setuptools.data-files]
