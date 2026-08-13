@@ -27,4 +27,6 @@ def seed_default_signal_group(app_session_factory: sessionmaker[Session]) -> Non
             is not None
         ):
             return
-        apply_signal_pack_import(session, DEFAULT_PACK_PATH.read_text(), conflict="skip")
+        apply_signal_pack_import(
+            session, DEFAULT_PACK_PATH.read_text(encoding="utf-8"), conflict="skip"
+        )

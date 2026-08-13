@@ -3,7 +3,7 @@ kind: SignalPack
 metadata:
   name: default-signals
   version: 1.0.0
-  description: Default EM Radar signal pack — 8 work-item signals for Scrum teams using Jira.
+  description: Default EM Radar signal pack - 8 work-item signals for Scrum teams using Jira.
 spec:
   export_type: private_backup
   signals:

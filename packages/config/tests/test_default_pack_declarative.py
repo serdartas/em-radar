@@ -40,7 +40,12 @@ EXPECTED_TEMPLATE_KEYS = {
 
 
 def test_default_pack_validates_against_schema() -> None:
-    result = load_signal_pack(DEFAULT_PACK_PATH.read_text())
+    """Validates expressions against the live Jira connector capability schema."""
+    from em_radar_config import PackValidationContext
+    from em_radar_connector_jira.connector import JiraConnector
+
+    ctx = PackValidationContext(signal_schemas=(JiraConnector.describe_signal_schema(),))
+    result = load_signal_pack(DEFAULT_PACK_PATH.read_text(encoding="utf-8"), ctx)
 
     assert result.pack.api_version == "emradar.dev/v1"
     assert result.pack.kind == "SignalPack"
@@ -188,3 +193,15 @@ def test_seeded_definitions_export_to_valid_pack(_api_harness) -> None:
     assert len(exported.pack.spec.signals) == 8
     exported_keys = {s.template_key for s in exported.pack.spec.signals}
     assert exported_keys == EXPECTED_TEMPLATE_KEYS
+
+    # Verify expressions and report_settings survive the round-trip.
+    source = load_signal_pack(DEFAULT_PACK_PATH.read_text(encoding="utf-8")).pack
+    source_by_key = {s.template_key: s for s in source.spec.signals}
+    for exported_signal in exported.pack.spec.signals:
+        key = exported_signal.template_key
+        assert exported_signal.expression == source_by_key[key].expression, (
+            f"Expression mismatch for {key!r} after round-trip"
+        )
+        assert exported_signal.report_settings == source_by_key[key].report_settings, (
+            f"report_settings mismatch for {key!r} after round-trip"
+        )
