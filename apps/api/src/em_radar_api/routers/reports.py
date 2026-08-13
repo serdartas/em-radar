@@ -53,12 +53,13 @@ from em_radar_core.models import (
 )
 from em_radar_core.signals import SignalData
 from em_radar_normalizer import DEFAULT_WORKITEM_KEY_PATTERN, populate_merge_request_links
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, JsonValue, model_validator
 from sqlmodel import Session, select
 
 
 from em_radar_api.db import get_session, get_write_session
+from em_radar_api.report_export import build_report_markdown
 from em_radar_api.connector_registry import create_connector, get_connector_capabilities
 from em_radar_api.repositories.canonical import persist_fetch
 from em_radar_api.repositories.reports import (
@@ -81,6 +82,7 @@ from em_radar_api.tables import (
     EvaluationWindowTable,
     ReportTable,
     SignalFindingTable,
+    SprintTable,
     TeamProfileTable,
 )
 
@@ -701,6 +703,37 @@ async def get_report_endpoint(
     return ReportDetailResponse.from_report_with_findings(report, get_findings(session, report_id))
 
 
+@router.get("/reports/{report_id}/export.md")
+async def export_report_markdown_endpoint(
+    report_id: UUID,
+    session: Session = Depends(get_session),
+) -> Response:
+    report = get_report(session, report_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="report not found")
+
+    window = session.get(EvaluationWindowTable, report.evaluation_window_id)
+    team = session.get(TeamProfileTable, window.team_profile_id) if window is not None else None
+    sprint = (
+        session.get(SprintTable, window.sprint_id)
+        if window is not None and window.sprint_id is not None
+        else None
+    )
+
+    markdown = build_report_markdown(
+        report,
+        get_findings(session, report_id),
+        window,
+        team,
+        sprint.name if sprint is not None else None,
+    )
+    return Response(
+        content=markdown,
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="report-{report_id}.md"'},
+    )
+
+
 def _default_evaluation_window(
     team: TeamProfile,
     sprints: list[Sprint] | None,
@@ -856,6 +889,7 @@ def _team_signal_pack_snapshot(
                 "id": str(definition.id),
                 "name": definition.name,
                 "entity_type": definition.entity_type,
+                "category": definition.report_settings.category,
                 "enabled": definition.enabled,
                 "origin": definition.origin.value,
                 "template_key": definition.template_key,
