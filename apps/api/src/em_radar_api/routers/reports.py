@@ -413,6 +413,7 @@ async def _run_team_report(
                 scope_id=str(team_row.code_connection_id),
                 scope_type="repository",
                 name="code",
+                capabilities=("reviews", "pipelines"),
                 connector_capabilities=get_connector_capabilities(
                     str(code_connection.connector_name) if code_connection else None
                 ),

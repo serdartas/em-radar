@@ -23,6 +23,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.execute(sa.text("UPDATE merge_request SET approval_count = 0 WHERE approval_count IS NULL"))
     with op.batch_alter_table("merge_request") as batch_op:
         batch_op.alter_column(
             "approval_count",
