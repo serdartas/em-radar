@@ -8,18 +8,13 @@ import { Label } from "@/components/ui/label"
 import { Select } from "@/components/ui/select"
 import { apiErrorMessage } from "@/lib/api"
 import { runTeamReport, type ReportDetail } from "@/lib/reports"
-import { listTeams, type TeamProfile } from "@/lib/teams"
+import { listTeams, teamHasNoSources } from "@/lib/teams"
 
 type WindowMode = "date_range" | "sprint"
 
 interface TeamRunInput {
   teamIds: string[]
   window?: { start: string; end: string }
-}
-
-/** A team with no board scope and no code connection has no sources and cannot run a report. */
-function teamHasNoSources(team: TeamProfile): boolean {
-  return team.scope_ids.length === 0 && !team.code_connection_id
 }
 
 export function ReportRunnerPage() {
