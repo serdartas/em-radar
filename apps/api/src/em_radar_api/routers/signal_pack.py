@@ -68,7 +68,6 @@ def export_signal_pack_route(
 @router.post(
     "/signal-pack/import",
     response_model=SignalPackImportPreview,
-    response_model_exclude_defaults=True,
 )
 def preview_signal_pack_import_route(
     request: SignalPackImportRequest,
@@ -87,7 +86,6 @@ def preview_signal_pack_import_route(
 @router.post(
     "/signal-pack/import/apply",
     response_model=SignalPackImportPreview,
-    response_model_exclude_defaults=True,
 )
 def apply_signal_pack_import_route(
     request: SignalPackImportRequest,
