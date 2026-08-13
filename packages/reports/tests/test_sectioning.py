@@ -250,6 +250,68 @@ def test_unknown_category_with_meta_present_falls_back_by_entity() -> None:
     assert len(report.get_section(Section.DETAILED_FINDINGS).findings) == 1
 
 
+def test_hygiene_category_routes_to_planning_hygiene() -> None:
+    finding = _finding(
+        signal_id="ui-hygiene",
+        signal_name="UI hygiene signal",
+        severity=Severity.WARNING,
+        entity_type=EntityType.WORKITEM,
+        title="ABC-7 - hygiene",
+    )
+    report = build_sections([finding], {"ui-hygiene": SignalMeta(category="hygiene")})
+
+    assert {f.title for f in report.get_section(Section.PLANNING_HYGIENE).findings} == {
+        "ABC-7 - hygiene"
+    }
+
+
+def test_sprint_category_routes_to_sprint_health() -> None:
+    finding = _finding(
+        signal_id="ui-sprint",
+        signal_name="UI sprint signal",
+        severity=Severity.WARNING,
+        entity_type=EntityType.WORKITEM,
+        title="ABC-8 - sprint category",
+    )
+    report = build_sections([finding], {"ui-sprint": SignalMeta(category="sprint")})
+
+    assert {f.title for f in report.get_section(Section.SPRINT_HEALTH).findings} == {
+        "ABC-8 - sprint category"
+    }
+
+
+def test_sprint_entity_with_flow_category_routes_to_sprint_health() -> None:
+    finding = _finding(
+        signal_id="sprint-flow",
+        signal_name="Sprint flow signal",
+        severity=Severity.WARNING,
+        entity_type=EntityType.SPRINT,
+        title="Sprint 7",
+    )
+    report = build_sections([finding], {"sprint-flow": SignalMeta(category="flow")})
+
+    assert {f.title for f in report.get_section(Section.SPRINT_HEALTH).findings} == {"Sprint 7"}
+
+
+def test_recreated_source_linking_without_template_key() -> None:
+    finding = _finding(
+        signal_id="recreated-linking",
+        signal_name="Merge request without linked work item",
+        severity=Severity.WARNING,
+        entity_type=EntityType.MERGEREQUEST,
+        title="!20 - unlinked recreated",
+    )
+    report = build_sections(
+        [finding],
+        {"recreated-linking": SignalMeta(category="quality", is_source_linking=True)},
+    )
+
+    assert {f.title for f in report.get_section(Section.SOURCE_LINKING).findings} == {
+        "!20 - unlinked recreated"
+    }
+    assert report.get_section(Section.MERGE_REQUEST_FLOW).findings == []
+
+
 def test_empty_findings_yields_all_sections_empty() -> None:
     report = build_sections([], {})
 

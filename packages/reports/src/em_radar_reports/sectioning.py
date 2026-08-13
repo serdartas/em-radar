@@ -63,6 +63,13 @@ _THEMED_SECTIONS: tuple[Section, ...] = (
     Section.SOURCE_LINKING,
 )
 
+# Category values that can reach this package span two sources: the default signal
+# pack ({planning, flow, delivery, quality}) and the signal-creation UI
+# ({flow, hygiene, quality, sprint}). Route the full union deterministically.
+PLANNING_CATEGORIES: frozenset[str] = frozenset({"planning", "hygiene"})
+DELIVERY_CATEGORIES: frozenset[str] = frozenset({"flow", "delivery"})
+SPRINT_CATEGORIES: frozenset[str] = frozenset({"sprint"})
+
 # Critical outranks warning outranks info; lower rank sorts first.
 _SEVERITY_RANK: dict[Severity, int] = {
     Severity.CRITICAL: 0,
@@ -86,10 +93,17 @@ class SignalMeta(BaseModel):
 
     A SignalFinding does not carry its signal's category or template key, so the
     caller maps each signal_id to these values (from the SignalDefinition).
+
+    `is_source_linking` lets the caller flag a source-linking signal directly.
+    User-recreated signals persist `template_key=None`, so the seeded template key
+    is only a fallback; the caller (M6-07 integration, out of scope here) is
+    expected to set this by detecting the link-emptiness expression (e.g.
+    `linked_workitem_keys is_empty`). This package never inspects expressions.
     """
 
     category: str
     template_key: str | None = None
+    is_source_linking: bool = False
 
 
 class SkipNote(BaseModel):
@@ -146,22 +160,21 @@ def assign_section(finding: SignalFinding, meta: SignalMeta | None) -> Section:
     entity = finding.entity_type
     if meta is not None:
         category = meta.category
-        # First match wins; order matches the decided rule table exactly.
-        if category == "planning":
+        # First match wins. Source linking is checked first (it would otherwise be
+        # captured by the merge-request rule); the sprint-entity rule stays ahead of
+        # the category rules so a sprint finding with a flow/delivery category still
+        # lands in Sprint Health.
+        if meta.is_source_linking or meta.template_key in SOURCE_LINKING_TEMPLATE_KEYS:
+            return Section.SOURCE_LINKING
+        if entity is EntityType.SPRINT or category in SPRINT_CATEGORIES:
+            return Section.SPRINT_HEALTH
+        if category in PLANNING_CATEGORIES:
             return Section.PLANNING_HYGIENE
         if category == "quality" and entity is EntityType.WORKITEM:
             return Section.PLANNING_HYGIENE
-        if category == "flow" and entity is EntityType.WORKITEM:
+        if category in DELIVERY_CATEGORIES and entity is EntityType.WORKITEM:
             return Section.DELIVERY_FLOW
-        if category == "delivery" and entity is EntityType.WORKITEM:
-            return Section.DELIVERY_FLOW
-        if entity is EntityType.SPRINT:
-            return Section.SPRINT_HEALTH
-        if meta.template_key in SOURCE_LINKING_TEMPLATE_KEYS:
-            return Section.SOURCE_LINKING
-        if category == "quality" and entity is EntityType.MERGEREQUEST:
-            return Section.MERGE_REQUEST_FLOW
-        if category == "flow" and entity is EntityType.MERGEREQUEST:
+        if entity is EntityType.MERGEREQUEST:
             return Section.MERGE_REQUEST_FLOW
     return _FALLBACK_SECTION_BY_ENTITY.get(entity, Section.DELIVERY_FLOW)
 
