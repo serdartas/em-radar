@@ -155,6 +155,35 @@ def test_snapshot_records_group_ids_and_signal_set(api_client: TestClient, monke
     assert [definition["id"] for definition in snapshot["signal_definitions"]] == [signal_id]
 
 
+def test_report_history_exposes_team_identity(api_client: TestClient, monkeypatch) -> None:
+    _use_jira_connector(monkeypatch)
+    connection_id = _create_jira_connection(api_client)
+    scope_id = _create_board_scope(api_client, connection_id, _BOARD_CAPABILITIES)
+    signal_id = _create_signal(api_client, "Team identity signal")
+    group = _create_group(api_client, "Team identity group", [signal_id])
+    team_id = _create_jira_team(
+        api_client, connection_id, scope_id, "scrum", sprint_length_days=14, group_ids=[group]
+    )
+    team_name = api_client.get(f"/api/teams/{team_id}").json()["name"]
+
+    run = api_client.post(
+        "/api/reports/run", json={"connector": "jira", "team_profile_id": team_id}
+    )
+    assert run.status_code == 200
+    report_id = run.json()["id"]
+
+    listing = api_client.get("/api/reports")
+    assert listing.status_code == 200
+    summaries = {report["id"]: report for report in listing.json()}
+    assert summaries[report_id]["team_profile_id"] == team_id
+    assert summaries[report_id]["team_name"] == team_name
+
+    detail = api_client.get(f"/api/reports/{report_id}")
+    assert detail.status_code == 200
+    assert detail.json()["team_profile_id"] == team_id
+    assert detail.json()["team_name"] == team_name
+
+
 def test_run_requires_team_with_at_least_one_source(api_client: TestClient, monkeypatch) -> None:
     _use_jira_connector(monkeypatch)
     connection_id = _create_jira_connection(api_client)

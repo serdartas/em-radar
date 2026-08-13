@@ -176,6 +176,54 @@ describe("ReportResultsPage", () => {
     await waitFor(() => expect(revokeObjectURL).toHaveBeenCalledWith("blob:report"))
   })
 
+  it("renders persisted findings offline when only the report endpoint resolves", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = String(input)
+      if (url.endsWith("/api/reports/report-1")) {
+        return Promise.resolve(
+          new Response(JSON.stringify(report), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
+        )
+      }
+      // Any source/connector call must never be made when viewing a persisted report.
+      return Promise.reject(new Error(`unexpected offline fetch to ${url}`))
+    })
+
+    renderReportResults()
+
+    expect(await screen.findByText("PLAT-9 blocked for 6 days")).toBeInTheDocument()
+    expect(screen.getByText("Escalate the blocker.")).toBeInTheDocument()
+  })
+
+  it("renders partial-data notes captured in the snapshot", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ...report,
+          signal_pack_snapshot: {
+            partial_data_notes: [
+              { source: "board", reason: "board data unavailable: ConnectorTransientError" },
+              { source: "code", reason: "code data unavailable: ConnectorAuthError" },
+            ],
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    )
+
+    renderReportResults()
+
+    expect(await screen.findByRole("heading", { name: "Partial data" })).toBeInTheDocument()
+    expect(
+      screen.getByText("board data unavailable: ConnectorTransientError", { exact: false }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText("code data unavailable: ConnectorAuthError", { exact: false }),
+    ).toBeInTheDocument()
+  })
+
   it("surfaces an error when the export cannot be generated", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const url = String(input)

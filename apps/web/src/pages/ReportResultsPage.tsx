@@ -6,7 +6,14 @@ import { SeverityCounts } from "@/components/SeverityCounts"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
-import { type Finding, getReport, reportMarkdownQuery } from "@/lib/reports"
+import {
+  extractPartialDataNotes,
+  type Finding,
+  formatTimestamp,
+  getReport,
+  type PartialDataNote,
+  reportMarkdownQuery,
+} from "@/lib/reports"
 
 export function ReportResultsPage() {
   const { reportId } = useParams<{ reportId: string }>()
@@ -38,18 +45,28 @@ export function ReportResultsPage() {
   }
 
   const report = query.data
+  const partialDataNotes = extractPartialDataNotes(report.signal_pack_snapshot)
 
   return (
     <section aria-labelledby="page-title" className="space-y-6">
       <header className="space-y-3">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-          <h1 className="text-2xl font-semibold tracking-tight" id="page-title">
-            Report Results
-          </h1>
+          <div className="space-y-1">
+            <h1 className="text-2xl font-semibold tracking-tight" id="page-title">
+              Report Results
+            </h1>
+            {report.team_name && <p className="text-sm text-slate-600">{report.team_name}</p>}
+            <p className="text-xs text-slate-500">
+              Run {formatTimestamp(report.started_at)}
+              {report.finished_at && <> · finished {formatTimestamp(report.finished_at)}</>}
+            </p>
+          </div>
           <ReportExportActions reportId={report.id} />
         </div>
         <SeverityCounts counts={report.findings_count_by_severity} />
       </header>
+
+      {partialDataNotes.length > 0 && <PartialDataNotes notes={partialDataNotes} />}
 
       {report.status === "failed" ? (
         <p className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700" role="alert">
@@ -144,6 +161,29 @@ function ReportExportActions({ reportId }: { reportId: string }) {
         </p>
       )}
     </div>
+  )
+}
+
+function PartialDataNotes({ notes }: { notes: PartialDataNote[] }) {
+  return (
+    <section
+      aria-labelledby="partial-data-title"
+      className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"
+    >
+      <h2 className="font-semibold" id="partial-data-title">
+        Partial data
+      </h2>
+      <p className="mt-1 text-amber-800">
+        Some sources were unavailable when this report ran. Findings may be incomplete.
+      </p>
+      <ul className="mt-2 space-y-1">
+        {notes.map((note) => (
+          <li key={`${note.source}-${note.reason}`}>
+            <span className="font-medium">{note.source}</span>: {note.reason}
+          </li>
+        ))}
+      </ul>
+    </section>
   )
 }
 

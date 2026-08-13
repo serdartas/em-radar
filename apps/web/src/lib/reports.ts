@@ -22,6 +22,8 @@ export interface Finding {
 export interface ReportSummary {
   id: string
   evaluation_window_id: string
+  team_profile_id: string | null
+  team_name: string | null
   status: ReportStatus
   started_at: string
   finished_at: string | null
@@ -32,6 +34,37 @@ export interface ReportSummary {
 export interface ReportDetail extends ReportSummary {
   signal_pack_snapshot: unknown
   findings: Finding[]
+}
+
+export interface PartialDataNote {
+  source: string
+  reason: string
+}
+
+export function formatTimestamp(value: string): string {
+  // The API serializes started_at/finished_at from naive SQLite columns (stored as UTC
+  // wall-time) without a timezone marker. Treat an offset-less string as UTC so viewers in
+  // non-UTC zones do not see shifted labels; strings that already carry a zone are used as-is.
+  const normalized = /([zZ]|[+-]\d{2}:?\d{2})$/.test(value) ? value : `${value}Z`
+  const parsed = new Date(normalized)
+  return Number.isNaN(parsed.valueOf()) ? value : parsed.toLocaleString()
+}
+
+export function extractPartialDataNotes(snapshot: unknown): PartialDataNote[] {
+  if (typeof snapshot !== "object" || snapshot === null) {
+    return []
+  }
+  const notes = (snapshot as Record<string, unknown>).partial_data_notes
+  if (!Array.isArray(notes)) {
+    return []
+  }
+  return notes.filter(
+    (note): note is PartialDataNote =>
+      typeof note === "object" &&
+      note !== null &&
+      typeof (note as Record<string, unknown>).source === "string" &&
+      typeof (note as Record<string, unknown>).reason === "string",
+  )
 }
 
 export interface JiraSprintReportRequest {
