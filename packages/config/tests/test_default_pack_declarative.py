@@ -54,7 +54,7 @@ def test_default_pack_validates_against_schema() -> None:
 
 def test_all_signals_are_fully_declarative() -> None:
     """Every signal must have an expression — no bare id+params old-format entries."""
-    pack = load_signal_pack(DEFAULT_PACK_PATH.read_text()).pack
+    pack = load_signal_pack(DEFAULT_PACK_PATH.read_text(encoding="utf-8")).pack
 
     for signal in pack.spec.signals:
         assert signal.expression is not None, f"Signal {signal.name!r} is missing an expression"
@@ -63,7 +63,7 @@ def test_all_signals_are_fully_declarative() -> None:
 
 
 def test_pack_contains_exactly_8_work_item_signals() -> None:
-    pack = load_signal_pack(DEFAULT_PACK_PATH.read_text()).pack
+    pack = load_signal_pack(DEFAULT_PACK_PATH.read_text(encoding="utf-8")).pack
 
     assert len(pack.spec.signals) == 8
     actual_keys = {s.template_key for s in pack.spec.signals}
@@ -71,7 +71,7 @@ def test_pack_contains_exactly_8_work_item_signals() -> None:
 
 
 def test_default_group_references_all_signals() -> None:
-    pack = load_signal_pack(DEFAULT_PACK_PATH.read_text()).pack
+    pack = load_signal_pack(DEFAULT_PACK_PATH.read_text(encoding="utf-8")).pack
     assert pack.spec.groups, "default-pack.yaml must define at least one group"
 
     default_group = next((g for g in pack.spec.groups if g.name == "Default signals"), None)
@@ -82,7 +82,7 @@ def test_default_group_references_all_signals() -> None:
 
 
 def test_all_signals_are_enabled_and_system_template() -> None:
-    pack = load_signal_pack(DEFAULT_PACK_PATH.read_text()).pack
+    pack = load_signal_pack(DEFAULT_PACK_PATH.read_text(encoding="utf-8")).pack
 
     for signal in pack.spec.signals:
         assert signal.enabled is True, f"Signal {signal.name!r} must be enabled by default"
