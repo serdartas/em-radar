@@ -51,7 +51,23 @@ def test_get_connectors_includes_registered_connectors(api_client) -> None:
     names = [connector["name"] for connector in response.json()]
     assert "jira" in names
     assert "gitlab" in names
-    assert "demo" in names
+
+
+def test_get_connectors_hides_test_only_demo_connector(api_client) -> None:
+    """The demo connector is registered for the contract-test suite but must never be
+    advertised as a user-selectable source."""
+    response = api_client.get("/api/connectors")
+
+    assert response.status_code == 200
+    names = [connector["name"] for connector in response.json()]
+    assert "demo" not in names
+
+
+def test_demo_connector_remains_resolvable_by_name() -> None:
+    """Hiding demo from the advertised list must not break contract-test resolution."""
+    connector = create_connector("demo", {})
+
+    assert connector.name == "demo"
 
 
 def test_registry_flags_secrets_and_factory_validates_config(

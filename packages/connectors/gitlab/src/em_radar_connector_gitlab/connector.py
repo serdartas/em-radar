@@ -736,20 +736,32 @@ def _mr_state(gl_state: str, is_draft: bool) -> MergeRequestState:
     raise ConnectorDataError(f"Unsupported GitLab MR state: {gl_state!r}")
 
 
+def _within_window_bounds(moment: datetime | None, window: EvaluationWindow) -> bool:
+    if moment is None:
+        return False
+    if window.start is not None and moment < window.start:
+        return False
+    if window.end is not None and moment > window.end:
+        return False
+    return True
+
+
 def _mr_in_window(mr: MergeRequest, window: EvaluationWindow) -> bool:
     # Open/draft MRs are always included: a stale open MR last touched before the window
     # start is exactly the case the "waiting too long" signal is designed to catch.
     if mr.state in (MergeRequestState.OPEN, MergeRequestState.DRAFT):
         return True
-    # Without a lower bound there is nothing to filter against.
-    if window.start is None:
+    # Without bounds there is nothing to filter against.
+    if window.start is None and window.end is None:
         return True
     # Terminal MRs are kept only when their completion event falls within the window, not
     # when updated_at does — an MR can be updated (e.g. comment) long after it was merged.
+    # The upper bound matters too: a report window ends at the run's started_at, so an MR
+    # completed after that boundary must not leak into the snapshot.
     if mr.state is MergeRequestState.MERGED:
-        return mr.merged_at is not None and mr.merged_at >= window.start
+        return _within_window_bounds(mr.merged_at, window)
     if mr.state is MergeRequestState.CLOSED:
-        return mr.closed_at is not None and mr.closed_at >= window.start
+        return _within_window_bounds(mr.closed_at, window)
     return True
 
 
@@ -760,19 +772,19 @@ def _payload_in_window(payload: Mapping[str, object], window: EvaluationWindow) 
     states (open, locked, unknown) always pass through; unknown states are kept so that
     normalization can raise ConnectorDataError with a meaningful message.
     """
-    if window.start is None:
+    if window.start is None and window.end is None:
         return True
     gl_state = _optional_str(payload, "state")
     if gl_state == "merged":
         merged_at = _parse_datetime(_optional_str(payload, "merged_at"))
         if merged_at is None:
             return True  # missing timestamp; pass through so normalization raises
-        return merged_at >= window.start
+        return _within_window_bounds(merged_at, window)
     if gl_state == "closed":
         closed_at = _parse_datetime(_optional_str(payload, "closed_at"))
         if closed_at is None:
             return True  # missing timestamp; pass through so normalization raises
-        return closed_at >= window.start
+        return _within_window_bounds(closed_at, window)
     return True
 
 
