@@ -1,3 +1,4 @@
+from em_radar_reports.markdown_export import REPORT_TITLE, render_markdown
 from em_radar_reports.sectioning import (
     SECTION_ORDER,
     SOURCE_LINKING_TEMPLATE_KEYS,
@@ -14,6 +15,7 @@ from em_radar_reports.sectioning import (
 )
 
 __all__ = [
+    "REPORT_TITLE",
     "SECTION_ORDER",
     "SOURCE_LINKING_TEMPLATE_KEYS",
     "TOP_RISKS_LIMIT",
@@ -26,4 +28,5 @@ __all__ = [
     "SkipNote",
     "assign_section",
     "build_sections",
+    "render_markdown",
 ]
