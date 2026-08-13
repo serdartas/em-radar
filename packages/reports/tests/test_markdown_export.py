@@ -268,7 +268,7 @@ def test_markdown_syntax_in_source_text_rendered_literally() -> None:
         entity_id="00000000-0000-0000-0000-00000000000d",
         reason="see `code` and _underscore_ now",
         recommendation="fix **now** [ticket](https://evil.invalid)",
-        evidence={"note": "**bold** `x`"},
+        evidence={"note": "**bold** `x` ~~deprecated~~"},
         source_link="https://gitlab.example.com/mr/42",
     )
     report = build_sections(
@@ -288,10 +288,12 @@ def test_markdown_syntax_in_source_text_rendered_literally() -> None:
     assert "\\[incident\\]" in markdown
     assert "\\`code\\`" in markdown
     assert "\\_underscore\\_" in markdown
+    assert "\\~\\~deprecated\\~\\~" in markdown
     assert "Team \\*\\*X\\*\\* \\_y\\_" in markdown
-    # No active bold, code span, or injected link from source text.
+    # No active bold, code span, strikethrough, or injected link from source text.
     assert "**urgent**" not in markdown
     assert "`code`" not in markdown
+    assert "~~deprecated~~" not in markdown
     assert "[incident](https://example.invalid)" not in markdown
     assert "https://example.invalid" in markdown  # present, but as inert escaped text
     assert "(https://example.invalid)" not in markdown

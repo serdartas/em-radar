@@ -31,11 +31,12 @@ _NO_FINDINGS: str = "_No findings._"
 
 _WHITESPACE = re.compile(r"\s+")
 
-# CommonMark ASCII punctuation that must be backslash-escaped so source text is
-# rendered literally. Backslash is included so it is escaped too; str.translate
-# runs in a single pass, so escaped backslashes are never re-escaped. Quotes are
-# intentionally excluded so JSON-serialized evidence keeps its double quotes.
-_MD_ESCAPE = str.maketrans({char: f"\\{char}" for char in "\\`*_[](){}#+!|"})
+# CommonMark and GFM ASCII punctuation that must be backslash-escaped so source
+# text is rendered literally (tilde covers GFM strikethrough). Backslash is
+# included so it is escaped too; str.translate runs in a single pass, so escaped
+# backslashes are never re-escaped. Quotes are intentionally excluded so
+# JSON-serialized evidence keeps its double quotes.
+_MD_ESCAPE = str.maketrans({char: f"\\{char}" for char in "\\`*_[](){}#+!|~"})
 
 
 class ReportMetadata(BaseModel):
