@@ -117,9 +117,11 @@ function TeamCard({
   const refresh = useMutation({
     mutationFn: () => runTeamReport(team.id),
     // A failed run is still persisted as the team's latest report, and the backend re-raises
-    // after committing it, so invalidate on settlement rather than success alone.
+    // after committing it, so invalidate on settlement rather than success alone. Only the
+    // report list needs refetching: details are immutable per report id, and a new latest
+    // report brings a new id whose detail query fetches on its own.
     onSettled: () => {
-      void queryClient.invalidateQueries({ queryKey: ["reports"] })
+      void queryClient.invalidateQueries({ queryKey: ["reports"], exact: true })
     },
   })
 

@@ -176,7 +176,7 @@ function renderPage() {
   const queryClient = new QueryClient({
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
   })
-  return render(
+  const utils = render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={["/"]}>
         <Routes>
@@ -186,6 +186,7 @@ function renderPage() {
       </MemoryRouter>
     </QueryClientProvider>,
   )
+  return { ...utils, queryClient }
 }
 
 function cardFor(teamName: string): HTMLElement {
@@ -326,15 +327,13 @@ describe("DashboardPage", () => {
           ? Promise.resolve(jsonResponse(platformDetail))
           : Promise.resolve(new Response("boom", { status: 500 }))
       }
-      if (url.endsWith("/api/reports/run")) {
-        return Promise.resolve(jsonResponse(platformDetail))
-      }
       throw new Error(`unexpected fetch: ${url}`)
     })
-    renderPage()
+    const { queryClient } = renderPage()
 
     await screen.findByText("PLAT-3 blocked for a week")
-    fireEvent.click(within(cardFor("Platform")).getByRole("button", { name: "Refresh" }))
+    // Force a detail refetch (e.g. on window focus) that fails while cache is populated.
+    await queryClient.invalidateQueries({ queryKey: ["reports", "report-1"] })
 
     const card = within(cardFor("Platform"))
     expect(
