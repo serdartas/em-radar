@@ -38,3 +38,5 @@ packages/core/src/em_radar_core/signals/base.py
 packages/normalizer/src/em_radar_normalizer/__init__.py
 packages/normalizer/src/em_radar_normalizer/identity.py
 packages/normalizer/src/em_radar_normalizer/linking.py
+packages/reports/src/em_radar_reports/__init__.py
+packages/reports/src/em_radar_reports/sectioning.py
