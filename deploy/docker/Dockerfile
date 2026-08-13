@@ -24,6 +24,7 @@ COPY packages/connectors/jira/src ./packages/connectors/jira/src
 COPY packages/config/src ./packages/config/src
 COPY packages/config/defaults ./packages/config/defaults
 COPY packages/normalizer/src ./packages/normalizer/src
+COPY packages/reports/src ./packages/reports/src
 COPY apps/api/pyproject.toml apps/api/uv.lock ./apps/api/
 COPY apps/api/src ./apps/api/src
 COPY alembic.ini ./
