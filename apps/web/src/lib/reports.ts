@@ -22,6 +22,8 @@ export interface Finding {
 export interface ReportSummary {
   id: string
   evaluation_window_id: string
+  team_profile_id: string | null
+  team_name: string | null
   status: ReportStatus
   started_at: string
   finished_at: string | null
@@ -32,6 +34,33 @@ export interface ReportSummary {
 export interface ReportDetail extends ReportSummary {
   signal_pack_snapshot: unknown
   findings: Finding[]
+}
+
+export interface PartialDataNote {
+  source: string
+  reason: string
+}
+
+export function formatTimestamp(value: string): string {
+  const parsed = new Date(value)
+  return Number.isNaN(parsed.valueOf()) ? value : parsed.toLocaleString()
+}
+
+export function extractPartialDataNotes(snapshot: unknown): PartialDataNote[] {
+  if (typeof snapshot !== "object" || snapshot === null) {
+    return []
+  }
+  const notes = (snapshot as Record<string, unknown>).partial_data_notes
+  if (!Array.isArray(notes)) {
+    return []
+  }
+  return notes.filter(
+    (note): note is PartialDataNote =>
+      typeof note === "object" &&
+      note !== null &&
+      typeof (note as Record<string, unknown>).source === "string" &&
+      typeof (note as Record<string, unknown>).reason === "string",
+  )
 }
 
 export interface JiraSprintReportRequest {

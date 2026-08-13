@@ -157,6 +157,8 @@ class FindingResponse(BaseModel):
 class ReportSummaryResponse(BaseModel):
     id: UUID
     evaluation_window_id: UUID
+    team_profile_id: UUID | None = None
+    team_name: str | None = None
     status: ReportStatus
     started_at: datetime
     finished_at: datetime | None
@@ -164,8 +166,16 @@ class ReportSummaryResponse(BaseModel):
     findings_count_by_severity: dict[Severity, int]
 
     @classmethod
-    def from_report(cls, report: ReportTable) -> Self:
-        return cls.model_validate(report, from_attributes=True)
+    def from_report(
+        cls,
+        report: ReportTable,
+        team_profile_id: UUID | None = None,
+        team_name: str | None = None,
+    ) -> Self:
+        summary = cls.model_validate(report, from_attributes=True)
+        summary.team_profile_id = team_profile_id
+        summary.team_name = team_name
+        return summary
 
 
 class ReportDetailResponse(ReportSummaryResponse):
@@ -174,9 +184,13 @@ class ReportDetailResponse(ReportSummaryResponse):
 
     @classmethod
     def from_report_with_findings(
-        cls, report: ReportTable, findings: Sequence[SignalFinding]
+        cls,
+        report: ReportTable,
+        findings: Sequence[SignalFinding],
+        team_profile_id: UUID | None = None,
+        team_name: str | None = None,
     ) -> Self:
-        summary = ReportSummaryResponse.from_report(report)
+        summary = ReportSummaryResponse.from_report(report, team_profile_id, team_name)
         return cls(
             **summary.model_dump(),
             signal_pack_snapshot=report.signal_pack_snapshot,
@@ -437,7 +451,9 @@ async def _run_team_report(
             )
             report.findings_count_by_severity = _counts_by_severity([])
             save_report(session, report)
-            return ReportDetailResponse.from_report_with_findings(report, [])
+            return ReportDetailResponse.from_report_with_findings(
+                report, [], team_profile_id=team_row.id, team_name=team_row.name
+            )
 
         signal_data = SignalData(
             report_id=report.id,
@@ -510,7 +526,9 @@ async def _run_team_report(
         save_report(session, report)
         raise
 
-    return ReportDetailResponse.from_report_with_findings(report, persisted_findings)
+    return ReportDetailResponse.from_report_with_findings(
+        report, persisted_findings, team_profile_id=team_row.id, team_name=team_row.name
+    )
 
 
 async def _fetch_board_metadata(
@@ -689,7 +707,40 @@ async def _fetch_code_data(
 async def list_reports_endpoint(
     session: Session = Depends(get_session),
 ) -> list[ReportSummaryResponse]:
-    return [ReportSummaryResponse.from_report(report) for report in list_reports(session)]
+    reports = list_reports(session)
+
+    # Resolve each report's team via its evaluation window without an N+1: batch-load the
+    # referenced windows and teams in one query each, then look up per report. A missing
+    # window or team (e.g. the team was deleted) leaves the fields None.
+    window_ids = {report.evaluation_window_id for report in reports}
+    windows = (
+        session.exec(
+            select(EvaluationWindowTable).where(EvaluationWindowTable.id.in_(window_ids))
+        ).all()
+        if window_ids
+        else []
+    )
+    window_by_id = {window.id: window for window in windows}
+    team_ids = {window.team_profile_id for window in windows}
+    teams = (
+        session.exec(select(TeamProfileTable).where(TeamProfileTable.id.in_(team_ids))).all()
+        if team_ids
+        else []
+    )
+    team_by_id = {team.id: team for team in teams}
+
+    responses: list[ReportSummaryResponse] = []
+    for report in reports:
+        window = window_by_id.get(report.evaluation_window_id)
+        team = team_by_id.get(window.team_profile_id) if window is not None else None
+        responses.append(
+            ReportSummaryResponse.from_report(
+                report,
+                team_profile_id=team.id if team is not None else None,
+                team_name=team.name if team is not None else None,
+            )
+        )
+    return responses
 
 
 @router.get("/reports/{report_id}", response_model=ReportDetailResponse)
@@ -700,7 +751,14 @@ async def get_report_endpoint(
     report = get_report(session, report_id)
     if report is None:
         raise HTTPException(status_code=404, detail="report not found")
-    return ReportDetailResponse.from_report_with_findings(report, get_findings(session, report_id))
+    window = session.get(EvaluationWindowTable, report.evaluation_window_id)
+    team = session.get(TeamProfileTable, window.team_profile_id) if window is not None else None
+    return ReportDetailResponse.from_report_with_findings(
+        report,
+        get_findings(session, report_id),
+        team_profile_id=team.id if team is not None else None,
+        team_name=team.name if team is not None else None,
+    )
 
 
 @router.get("/reports/{report_id}/export.md")
