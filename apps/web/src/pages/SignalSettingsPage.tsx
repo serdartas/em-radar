@@ -23,8 +23,22 @@ export function SignalSettingsPage() {
     queryFn: listSignalDefinitions,
   })
   const connectorsQuery = useQuery({ queryKey: ["connectors"], queryFn: getConnectors })
-  const schema = connectorsQuery.data?.find((connector) => connector.name === "jira")?.signal_schema
   const [creating, setCreating] = useState(false)
+
+  // Build fieldsByEntityType from all registered connector schemas.
+  // issue fields come from Jira; merge_request fields come from GitLab.
+  const fieldsByEntityType: Record<string, import("@/lib/connectors").SignalField[]> =
+    connectorsQuery.data?.reduce(
+      (acc, connector) => {
+        for (const entityType of connector.signal_schema?.entity_types ?? []) {
+          if (!acc[entityType]) {
+            acc[entityType] = connector.signal_schema?.fields ?? []
+          }
+        }
+        return acc
+      },
+      {} as Record<string, import("@/lib/connectors").SignalField[]>,
+    ) ?? {}
 
   const createMutation = useMutation({
     mutationFn: createSignalDefinition,
@@ -38,7 +52,7 @@ export function SignalSettingsPage() {
     return <p className="text-sm text-slate-500">Loading signals...</p>
   }
 
-  if (!schema) {
+  if (Object.keys(fieldsByEntityType).length === 0) {
     return <p className="text-sm text-red-700">Signals could not be loaded.</p>
   }
 
@@ -81,7 +95,7 @@ export function SignalSettingsPage() {
               ? apiErrorMessage(createMutation.error, "Could not save the signal.")
               : null
           }
-          fields={schema.fields}
+          fieldsByEntityType={fieldsByEntityType}
           onCancel={() => setCreating(false)}
           onSave={(definition) => createMutation.mutate(definition)}
           pending={createMutation.isPending}
