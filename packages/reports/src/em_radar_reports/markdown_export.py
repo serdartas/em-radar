@@ -1,3 +1,4 @@
+import html
 import json
 import re
 from collections.abc import Iterable
@@ -192,13 +193,18 @@ def _render_notes(report: SectionedReport) -> list[str]:
     return lines
 
 
-def _inline(text: str) -> str:
+def _collapse_ws(text: str) -> str:
     return _WHITESPACE.sub(" ", text).strip()
 
 
+def _inline(text: str) -> str:
+    return html.escape(_collapse_ws(text), quote=False)
+
+
 def _link(text: str, url: str) -> str:
-    return f"[{_escape_link_text(text)}](<{_inline(url)}>)"
+    return f"[{_escape_link_text(text)}](<{_collapse_ws(url)}>)"
 
 
 def _escape_link_text(text: str) -> str:
+    # HTML-escape source text first, then escape the Markdown link-syntax metacharacters.
     return _inline(text).replace("\\", "\\\\").replace("[", "\\[").replace("]", "\\]")

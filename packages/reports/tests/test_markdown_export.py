@@ -214,6 +214,49 @@ def test_markdown_special_chars_do_not_break_structure() -> None:
         assert line.count("](") == 1
 
 
+def test_html_like_source_text_is_escaped() -> None:
+    finding = _finding(
+        signal_id="flow-mr",
+        signal_name="Merge request waiting too long",
+        severity=Severity.CRITICAL,
+        entity_type=EntityType.MERGEREQUEST,
+        title="!42 - render <Button> & <!-- fix",
+        entity_id="00000000-0000-0000-0000-00000000000c",
+        reason="Broke <Component> & swallowed <!-- rest",
+        recommendation="Wrap <Button> safely",
+        evidence={"tag": "<Button> & <!--"},
+        source_link="https://gitlab.example.com/mr/42",
+    )
+    report = build_sections(
+        [finding],
+        {"flow-mr": SignalMeta(category="flow", template_key="mergerequest-waiting-too-long")},
+        skip_notes=[SkipNote(signal_id="s<1>", reason="skipped <because> & more")],
+        partial_data_notes=[PartialDataNote(source="git<lab>", reason="rate & limited")],
+    )
+    metadata = ReportMetadata(
+        report_id=REPORT_ID,
+        generated_at=NOW,
+        window_type=WindowType.SPRINT,
+        team_name="A & B <Squad>",
+        sprint_label="Sprint <7>",
+    )
+    markdown = render_markdown(report, metadata)
+
+    assert "&lt;Button&gt;" in markdown
+    assert "&lt;!--" in markdown
+    assert "&amp;" in markdown
+    assert "&lt;Component&gt;" in markdown
+    # No active HTML/comment markup survives anywhere in the export.
+    assert "<Button>" not in markdown
+    assert "<!--" not in markdown
+    assert "<Component>" not in markdown
+    # Team name and sprint label are escaped too.
+    assert "A &amp; B &lt;Squad&gt;" in markdown
+    assert "Sprint &lt;7&gt;" in markdown
+    # The self-generated link structure and the URL are intact and not corrupted.
+    assert "(<https://gitlab.example.com/mr/42>)" in markdown
+
+
 def test_summary_and_notes_rendered() -> None:
     markdown = render_markdown(_demo_report(), _metadata())
     assert "- **Critical:** 1" in markdown
