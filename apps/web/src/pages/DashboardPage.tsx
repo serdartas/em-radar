@@ -177,26 +177,37 @@ function TeamCard({
                   <h3 className="text-xs font-medium uppercase tracking-wide text-slate-500">
                     Top risks
                   </h3>
-                  {detailQuery.isLoading ? (
+                  {detail ? (
+                    <>
+                      {detailQuery.isError && (
+                        <p className="text-xs text-amber-800" role="alert">
+                          Top risks could not be refreshed. Showing the last loaded results.
+                        </p>
+                      )}
+                      {topFindings.length === 0 ? (
+                        <p className="text-sm text-slate-500">No risks flagged.</p>
+                      ) : (
+                        <ul className="space-y-2">
+                          {topFindings.map((finding) => (
+                            <li
+                              className="flex items-start justify-between gap-3"
+                              key={finding.id}
+                            >
+                              <span className="leading-snug">{finding.title}</span>
+                              <Badge variant={finding.severity}>{finding.severity}</Badge>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </>
+                  ) : detailQuery.isLoading ? (
                     <p className="text-sm text-slate-500">Loading top risks...</p>
                   ) : detailQuery.isError ? (
                     <p className="text-sm text-red-700" role="alert">
                       Top risks could not be loaded.
                     </p>
-                  ) : topFindings.length === 0 ? (
-                    <p className="text-sm text-slate-500">No risks flagged.</p>
                   ) : (
-                    <ul className="space-y-2">
-                      {topFindings.map((finding) => (
-                        <li
-                          className="flex items-start justify-between gap-3"
-                          key={finding.id}
-                        >
-                          <span className="leading-snug">{finding.title}</span>
-                          <Badge variant={finding.severity}>{finding.severity}</Badge>
-                        </li>
-                      ))}
-                    </ul>
+                    <p className="text-sm text-slate-500">No risks flagged.</p>
                   )}
                 </div>
               </>
