@@ -36,7 +36,6 @@ from em_radar_core.models import (
     Review,
     ReviewDecision,
     Source,
-    WindowType,
 )
 
 _logger = logging.getLogger(__name__)
@@ -196,6 +195,12 @@ class GitLabConnector:
                     ("greater_than", "less_than", "between"),
                 ),
                 SignalField(
+                    "total_changes",
+                    "Total line changes",
+                    "number",
+                    ("greater_than", "less_than", "between"),
+                ),
+                SignalField(
                     "pipeline_status",
                     "Pipeline status",
                     "enum",
@@ -292,7 +297,7 @@ class GitLabConnector:
         async def _enrich(
             payload: Mapping[str, object],
             is_draft: bool,
-        ) -> tuple[Mapping[str, object], bool, int | None, int | None, int | None, int]:
+        ) -> tuple[Mapping[str, object], bool, int | None, int | None, int | None, int | None]:
             iid = _required_positive_int(payload, "iid")
             # Diff stats and approvals are independent — run them concurrently under the semaphore.
             # TaskGroup cancels the sibling coroutine on error; asyncio.gather would leave it
@@ -362,7 +367,14 @@ class GitLabConnector:
             ) as eg:
                 raise eg.exceptions[0]
             results = [t.result() for t in tasks]
-            for payload, is_draft, changed_files_count, additions, deletions, approval_count in results:
+            for (
+                payload,
+                is_draft,
+                changed_files_count,
+                additions,
+                deletions,
+                approval_count,
+            ) in results:
                 mr = _mergerequest_from_payload(
                     payload,
                     namespaced_project_id,
@@ -382,14 +394,15 @@ class GitLabConnector:
                 raise ConnectorDataError("GitLab MR pagination did not advance")
             page = next_page
 
-    async def _fetch_approval_count(self, project_id: str, iid: int) -> int:
+    async def _fetch_approval_count(self, project_id: str, iid: int) -> int | None:
         try:
             payload = await self._request_json(
                 f"api/v4/projects/{project_id}/merge_requests/{iid}/approvals"
             )
         except (ConnectorNotFoundError, ConnectorAuthError):
-            # Some GitLab editions or tokens do not have approvals access.
-            return 0
+            # Some GitLab editions or tokens do not expose the approvals API.
+            # Return None so the signal skips rather than falsely firing.
+            return None
         approved_by = payload.get("approved_by")
         if not isinstance(approved_by, list):
             return 0
@@ -437,7 +450,9 @@ class GitLabConnector:
         detail_diff_stats = _optional_mapping(detail.get("diff_stats_summary"))
         detail_changed_files = _parse_changes_count(detail.get("changes_count"), detail_diff_stats)
 
-        changed_files = list_changed_files if list_changed_files is not None else detail_changed_files
+        changed_files = (
+            list_changed_files if list_changed_files is not None else detail_changed_files
+        )
 
         additions = _optional_nonneg_int(detail, "additions")
         if additions is None and detail_diff_stats is not None:
@@ -638,7 +653,7 @@ def _mergerequest_from_payload(
     namespaced_project_id: str,
     instance_prefix: str,
     is_draft: bool,
-    approval_count: int,
+    approval_count: int | None,
     changed_files_count: int | None,
     additions: int | None,
     deletions: int | None,
@@ -721,20 +736,32 @@ def _mr_state(gl_state: str, is_draft: bool) -> MergeRequestState:
     raise ConnectorDataError(f"Unsupported GitLab MR state: {gl_state!r}")
 
 
+def _within_window_bounds(moment: datetime | None, window: EvaluationWindow) -> bool:
+    if moment is None:
+        return False
+    if window.start is not None and moment < window.start:
+        return False
+    if window.end is not None and moment > window.end:
+        return False
+    return True
+
+
 def _mr_in_window(mr: MergeRequest, window: EvaluationWindow) -> bool:
     # Open/draft MRs are always included: a stale open MR last touched before the window
     # start is exactly the case the "waiting too long" signal is designed to catch.
     if mr.state in (MergeRequestState.OPEN, MergeRequestState.DRAFT):
         return True
-    # Without a lower bound there is nothing to filter against.
-    if window.start is None:
+    # Without bounds there is nothing to filter against.
+    if window.start is None and window.end is None:
         return True
     # Terminal MRs are kept only when their completion event falls within the window, not
     # when updated_at does — an MR can be updated (e.g. comment) long after it was merged.
+    # The upper bound matters too: a report window ends at the run's started_at, so an MR
+    # completed after that boundary must not leak into the snapshot.
     if mr.state is MergeRequestState.MERGED:
-        return mr.merged_at is not None and mr.merged_at >= window.start
+        return _within_window_bounds(mr.merged_at, window)
     if mr.state is MergeRequestState.CLOSED:
-        return mr.closed_at is not None and mr.closed_at >= window.start
+        return _within_window_bounds(mr.closed_at, window)
     return True
 
 
@@ -745,19 +772,19 @@ def _payload_in_window(payload: Mapping[str, object], window: EvaluationWindow) 
     states (open, locked, unknown) always pass through; unknown states are kept so that
     normalization can raise ConnectorDataError with a meaningful message.
     """
-    if window.start is None:
+    if window.start is None and window.end is None:
         return True
     gl_state = _optional_str(payload, "state")
     if gl_state == "merged":
         merged_at = _parse_datetime(_optional_str(payload, "merged_at"))
         if merged_at is None:
             return True  # missing timestamp; pass through so normalization raises
-        return merged_at >= window.start
+        return _within_window_bounds(merged_at, window)
     if gl_state == "closed":
         closed_at = _parse_datetime(_optional_str(payload, "closed_at"))
         if closed_at is None:
             return True  # missing timestamp; pass through so normalization raises
-        return closed_at >= window.start
+        return _within_window_bounds(closed_at, window)
     return True
 
 

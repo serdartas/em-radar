@@ -9,6 +9,7 @@ from em_radar_config import (
     PackValidationError,
     load_signal_pack,
 )
+from em_radar_connector_jira.connector import JiraConnector
 
 DEFAULT_PACK_PATH = Path(__file__).parents[1] / "defaults" / "default-pack.yaml"
 
@@ -21,10 +22,19 @@ metadata:
   description: Example pack.
 spec:
   signals:
-    - id: blocked-without-update
+    - name: stale-work
+      entity_type: issue
+      expression:
+        type: group
+        operator: all
+        conditions:
+          - field: status_category
+            operator: is
+            value: in_progress
+      report_settings:
+        severity: warning
+        category: flow
       enabled: true
-      params:
-        days_threshold: 3
 """
 
 
@@ -35,9 +45,6 @@ spec:
         ("kind: SignalPack", "kind: OtherPack"),
         ("name: example-pack", "name: Not_Kebab"),
         ("version: 1.2.3", "version: latest"),
-        ("id: blocked-without-update", "id: unknown-signal"),
-        ("days_threshold: 3", "unknown: 3"),
-        ("days_threshold: 3", 'days_threshold: "3"'),
         ("enabled: true", "enabled: 1"),
         ("enabled: true", 'enabled: "false"'),
     ],
@@ -180,7 +187,7 @@ def test_standard_safe_anchor_is_accepted() -> None:
 def test_valid_default_pack_passes() -> None:
     result = load_signal_pack(DEFAULT_PACK_PATH.read_text())
 
-    assert result.pack.metadata.name == "default"
+    assert result.pack.metadata.name == "default-signals"
     assert result.warnings == ()
 
 
@@ -212,11 +219,68 @@ spec:
     result = load_signal_pack(yaml_text, context)
 
     assert [warning.code for warning in result.warnings] == [
-        "severity-demotion",
         "unknown-scope-target",
         "unknown-scope-target",
         "advisory-field-mappings",
     ]
+
+
+EXPRESSION_PACK_TEMPLATE = """\
+apiVersion: emradar.dev/v1
+kind: SignalPack
+metadata:
+  name: expr-pack
+  version: 1.0.0
+  description: Expression validation pack.
+spec:
+  signals:
+    - name: Test signal
+      entity_type: {entity_type}
+      expression:
+        type: group
+        operator: all
+        conditions:
+          - field: {field}
+            operator: {operator}
+            value: {value}
+      report_settings:
+        severity: warning
+        category: flow
+"""
+
+
+def test_signal_missing_expression_raises_validation_error() -> None:
+    yaml_text = """\
+apiVersion: emradar.dev/v1
+kind: SignalPack
+metadata:
+  name: no-expr-pack
+  version: 1.0.0
+  description: Pack with signal lacking expression.
+spec:
+  signals:
+    - name: No expression signal
+      entity_type: issue
+      report_settings:
+        severity: warning
+        category: flow
+"""
+
+    with pytest.raises(PackValidationError, match="missing an expression"):
+        load_signal_pack(yaml_text)
+
+
+def test_sprint_field_rejected_for_issue_entity_type() -> None:
+    yaml_text = EXPRESSION_PACK_TEMPLATE.format(
+        entity_type="issue",
+        field="sprint_scope_added_pct",
+        operator="greater_than",
+        value=10,
+    )
+    ctx = PackValidationContext(signal_schemas=(JiraConnector.describe_signal_schema(),))
+
+    with pytest.raises(PackValidationError, match="sprint_scope_added_pct"):
+        load_signal_pack(yaml_text, ctx)
 
 
 def test_field_mappings_are_advisory_without_current_mappings() -> None:

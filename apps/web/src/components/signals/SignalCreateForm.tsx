@@ -13,8 +13,11 @@ import { SEVERITIES, type Severity } from "@/lib/severity"
 import type { SignalDefinitionCreate } from "@/lib/signalDefinitions"
 
 const MAX_RULES = 5
-const SIGNAL_TYPES = [{ value: "issue", label: "Work tracking / tickets" }]
-const CATEGORIES = ["flow", "hygiene", "sprint"]
+const SIGNAL_TYPES = [
+  { value: "issue", label: "Work tracking / tickets (Jira)" },
+  { value: "merge_request", label: "Merge requests (GitLab)" },
+]
+const CATEGORIES = ["flow", "hygiene", "quality", "sprint"]
 
 type Connector = "" | "AND" | "OR"
 
@@ -25,7 +28,7 @@ interface RuleRow {
 }
 
 interface SignalCreateFormProps {
-  fields: SignalField[]
+  fieldsByEntityType: Record<string, SignalField[]>
   onCancel: () => void
   onSave: (definition: SignalDefinitionCreate) => void
   pending: boolean
@@ -33,20 +36,32 @@ interface SignalCreateFormProps {
 }
 
 export function SignalCreateForm({
-  fields,
+  fieldsByEntityType,
   onCancel,
   onSave,
   pending,
   errorMessage,
 }: SignalCreateFormProps) {
-  const firstField = fields[0]
   const [name, setName] = useState("")
-  const [entityType, setEntityType] = useState(SIGNAL_TYPES[0].value)
+  const [entityType, setEntityType] = useState(
+    () => SIGNAL_TYPES.find((t) => (fieldsByEntityType[t.value] ?? []).length > 0)?.value ?? SIGNAL_TYPES[0].value,
+  )
   const [groupOperator, setGroupOperator] = useState<Connector>("")
-  const [rows, setRows] = useState<RuleRow[]>([makeRow(firstField)])
   const [severity, setSeverity] = useState<Severity>("warning")
   const [category, setCategory] = useState(CATEGORIES[0])
   const [message, setMessage] = useState("")
+
+  const fields = fieldsByEntityType[entityType] ?? []
+  const firstField = fields[0]
+
+  const [rows, setRows] = useState<RuleRow[]>([makeRow(firstField)])
+
+  function handleEntityTypeChange(newType: string) {
+    setEntityType(newType)
+    setGroupOperator("")
+    const newFields = fieldsByEntityType[newType] ?? []
+    setRows([makeRow(newFields[0])])
+  }
 
   function updateRow(index: number, patch: Partial<RuleRow>) {
     setRows((prev) => prev.map((row, current) => (current === index ? { ...row, ...patch } : row)))
@@ -115,14 +130,16 @@ export function SignalCreateForm({
             <Label htmlFor="signal-type">Type</Label>
             <Select
               id="signal-type"
-              onChange={(event) => setEntityType(event.target.value)}
+              onChange={(event) => handleEntityTypeChange(event.target.value)}
               value={entityType}
             >
-              {SIGNAL_TYPES.map((type) => (
-                <option key={type.value} value={type.value}>
-                  {type.label}
-                </option>
-              ))}
+              {SIGNAL_TYPES.filter((type) => (fieldsByEntityType[type.value] ?? []).length > 0).map(
+                (type) => (
+                  <option key={type.value} value={type.value}>
+                    {type.label}
+                  </option>
+                ),
+              )}
             </Select>
           </div>
         </div>

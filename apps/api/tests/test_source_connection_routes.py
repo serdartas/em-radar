@@ -32,8 +32,6 @@ from em_radar_core.models import (
     WorkItem,
     WorkItemType,
 )
-from em_radar_api.repositories.signal_configs import upsert_signal_config
-from em_radar_api.signal_configs import SignalConfigUpsert
 from em_radar_api.tables import EvaluationWindowTable, UserTable
 
 _REPORT_STARTED_AT = datetime(2026, 6, 17, 12, tzinfo=UTC)
@@ -75,7 +73,11 @@ class JiraTestConnector:
     @classmethod
     def describe_capabilities(cls) -> Capabilities:
         del cls
-        return Capabilities()
+        return Capabilities(
+            provides_workitems=True,
+            provides_sprints=True,
+            provides_transitions=True,
+        )
 
     async def close(self) -> None:
         pass
@@ -481,7 +483,6 @@ def test_jira_active_sprint_report_run_persists_user_references(
 
 def test_jira_report_run_evaluates_saved_signal_definitions(
     api_client: TestClient,
-    session_factory: sessionmaker[Session],
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(
@@ -524,16 +525,6 @@ def test_jira_report_run_evaluates_saved_signal_definitions(
         sprint_length_days=14,
         group_ids=[group["id"]],
     )
-    with session_factory() as session:
-        upsert_signal_config(
-            session,
-            SignalConfigUpsert(
-                signal_id="stale-in-progress-work-item",
-                enabled=True,
-                params={"days_threshold": 3},
-            ),
-        )
-
     response = api_client.post(
         "/api/reports/run",
         json={"connector": "jira", "team_profile_id": team_id},

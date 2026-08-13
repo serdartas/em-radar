@@ -20,7 +20,6 @@ EXPECTED_TABLES = {
     "report",
     "repository",
     "review",
-    "signal_config",
     "signal_config_group",
     "signal_definition",
     "signal_finding",

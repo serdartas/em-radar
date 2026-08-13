@@ -231,7 +231,7 @@ def test_sprint_relative_fields_match_sprint_scope() -> None:
             sprints=(current_sprint,),
             workitems=(item,),
         ),
-        context(),
+        context(sprint_id=current_sprint.id),
         JiraConnector.describe_signal_schema(),
         [_scope(("sprint", "statuses", "labels"))],
     )

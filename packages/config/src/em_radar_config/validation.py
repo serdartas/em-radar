@@ -9,10 +9,8 @@ from yaml.constructor import ConstructorError
 from yaml.events import AliasEvent, CollectionStartEvent, ScalarEvent
 from yaml.nodes import MappingNode
 
-from em_radar_config.catalog import SIGNAL_CATALOG
-from em_radar_config.models import FieldMappings, SignalPack, SignalScope
+from em_radar_config.models import FieldMappings, SignalEntry, SignalPack, SignalScope
 from em_radar_core.connectors import SignalCapabilitySchema, SignalField
-from em_radar_core.models import Severity
 
 API_VERSION = "emradar.dev/v1"
 PACK_KIND = "SignalPack"
@@ -96,6 +94,24 @@ def load_signal_pack(
 
     _validate_pack(pack, validation_context)
     return PackLoadResult(pack=pack, warnings=tuple(_collect_warnings(pack, validation_context)))
+
+
+def apply_pack_defaults(pack: SignalPack) -> list[SignalEntry]:
+    """Return signal entries with pack-level severity_override applied to those lacking their own.
+
+    Per-signal severity is `SignalEntry.severity` — the top-level override field, consistent with
+    how `_config_from_signal` resolves precedence. Signals that already set this field are left
+    unchanged. When no severity_override is configured on the pack, original entries are returned.
+    """
+    severity_override = pack.spec.defaults.severity_override if pack.spec.defaults else None
+    if severity_override is None:
+        return list(pack.spec.signals)
+    return [
+        entry.model_copy(update={"severity": severity_override})
+        if entry.severity is None
+        else entry
+        for entry in pack.spec.signals
+    ]
 
 
 def _safe_load(yaml_text: str) -> object:
@@ -189,22 +205,17 @@ def _validate_pack(pack: SignalPack, context: PackValidationContext) -> None:
     if pack.spec.export_type not in {"private_backup", "public_template"}:
         raise PackValidationError("spec.export_type must be private_backup or public_template")
     for index, signal in enumerate(pack.spec.signals):
-        if signal.id is not None and signal.id in SIGNAL_CATALOG:
-            catalog_entry = SIGNAL_CATALOG[signal.id]
-            try:
-                catalog_entry.params_schema.model_validate(signal.params or {})
-            except ValidationError as exc:
-                raise PackValidationError(f"Invalid params for signal {signal.id}: {exc}") from exc
-        elif signal.expression is None:
-            raise PackValidationError(f"spec.signals.{index}.expression is required")
-        if signal.expression is not None:
-            _validate_signal_expression(
-                signal.expression,
-                signal.entity_type or "issue",
-                context.signal_schemas,
-                path=f"spec.signals.{index}.expression",
-                allow_missing_values=not signal.enabled,
+        if signal.expression is None:
+            raise PackValidationError(
+                f"spec.signals.{index} ({signal.name!r}) is missing an expression"
             )
+        _validate_signal_expression(
+            signal.expression,
+            signal.entity_type or "issue",
+            context.signal_schemas,
+            path=f"spec.signals.{index}.expression",
+            allow_missing_values=not signal.enabled,
+        )
 
     signal_names = {signal.name for signal in pack.spec.signals if signal.name is not None}
     for group_index, group in enumerate(pack.spec.groups):
@@ -229,9 +240,16 @@ def _validate_signal_expression(
     schema = next((schema for schema in schemas if entity_type in schema.entity_types), None)
     if schema is None:
         raise PackValidationError(f"{path} uses unsupported entity_type {entity_type!r}")
+    primary = schema.entity_types[0] if schema.entity_types else entity_type
+    fields = {
+        field.key: field
+        for field in schema.fields
+        if field.entity_type == entity_type
+        or (field.entity_type is None and entity_type == primary)
+    }
     _validate_expression_node(
         expression,
-        {field.key: field for field in schema.fields},
+        fields,
         path=path,
         allow_missing_values=allow_missing_values,
         depth=depth,
@@ -354,35 +372,10 @@ def _collect_warnings(
     pack: SignalPack, context: PackValidationContext
 ) -> Sequence[PackValidationWarning]:
     warnings: list[PackValidationWarning] = []
-    severity_rank = {Severity.INFO: 0, Severity.WARNING: 1, Severity.CRITICAL: 2}
     defaults = pack.spec.defaults
     if defaults is not None:
         warnings.extend(_scope_warnings(defaults.scope, context, "spec.defaults.scope"))
     for index, signal in enumerate(pack.spec.signals):
-        if signal.id is None or signal.id not in SIGNAL_CATALOG:
-            continue
-        catalog_entry = SIGNAL_CATALOG[signal.id]
-        effective_severity = signal.severity or (defaults.severity_override if defaults else None)
-        if (
-            effective_severity is not None
-            and severity_rank[catalog_entry.default_severity] - severity_rank[effective_severity]
-            >= 2
-        ):
-            severity_path = (
-                f"spec.signals.{index}.severity"
-                if signal.severity is not None
-                else "spec.defaults.severity_override"
-            )
-            warnings.append(
-                PackValidationWarning(
-                    code="severity-demotion",
-                    message=(
-                        f"{signal.id} is demoted from {catalog_entry.default_severity.value} "
-                        f"to {effective_severity.value}"
-                    ),
-                    path=severity_path,
-                )
-            )
         warnings.extend(_scope_warnings(signal.scope, context, f"spec.signals.{index}.scope"))
 
     if pack.spec.field_mappings is not None and pack.spec.field_mappings != context.field_mappings:

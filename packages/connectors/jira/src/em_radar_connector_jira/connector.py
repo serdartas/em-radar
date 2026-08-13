@@ -154,7 +154,7 @@ class JiraConnector:
         sprint_only = FieldAvailability(requires_scope_capability=("sprint",))
         return SignalCapabilitySchema(
             connector_type="jira",
-            entity_types=("issue",),
+            entity_types=("issue", "sprint"),
             scope_types=(
                 SignalScopeType("project", "Project", ("statuses", "labels")),
                 SignalScopeType("board", "Board", ("statuses", "labels", "sprint", "kanban")),
@@ -181,6 +181,20 @@ class JiraConnector:
                     "string_list",
                     ("contains", "does_not_contain", "contains_any", "does_not_contain_any"),
                     value_provider=labels_provider,
+                ),
+                SignalField(
+                    "exclude_labels",
+                    "Exclude Labels",
+                    "string_list",
+                    ("does_not_contain", "does_not_contain_any"),
+                    value_provider=labels_provider,
+                ),
+                SignalField(
+                    "workitem_types",
+                    "Workitem Types",
+                    "enum",
+                    ("is", "is_not"),
+                    values=("epic", "story", "task", "bug", "subtask", "spike", "other"),
                 ),
                 SignalField("issue_type", "Issue Type", "enum", ("is", "is_not", "is_any_of")),
                 SignalField("assignee", "Assignee", "nullable", ("is_empty", "is_not_empty")),
@@ -245,6 +259,14 @@ class JiraConnector:
                     "number",
                     ("greater_than", "less_than", "between"),
                     availability=sprint_only,
+                ),
+                SignalField(
+                    "sprint_scope_added_pct",
+                    "Sprint scope added %",
+                    "number",
+                    ("greater_than", "less_than", "between"),
+                    availability=sprint_only,
+                    entity_type="sprint",
                 ),
             ),
         )

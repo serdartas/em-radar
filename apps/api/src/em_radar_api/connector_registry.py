@@ -19,11 +19,16 @@ from em_radar_api.db import schema_version
 
 ENTRY_POINT_GROUP = "em_radar.connectors"
 CREDENTIAL_FIELD_NAMES = frozenset({"token", "password", "api_key", "secret", "authorization"})
+# Connectors registered only to run the contract-test suite; never advertised as a selectable
+# source. They remain resolvable by name so the test plugin can exercise them.
+TEST_ONLY_CONNECTORS = frozenset({"demo"})
 
 
 def list_connectors() -> list[dict[str, object]]:
     connectors: list[dict[str, object]] = []
     for connector_type in _compatible_connector_types():
+        if connector_type.name in TEST_ONLY_CONNECTORS:
+            continue
         descriptor = {
             "name": connector_type.name,
             "display_name": connector_type.display_name,

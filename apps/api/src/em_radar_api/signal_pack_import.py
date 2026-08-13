@@ -22,11 +22,10 @@ from em_radar_api.signal_definitions import (
     SignalDefinitionTable,
     SignalDefinitionUpdate,
 )
-from em_radar_api.signal_configs import SignalConfigRead, SignalConfigTable, SignalConfigUpsert
 from em_radar_api.tables import ProjectTable, RepositoryTable
+from em_radar_connector_gitlab import GitLabConnector
 from em_radar_connector_jira import JiraConnector
 from em_radar_config import (
-    SIGNAL_CATALOG,
     PackGroupEntry,
     PackLoadResult,
     PackValidationContext,
@@ -36,7 +35,6 @@ from em_radar_config import (
     SignalPack,
     load_signal_pack,
 )
-from em_radar_core.models import Severity
 
 ConflictMode = Literal["skip", "overwrite", "keep_both", "cancel"]
 
@@ -47,13 +45,13 @@ class BoolChange(BaseModel):
 
 
 class SeverityChange(BaseModel):
-    before: Severity
-    after: Severity
+    before: str
+    after: str
 
 
 class ParamsChange(BaseModel):
-    before: dict[str, JsonValue]
-    after: dict[str, JsonValue]
+    before: JsonValue
+    after: JsonValue
 
 
 class SignalImportDiff(BaseModel):
@@ -71,8 +69,8 @@ class ImportWarning(BaseModel):
 
 class SignalPackImportPreview(BaseModel):
     pack_name: str
-    warnings: list[ImportWarning]
-    changes: list[SignalImportDiff]
+    warnings: list[ImportWarning] = []
+    changes: list[SignalImportDiff] = []
     unresolved_mappings: list[str] = []
     imported_signal_names: list[str] = []
     signal_name_clashes: list[str] = []
@@ -87,14 +85,9 @@ def preview_signal_pack_import(
     *,
     replace_all: bool = False,
 ) -> SignalPackImportPreview:
+    del replace_all
     result = load_signal_pack(raw_yaml, _validation_context(session))
-    if _is_definition_pack(result.pack):
-        return _preview_definition_pack(session, result)
-    configs = {
-        config.signal_id: config
-        for config in session.exec(select(SignalConfigTable).order_by(SignalConfigTable.signal_id))
-    }
-    return _preview(result, configs, replace_all=replace_all)
+    return _preview_definition_pack(session, result)
 
 
 def apply_signal_pack_import(
@@ -104,155 +97,31 @@ def apply_signal_pack_import(
     replace_all: bool = False,
     conflict: ConflictMode = "keep_both",
 ) -> SignalPackImportPreview:
+    del replace_all
     result = load_signal_pack(raw_yaml, _validation_context(session))
-    if _is_definition_pack(result.pack):
-        preview = _preview_definition_pack(session, result)
-        if conflict == "cancel":
-            return preview
-        duplicate_names = (
-            preview.intra_pack_duplicate_signal_names + preview.intra_pack_duplicate_group_names
-        )
-        if duplicate_names:
-            raise PackValidationError(
-                "Pack contains duplicate names within a single pack: "
-                + ", ".join(f"{n!r}" for n in duplicate_names)
-            )
-        try:
-            _import_definition_pack(session, result.pack, conflict)
-            session.add(SignalPackHistory(pack_name=result.pack.metadata.name, raw_yaml=raw_yaml))
-            session.commit()
-        except ValueError as error:
-            session.rollback()
-            raise PackValidationError(str(error)) from error
-        return preview
-    rows = {
-        row.signal_id: row
-        for row in session.exec(select(SignalConfigTable).order_by(SignalConfigTable.signal_id))
-    }
-    preview = _preview(result, rows, replace_all=replace_all)
+    preview = _preview_definition_pack(session, result)
     if conflict == "cancel":
         return preview
-
-    if replace_all:
-        for signal_id in SIGNAL_CATALOG:
-            _write_config(rows, _default_config(signal_id))
-
-    for signal in result.pack.spec.signals:
-        _write_config(rows, _config_from_signal(result.pack, signal))
-
-    session.add_all(rows.values())
-    session.add(SignalPackHistory(pack_name=result.pack.metadata.name, raw_yaml=raw_yaml))
-    session.commit()
+    duplicate_names = (
+        preview.intra_pack_duplicate_signal_names + preview.intra_pack_duplicate_group_names
+    )
+    if duplicate_names:
+        raise PackValidationError(
+            "Pack contains duplicate names within a single pack: "
+            + ", ".join(f"{n!r}" for n in duplicate_names)
+        )
+    try:
+        _import_definition_pack(session, result.pack, conflict)
+        session.add(SignalPackHistory(pack_name=result.pack.metadata.name, raw_yaml=raw_yaml))
+        session.commit()
+    except ValueError as error:
+        session.rollback()
+        raise PackValidationError(str(error)) from error
     return preview
-
-
-def _preview(
-    result: PackLoadResult,
-    configs: dict[str, SignalConfigRead | SignalConfigTable],
-    *,
-    replace_all: bool,
-) -> SignalPackImportPreview:
-    desired = (
-        {signal_id: _default_config(signal_id) for signal_id in SIGNAL_CATALOG}
-        if replace_all
-        else {}
-    )
-    desired.update(
-        {signal.id: _config_from_signal(result.pack, signal) for signal in result.pack.spec.signals}
-    )
-    return SignalPackImportPreview(
-        pack_name=result.pack.metadata.name,
-        warnings=[_import_warning(warning) for warning in result.warnings],
-        changes=[
-            change
-            for signal_id, target in desired.items()
-            if (change := _signal_diff(signal_id, target, configs.get(signal_id))) is not None
-        ],
-    )
-
-
-def _signal_diff(
-    signal_id: str,
-    after: SignalConfigUpsert,
-    current: SignalConfigRead | SignalConfigTable | None,
-) -> SignalImportDiff | None:
-    before = _effective_config(signal_id, current)
-    enabled = (
-        BoolChange(before=before.enabled, after=after.enabled)
-        if before.enabled != after.enabled
-        else None
-    )
-    before_severity = before.severity_override or SIGNAL_CATALOG[signal_id].default_severity
-    after_severity = after.severity_override or SIGNAL_CATALOG[signal_id].default_severity
-    severity = (
-        SeverityChange(before=before_severity, after=after_severity)
-        if before_severity != after_severity
-        else None
-    )
-    params = (
-        ParamsChange(before=before.params, after=after.params)
-        if before.params != after.params
-        else None
-    )
-    if enabled is None and severity is None and params is None:
-        return None
-    return SignalImportDiff(
-        signal_id=signal_id,
-        enabled=enabled,
-        severity=severity,
-        params=params,
-    )
-
-
-def _config_from_signal(pack: SignalPack, signal: SignalEntry) -> SignalConfigUpsert:
-    catalog_entry = SIGNAL_CATALOG[signal.id]
-    defaults = pack.spec.defaults
-    scope = signal.scope or (defaults.scope if defaults is not None else None)
-    return SignalConfigUpsert(
-        signal_id=signal.id,
-        enabled=signal.enabled,
-        severity_override=signal.severity
-        or (defaults.severity_override if defaults is not None else None),
-        params=catalog_entry.params_schema.model_validate(signal.params or {}).model_dump(
-            mode="json"
-        ),
-        scope=scope.model_dump(mode="json", exclude_none=True) if scope is not None else {},
-    )
-
-
-def _effective_config(
-    signal_id: str,
-    current: SignalConfigRead | SignalConfigTable | None,
-) -> SignalConfigUpsert:
-    if current is not None:
-        return SignalConfigUpsert.model_validate(current)
-    return _default_config(signal_id)
-
-
-def _default_config(signal_id: str) -> SignalConfigUpsert:
-    return SignalConfigUpsert(
-        signal_id=signal_id,
-        params=SIGNAL_CATALOG[signal_id].params_schema().model_dump(mode="json"),
-    )
-
-
-def _write_config(rows: dict[str, SignalConfigTable], config: SignalConfigUpsert) -> None:
-    row = rows.get(config.signal_id)
-    values = config.model_dump()
-    if row is None:
-        rows[config.signal_id] = SignalConfigTable.model_validate(values)
-    else:
-        row.sqlmodel_update(values)
 
 
 def _import_warning(warning: PackValidationWarning) -> ImportWarning:
     return ImportWarning(code=warning.code, message=warning.message, path=warning.path)
-
-
-def _is_definition_pack(pack: SignalPack) -> bool:
-    return pack.spec.export_type in {"private_backup", "public_template"} and (
-        bool(pack.spec.groups) or any(signal.expression is not None for signal in pack.spec.signals)
-    )
 
 
 def _preview_definition_pack(session: Session, result: PackLoadResult) -> SignalPackImportPreview:
@@ -396,5 +265,8 @@ def _validation_context(session: Session) -> PackValidationContext:
     return PackValidationContext(
         project_keys=frozenset(session.exec(select(ProjectTable.key))),
         repository_paths=frozenset(session.exec(select(RepositoryTable.full_path))),
-        signal_schemas=(JiraConnector.describe_signal_schema(),),
+        signal_schemas=(
+            JiraConnector.describe_signal_schema(),
+            GitLabConnector.describe_signal_schema(),
+        ),
     )

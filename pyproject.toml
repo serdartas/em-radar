@@ -9,8 +9,12 @@ dependencies = [
 ]
 
 [project.entry-points."em_radar.connectors"]
+demo = "em_radar_connector_demo:DemoConnector"
 gitlab = "em_radar_connector_gitlab:GitLabConnector"
 jira = "em_radar_connector_jira:JiraConnector"
+
+[project.entry-points."pytest11"]
+em-radar-connector-contracts = "em_radar_connector_contracts.plugin"
 
 [build-system]
 requires = ["setuptools"]
@@ -28,8 +32,10 @@ dev = [
 [tool.setuptools.packages.find]
 where = [
     "packages/core/src",
+    "packages/connectors/demo/src",
     "packages/connectors/gitlab/src",
     "packages/connectors/jira/src",
+    "packages/connectors/src",
     "packages/config/src",
     "packages/normalizer/src",
 ]
@@ -39,6 +45,7 @@ where = [
 
 [tool.pytest.ini_options]
 pythonpath = ["apps/api/src"]
+markers = ["perf: performance benchmarks; run with -m perf"]
 
 [tool.ruff]
 line-length = 100

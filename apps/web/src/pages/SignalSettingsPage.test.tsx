@@ -48,6 +48,57 @@ const connectors = [
       ],
     },
   },
+  {
+    name: "gitlab",
+    display_name: "GitLab",
+    config_schema: { type: "object", properties: {} },
+    capabilities: {
+      provides_workitems: false,
+      provides_sprints: false,
+      provides_mergerequests: true,
+      provides_repositories: true,
+      provides_reviews: true,
+      provides_comments: false,
+      provides_transitions: false,
+      supports_incremental_fetch: true,
+      supports_pagination_cursor: false,
+      max_window_days: null,
+    },
+    signal_schema: {
+      connector_type: "gitlab",
+      entity_types: ["merge_request"],
+      scope_types: [],
+      fields: [
+        {
+          key: "state",
+          label: "State",
+          type: "enum",
+          operators: ["is", "is_not"],
+          values: ["open", "draft", "merged", "closed"],
+          value_provider: null,
+          availability: null,
+        },
+        {
+          key: "approval_count",
+          label: "Approval count",
+          type: "number",
+          operators: ["is", "greater_than", "less_than"],
+          values: [],
+          value_provider: null,
+          availability: { requires_scope_capability: ["reviews"] },
+        },
+        {
+          key: "pipeline_status",
+          label: "Pipeline status",
+          type: "enum",
+          operators: ["is", "is_not"],
+          values: ["success", "failed", "running"],
+          value_provider: null,
+          availability: { requires_scope_capability: ["pipelines"] },
+        },
+      ],
+    },
+  },
 ]
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -182,5 +233,125 @@ describe("SignalSettingsPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save signal" }))
 
     expect(await screen.findByRole("alert")).toHaveTextContent("signal name must be unique")
+  })
+
+  // -------------------------------------------------------------------------
+  // MR entity type tests
+  // -------------------------------------------------------------------------
+
+  it("shows merge_request option in entity type selector", async () => {
+    mockApi()
+    renderPage()
+    await openForm()
+
+    const typeSelect = screen.getByLabelText("Type") as HTMLSelectElement
+    const options = Array.from(typeSelect.options).map((o) => o.value)
+    expect(options).toContain("issue")
+    expect(options).toContain("merge_request")
+  })
+
+  it("switching to merge_request shows GitLab MR fields and hides issue-only fields", async () => {
+    mockApi()
+    renderPage()
+    await openForm()
+
+    expect(screen.getAllByRole("option", { name: "Status Category" })).not.toHaveLength(0)
+
+    fireEvent.change(screen.getByLabelText("Type"), { target: { value: "merge_request" } })
+
+    await waitFor(() => {
+      expect(screen.queryByRole("option", { name: "Status Category" })).not.toBeInTheDocument()
+      expect(screen.getAllByRole("option", { name: "State" })).not.toHaveLength(0)
+      expect(screen.getAllByRole("option", { name: "Approval count" })).not.toHaveLength(0)
+    })
+  })
+
+  it("switching back to issue hides MR fields and shows issue fields", async () => {
+    mockApi()
+    renderPage()
+    await openForm()
+
+    fireEvent.change(screen.getByLabelText("Type"), { target: { value: "merge_request" } })
+    await waitFor(() => {
+      expect(screen.getAllByRole("option", { name: "State" })).not.toHaveLength(0)
+    })
+
+    fireEvent.change(screen.getByLabelText("Type"), { target: { value: "issue" } })
+    await waitFor(() => {
+      expect(screen.queryByRole("option", { name: "State" })).not.toBeInTheDocument()
+      expect(screen.getAllByRole("option", { name: "Status Category" })).not.toHaveLength(0)
+    })
+  })
+
+  it("with only GitLab connector shows only merge_request type and saves correctly", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = typeof input === "string" ? input : input.toString()
+      const method = init?.method ?? "GET"
+      if (url.endsWith("/api/signal-definitions") && method === "GET") {
+        return Promise.resolve(jsonResponse([]))
+      }
+      if (url.endsWith("/api/connectors")) {
+        return Promise.resolve(jsonResponse([connectors[1]])) // GitLab only
+      }
+      if (url.endsWith("/api/signal-definitions") && method === "POST") {
+        return Promise.resolve(jsonResponse({ id: "signal-1", ...JSON.parse(String(init?.body)) }))
+      }
+      throw new Error(`unexpected fetch: ${method} ${url}`)
+    })
+    renderPage()
+    await openForm()
+
+    const typeSelect = screen.getByLabelText("Type") as HTMLSelectElement
+    const options = Array.from(typeSelect.options).map((o) => o.value)
+    // Only merge_request is available — issue has no fields
+    expect(options).toContain("merge_request")
+    expect(options).not.toContain("issue")
+
+    // Default entity type snapped to merge_request → MR fields are visible
+    expect(screen.getAllByRole("option", { name: "State" })).not.toHaveLength(0)
+    expect(screen.queryByRole("option", { name: "Status Category" })).not.toBeInTheDocument()
+
+    // Saving emits merge_request
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "MR signal" } })
+    const fetchMock = vi.mocked(globalThis.fetch)
+    fireEvent.click(screen.getByRole("button", { name: "Save signal" }))
+
+    await waitFor(() => {
+      const call = fetchMock.mock.calls.find(
+        ([url, init]) => String(url).endsWith("/api/signal-definitions") && init?.method === "POST",
+      )
+      expect(call).toBeTruthy()
+      const body = JSON.parse(String((call?.[1] as RequestInit).body))
+      expect(body.entity_type).toBe("merge_request")
+    })
+  })
+
+  it("saves a merge_request signal with entity_type merge_request", async () => {
+    const fetchMock = mockApi()
+    renderPage()
+    await openForm()
+
+    fireEvent.change(screen.getByLabelText("Type"), { target: { value: "merge_request" } })
+    await waitFor(() => {
+      expect(screen.getAllByRole("option", { name: "State" })).not.toHaveLength(0)
+    })
+
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Merged without approval" } })
+    fireEvent.change(screen.getByLabelText("Field"), { target: { value: "state" } })
+    // Add second rule
+    fireEvent.change(screen.getByLabelText("Add rule"), { target: { value: "AND" } })
+
+    fireEvent.click(screen.getByRole("button", { name: "Save signal" }))
+
+    await waitFor(() => {
+      const call = fetchMock.mock.calls.find(
+        ([url, init]) => String(url).endsWith("/api/signal-definitions") && init?.method === "POST",
+      )
+      expect(call).toBeTruthy()
+      const body = JSON.parse(String((call?.[1] as RequestInit).body))
+      expect(body.entity_type).toBe("merge_request")
+      expect(body.name).toBe("Merged without approval")
+      expect(body.expression.conditions).toHaveLength(2)
+    })
   })
 })

@@ -12,7 +12,7 @@ def test_signal_schema_contains_expected_jira_issue_fields_and_operators() -> No
     schema = asdict(JiraConnector.describe_signal_schema())
 
     assert schema["connector_type"] == "jira"
-    assert schema["entity_types"] == ("issue",)
+    assert set(schema["entity_types"]) == {"issue", "sprint"}
     assert {"project", "board", "saved_filter"} == {scope["key"] for scope in schema["scope_types"]}
     assert {"is", "is_not", "is_any_of", "is_none_of"}.issubset(set(_field("status")["operators"]))
     assert {"contains", "does_not_contain_any"}.issubset(set(_field("labels")["operators"]))

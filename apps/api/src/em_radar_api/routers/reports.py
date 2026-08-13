@@ -1,13 +1,18 @@
+import asyncio
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Literal, Self
 from uuid import UUID
 
+from em_radar_connector_gitlab.connector import GitLabConnector
 from em_radar_connector_jira.connector import JiraConnector
 from em_radar_core.connectors import (
+    ConnectorAuthError,
     ConnectorConfigError,
     ConnectorError,
+    ConnectorRateLimitedError,
+    ConnectorTransientError,
     MergeRequestProvider,
     MergeRequestScope,
     ReviewProvider,
@@ -15,7 +20,12 @@ from em_radar_core.connectors import (
     WorkItemProvider,
     WorkItemScope,
 )
-from em_radar_core.evaluation import ScopeDescriptor, evaluate_signal_definition
+from em_radar_core.evaluation import (
+    ScopeDescriptor,
+    check_capability_gate,
+    check_window_gate,
+    evaluate_signal_definition,
+)
 from em_radar_core.models import (
     Board,
     Confidence,
@@ -47,10 +57,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, JsonValue, model_validator
 from sqlmodel import Session, select
 
-from em_radar_api.signal_configs import SignalConfigTable
 
 from em_radar_api.db import get_session, get_write_session
-from em_radar_api.connector_registry import create_connector
+from em_radar_api.connector_registry import create_connector, get_connector_capabilities
 from em_radar_api.repositories.canonical import persist_fetch
 from em_radar_api.repositories.reports import (
     add_findings,
@@ -164,6 +173,17 @@ class _BoardFetchResult:
 
 
 @dataclass
+class _BoardMetadata:
+    """Fast-fetched board metadata: project, board, sprints, evaluation window, and connector."""
+
+    project: Project
+    board: Board
+    sprints: list[Sprint]
+    window: EvaluationWindow
+    connector: WorkItemProvider
+
+
+@dataclass
 class _CodeFetchResult:
     repositories: list[Repository]
     mergerequests: list[MergeRequest]
@@ -193,16 +213,25 @@ async def _run_team_report(
     all_definitions = _signal_definitions_for_team(session, team_row)
     board_definitions, code_definitions = _partition_definitions_by_source(all_definitions)
 
-    # Fetch board data (project, board, sprints, workitems, transitions) when board scope present.
-    board_data: _BoardFetchResult | None = None
-    if board_scope is not None:
-        board_data = await _fetch_board_data(session, team, board_scope, started_at)
+    # Typed connector errors during fetch are non-fatal: the run continues with available data
+    # and records a partial-data note (spec §9-§10, REQ-NF-070).
+    partial_data_notes: list[dict[str, str]] = []
 
-    # Derive evaluation window from the board, or fall back to a 14-day date range for
-    # code-only teams.  Full working-mode window derivation for all source combinations
-    # is M6-02 and is out of scope here.
-    if board_data is not None:
-        window = board_data.window
+    # Phase 1: board metadata (project, board, sprints) — fast; determines evaluation window.
+    # Workitem and MR data fetches run concurrently in Phase 2 once the window is known.
+    board_meta: _BoardMetadata | None = None
+    if board_scope is not None:
+        try:
+            board_meta = await _fetch_board_metadata(session, team, board_scope, started_at)
+        except (ConnectorRateLimitedError, ConnectorTransientError, ConnectorAuthError) as error:
+            partial_data_notes.append(
+                {"source": "board", "reason": f"board data unavailable: {type(error).__name__}"}
+            )
+
+    # Derive evaluation window from sprint metadata, or fall back to a 14-day date range.
+    # Full working-mode window derivation for all source combinations is M6-02.
+    if board_meta is not None:
+        window = board_meta.window
     else:
         window = EvaluationWindow(
             window_type=WindowType.DATE_RANGE,
@@ -211,14 +240,64 @@ async def _run_team_report(
             team_profile_id=team.id,
         )
 
-    # Fetch code data (repositories, merge requests, reviews) when code source is present.
-    code_data: _CodeFetchResult | None = None
-    if has_code_source and team_row.code_connection_id is not None:
-        mr_window = _code_fetch_window(window, board_data.sprints if board_data else [], started_at)
-        code_data = await _fetch_code_data(session, team_row.code_connection_id, mr_window)
+    # Phase 2: concurrently fetch slow I/O — workitems and merge requests run in parallel.
+    # Compute derived values before creating coroutines to avoid an unawaited-coroutine leak
+    # if a pure-Python step raises between coroutine construction and gather.
+    mr_window = _code_fetch_window(window, board_meta.sprints if board_meta else [], started_at)
+    wi_result, code_result = await asyncio.gather(
+        (
+            _fetch_workitems_and_transitions(board_meta, window)
+            if board_meta is not None
+            else _resolved(([], []))
+        ),
+        (
+            _fetch_code_data(session, team_row.code_connection_id, mr_window)
+            if has_code_source and team_row.code_connection_id is not None
+            else _resolved(None)
+        ),
+        return_exceptions=True,
+    )
 
-    board_workitems = board_data.workitems if board_data else []
-    board_transitions = board_data.transitions if board_data else []
+    board_workitems: list[WorkItem] = []
+    board_transitions: list[Transition] = []
+    if isinstance(wi_result, BaseException):
+        if isinstance(
+            wi_result, (ConnectorRateLimitedError, ConnectorTransientError, ConnectorAuthError)
+        ):
+            partial_data_notes.append(
+                {"source": "board", "reason": f"board data unavailable: {type(wi_result).__name__}"}
+            )
+        else:
+            raise wi_result
+    else:
+        board_workitems, board_transitions = wi_result
+
+    board_data: _BoardFetchResult | None = (
+        _BoardFetchResult(
+            project=board_meta.project,
+            board=board_meta.board,
+            sprints=board_meta.sprints,
+            workitems=board_workitems,
+            transitions=board_transitions,
+            window=window,
+        )
+        if board_meta is not None and not any(n["source"] == "board" for n in partial_data_notes)
+        else None
+    )
+
+    code_data: _CodeFetchResult | None = None
+    if isinstance(code_result, BaseException):
+        if isinstance(
+            code_result, (ConnectorRateLimitedError, ConnectorTransientError, ConnectorAuthError)
+        ):
+            partial_data_notes.append(
+                {"source": "code", "reason": f"code data unavailable: {type(code_result).__name__}"}
+            )
+        else:
+            raise code_result
+    else:
+        code_data = code_result
+
     code_mergerequests = code_data.mergerequests if code_data else []
     code_reviews = code_data.reviews if code_data else []
 
@@ -247,11 +326,18 @@ async def _run_team_report(
     session.add(EvaluationWindowTable(**persisted_window.model_dump()))
     session.commit()
 
+    ctx = EvaluationContext(now=started_at, window=window, team=team)
+    board_scope_descriptor = (
+        _scope_descriptor(board_scope, connector_name="jira") if board_scope is not None else None
+    )
+
     skipped_signals = _skipped_signal_entries(
         board_definitions=board_definitions,
         code_definitions=code_definitions,
         board_attached=board_scope is not None,
         code_attached=has_code_source,
+        ctx=ctx,
+        board_scope_descriptor=board_scope_descriptor,
     )
 
     report = create_report(
@@ -259,7 +345,7 @@ async def _run_team_report(
         ReportTable(
             evaluation_window_id=window.id,
             signal_pack_snapshot=_team_signal_pack_snapshot(
-                team_row, all_definitions, skipped_signals
+                team_row, all_definitions, skipped_signals, partial_data_notes
             ),
             status=ReportStatus.PENDING,
             started_at=started_at,
@@ -269,6 +355,25 @@ async def _run_team_report(
     save_report(session, report)
 
     try:
+        # All data sources failed — persist FAILED and return early rather than succeeding
+        # with zero findings (would violate REQ-NF-070). Only fires when both sources
+        # are configured; a single-source team with a partial failure keeps "succeeded".
+        if (
+            board_scope is not None
+            and has_code_source
+            and board_data is None
+            and code_data is None
+            and partial_data_notes
+        ):
+            report.status = ReportStatus.FAILED
+            report.finished_at = datetime.now(timezone.utc)
+            report.error = "all data sources failed: " + "; ".join(
+                n["reason"] for n in partial_data_notes
+            )
+            report.findings_count_by_severity = _counts_by_severity([])
+            save_report(session, report)
+            return ReportDetailResponse.from_report_with_findings(report, [])
+
         signal_data = SignalData(
             report_id=report.id,
             projects=(board_data.project,) if board_data else (),
@@ -280,12 +385,15 @@ async def _run_team_report(
             mergerequests=tuple(code_mergerequests),
             reviews=tuple(code_reviews),
         )
-        ctx = EvaluationContext(now=started_at, window=window, team=team)
 
         # Evaluate board signals (workitem/sprint/issue entity types) when board source attached.
         findings: list[SignalFinding] = []
-        if board_data is not None and board_scope is not None:
-            scope_descriptor = _scope_descriptor(board_scope)
+        if (
+            board_data is not None
+            and board_scope is not None
+            and board_scope_descriptor is not None
+        ):
+            scope_descriptor = board_scope_descriptor
             for definition in board_definitions:
                 findings.extend(
                     evaluate_signal_definition(
@@ -297,8 +405,29 @@ async def _run_team_report(
                     )
                 )
 
-        # Code signals (mergerequest entity type) are evaluated when code source is attached.
-        # Full MR signal evaluation ships in M4; currently produces no findings.
+        # Evaluate code signals (merge_request entity type) when code source attached and data available.
+        if code_data is not None and team_row.code_connection_id is not None:
+            code_connection = get_source_connection(session, team_row.code_connection_id)
+            code_scope_descriptor = ScopeDescriptor(
+                connector_id=str(team_row.code_connection_id),
+                scope_id=str(team_row.code_connection_id),
+                scope_type="repository",
+                name="code",
+                capabilities=("reviews", "pipelines"),
+                connector_capabilities=get_connector_capabilities(
+                    str(code_connection.connector_name) if code_connection else None
+                ),
+            )
+            for definition in code_definitions:
+                findings.extend(
+                    evaluate_signal_definition(
+                        definition,
+                        signal_data,
+                        ctx,
+                        GitLabConnector.describe_signal_schema(),
+                        [code_scope_descriptor],
+                    )
+                )
 
         persisted_findings = [
             _persisted_finding(finding, identity.identity_map) for finding in findings
@@ -319,13 +448,16 @@ async def _run_team_report(
     return ReportDetailResponse.from_report_with_findings(report, persisted_findings)
 
 
-async def _fetch_board_data(
+async def _fetch_board_metadata(
     session: Session,
     team: TeamProfile,
     board_scope: ScopeDefinitionTable,
     started_at: datetime,
-) -> _BoardFetchResult:
-    """Fetch Jira board data (project, board, sprints, workitems, transitions) and derive window."""
+) -> _BoardMetadata:
+    """Fetch fast board metadata: project, board, sprints, and evaluation window.
+
+    Does not fetch workitems or transitions — those run concurrently with MR fetch in Phase 2.
+    """
     connection = get_source_connection(session, board_scope.connection_id)
     if connection is None:
         raise HTTPException(status_code=404, detail="connection not found")
@@ -352,10 +484,37 @@ async def _fetch_board_data(
             raise HTTPException(status_code=404, detail="Jira board not found")
         sprints = await connector.list_sprints(board_external_id)
         window = _jira_evaluation_window(team, sprints, team.id, started_at)
+    except (ConnectorRateLimitedError, ConnectorTransientError, ConnectorAuthError):
+        await connector.close()
+        raise
+    except ConnectorError as error:
+        await connector.close()
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    except HTTPException:
+        await connector.close()
+        raise
+
+    return _BoardMetadata(
+        project=project,
+        board=board,
+        sprints=sprints,
+        window=window,
+        connector=connector,
+    )
+
+
+async def _fetch_workitems_and_transitions(
+    meta: _BoardMetadata,
+    window: EvaluationWindow,
+) -> tuple[list[WorkItem], list[Transition]]:
+    """Fetch workitems and transitions for an already-initialized board connector."""
+    board_external_id = meta.board.external_id
+    connector = meta.connector
+    try:
         workitems = await _collect(
             connector.fetch_workitems(
                 WorkItemScope(
-                    project_external_ids=[project.external_id],
+                    project_external_ids=[meta.project.external_id],
                     board_external_ids=[board_external_id],
                 ),
                 window,
@@ -371,19 +530,14 @@ async def _fetch_board_data(
             if isinstance(connector, TransitionProvider)
             else []
         )
+    except (ConnectorRateLimitedError, ConnectorTransientError, ConnectorAuthError):
+        raise
     except ConnectorError as error:
         raise HTTPException(status_code=502, detail=str(error)) from error
     finally:
         await connector.close()
 
-    return _BoardFetchResult(
-        project=project,
-        board=board,
-        sprints=sprints,
-        workitems=workitems,
-        transitions=transitions,
-        window=window,
-    )
+    return workitems, transitions
 
 
 async def _fetch_code_data(
@@ -423,6 +577,9 @@ async def _fetch_code_data(
             if isinstance(code_connector, ReviewProvider)
             else []
         )
+    except (ConnectorRateLimitedError, ConnectorTransientError, ConnectorAuthError):
+        # Partial-data errors propagate to _run_team_report for graceful handling.
+        raise
     except ConnectorError as error:
         raise HTTPException(status_code=502, detail=str(error)) from error
     finally:
@@ -547,8 +704,10 @@ def _skipped_signal_entries(
     code_definitions: list[SignalDefinition],
     board_attached: bool,
     code_attached: bool,
+    ctx: EvaluationContext,
+    board_scope_descriptor: ScopeDescriptor | None = None,
 ) -> list[dict[str, object]]:
-    """Build skip-note entries for signal definitions whose required source is absent."""
+    """Build skip-note entries for signal definitions whose required source is absent or gated."""
     entries: list[dict[str, object]] = []
     if not board_attached:
         for defn in board_definitions:
@@ -560,6 +719,23 @@ def _skipped_signal_entries(
             entries.append(
                 {"id": str(defn.id), "name": defn.name, "reason": "code source not attached"}
             )
+    if board_attached:
+        for defn in board_definitions:
+            skip = check_window_gate(defn, ctx)
+            if skip is not None:
+                entries.append({"id": str(defn.id), "name": defn.name, "reason": skip.reason})
+                continue
+            if (
+                board_scope_descriptor is not None
+                and board_scope_descriptor.connector_capabilities is not None
+            ):
+                cap_skip = check_capability_gate(
+                    defn, board_scope_descriptor.connector_capabilities
+                )
+                if cap_skip is not None:
+                    entries.append(
+                        {"id": str(defn.id), "name": defn.name, "reason": cap_skip.reason}
+                    )
     return entries
 
 
@@ -567,6 +743,7 @@ def _team_signal_pack_snapshot(
     team_row: TeamProfileTable,
     definitions: Sequence[SignalDefinition],
     skipped_signals: Sequence[dict[str, object]] = (),
+    partial_data_notes: Sequence[dict[str, str]] = (),
 ) -> dict[str, object]:
     return {
         "schema_id": "emradar.dev/v1",
@@ -584,6 +761,7 @@ def _team_signal_pack_snapshot(
             for definition in definitions
         ],
         "skipped_signals": list(skipped_signals),
+        "partial_data_notes": list(partial_data_notes),
     }
 
 
@@ -648,7 +826,13 @@ def _definition_from_row(row: SignalDefinitionTable) -> SignalDefinition:
     )
 
 
-def _scope_descriptor(scope: ScopeDefinitionTable) -> ScopeDescriptor:
+def _scope_descriptor(
+    scope: ScopeDefinitionTable,
+    connector_name: str | None = None,
+) -> ScopeDescriptor:
+    connector_capabilities = (
+        get_connector_capabilities(connector_name) if connector_name is not None else None
+    )
     return ScopeDescriptor(
         connector_id=str(scope.connection_id),
         scope_id=str(scope.id),
@@ -656,6 +840,7 @@ def _scope_descriptor(scope: ScopeDefinitionTable) -> ScopeDescriptor:
         name=scope.name,
         external_ref=dict(scope.external_ref),
         capabilities=tuple(scope.capabilities),
+        connector_capabilities=connector_capabilities,
     )
 
 
@@ -710,20 +895,11 @@ def _placeholder_code_users(
 
 
 def _workitem_key_pattern(session: Session) -> str:
-    """Return the configured work-item key regex pattern, falling back to the default.
+    """Return the configured work-item key regex pattern.
 
-    The pattern is stored in the params of the 'mergerequest-without-linked-workitem' signal
-    config so that the same pattern governs both key extraction and the detection signal.
+    Pattern configuration moves to declarative signal expressions in M5-13.
     """
-    config = session.exec(
-        select(SignalConfigTable).where(
-            SignalConfigTable.signal_id == "mergerequest-without-linked-workitem"
-        )
-    ).first()
-    if config is not None:
-        pattern = config.params.get("workitem_key_pattern")
-        if isinstance(pattern, str) and pattern:
-            return pattern
+    del session
     return DEFAULT_WORKITEM_KEY_PATTERN
 
 
@@ -736,3 +912,8 @@ def _counts_by_severity(findings: Sequence[SignalFinding]) -> dict[Severity, int
 
 async def _collect[T](iterator: AsyncIterator[T]) -> list[T]:
     return [item async for item in iterator]
+
+
+async def _resolved[T](value: T) -> T:
+    """Trivial coroutine that immediately returns value; used as a no-op in asyncio.gather."""
+    return value

@@ -1,4 +1,6 @@
 em_radar_config
+em_radar_connector_contracts
+em_radar_connector_demo
 em_radar_connector_gitlab
 em_radar_connector_jira
 em_radar_core
