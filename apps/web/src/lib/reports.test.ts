@@ -1,6 +1,30 @@
 import { describe, expect, it } from "vitest"
 
-import { extractPartialDataNotes } from "@/lib/reports"
+import { extractPartialDataNotes, formatTimestamp } from "@/lib/reports"
+
+describe("formatTimestamp", () => {
+  it("interprets an offset-less API timestamp as UTC", () => {
+    expect(formatTimestamp("2026-08-13T10:00:00")).toBe(
+      new Date("2026-08-13T10:00:00Z").toLocaleString(),
+    )
+  })
+
+  it("leaves a Z-suffixed timestamp unchanged", () => {
+    expect(formatTimestamp("2026-08-13T10:00:00Z")).toBe(
+      new Date("2026-08-13T10:00:00Z").toLocaleString(),
+    )
+  })
+
+  it("respects an explicit numeric offset without double-shifting", () => {
+    expect(formatTimestamp("2026-08-13T10:00:00+02:00")).toBe(
+      new Date("2026-08-13T10:00:00+02:00").toLocaleString(),
+    )
+  })
+
+  it("returns the raw string when unparseable", () => {
+    expect(formatTimestamp("not a date")).toBe("not a date")
+  })
+})
 
 describe("extractPartialDataNotes", () => {
   it("returns [] for non-object snapshots", () => {

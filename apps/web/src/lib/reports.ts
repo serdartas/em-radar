@@ -42,7 +42,11 @@ export interface PartialDataNote {
 }
 
 export function formatTimestamp(value: string): string {
-  const parsed = new Date(value)
+  // The API serializes started_at/finished_at from naive SQLite columns (stored as UTC
+  // wall-time) without a timezone marker. Treat an offset-less string as UTC so viewers in
+  // non-UTC zones do not see shifted labels; strings that already carry a zone are used as-is.
+  const normalized = /([zZ]|[+-]\d{2}:?\d{2})$/.test(value) ? value : `${value}Z`
+  const parsed = new Date(normalized)
   return Number.isNaN(parsed.valueOf()) ? value : parsed.toLocaleString()
 }
 
