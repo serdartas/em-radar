@@ -1,9 +1,10 @@
 from datetime import datetime, timezone
 from uuid import UUID
 
-from em_radar_core.models import Confidence, EntityType, Severity, SignalFinding
+from em_radar_core.models import Confidence, EntityType, Severity, SignalFinding, WindowType
 from em_radar_reports import (
     PartialDataNote,
+    ReportMetadata,
     Section,
     SignalMeta,
     SkipNote,
@@ -14,6 +15,20 @@ from em_radar_reports.markdown_export import _format_evidence
 
 NOW = datetime(2026, 8, 13, 12, 0, 0, tzinfo=timezone.utc)
 REPORT_ID = UUID("11111111-1111-1111-1111-111111111111")
+TEAM_ID = UUID("22222222-2222-2222-2222-222222222222")
+SPRINT_ID = UUID("33333333-3333-3333-3333-333333333333")
+
+
+def _metadata() -> ReportMetadata:
+    return ReportMetadata(
+        report_id=REPORT_ID,
+        generated_at=NOW,
+        window_type=WindowType.DATE_RANGE,
+        team_name="Platform",
+        team_id=TEAM_ID,
+        window_start=datetime(2026, 8, 1, 0, 0, 0, tzinfo=timezone.utc),
+        window_end=datetime(2026, 8, 13, 0, 0, 0, tzinfo=timezone.utc),
+    )
 
 
 def _finding(
@@ -125,13 +140,13 @@ def _demo_report():
 
 
 def test_all_nine_section_headings_present() -> None:
-    markdown = render_markdown(_demo_report())
+    markdown = render_markdown(_demo_report(), _metadata())
     for section in Section:
         assert f"## {section.title}" in markdown
 
 
 def test_severity_order_preserved_within_detailed_findings() -> None:
-    markdown = render_markdown(_demo_report())
+    markdown = render_markdown(_demo_report(), _metadata())
     critical = markdown.index("!42 - refactor pipeline")
     warning = markdown.index("ABC-3 - stale story")
     info = markdown.index("ABC-1 - orphan story")
@@ -140,7 +155,7 @@ def test_severity_order_preserved_within_detailed_findings() -> None:
 
 def test_every_finding_has_a_resolvable_source_link() -> None:
     report = _demo_report()
-    markdown = render_markdown(report)
+    markdown = render_markdown(report, _metadata())
     source_lines = [line for line in markdown.splitlines() if line.startswith("- **Source:**")]
     # Detailed Findings holds one entry per finding; each renders exactly one link
     # elsewhere too, so at minimum every finding is represented with an http link.
@@ -166,7 +181,7 @@ def test_missing_source_link_omits_source_line() -> None:
     report = build_sections(
         [finding], {"flow-wi": SignalMeta(category="flow", template_key="stale-in-progress")}
     )
-    markdown = render_markdown(report)
+    markdown = render_markdown(report, _metadata())
     assert "ABC-9 - no link" in markdown
     assert "- **Source:**" not in markdown
 
@@ -187,7 +202,7 @@ def test_markdown_special_chars_do_not_break_structure() -> None:
         [finding],
         {"flow-mr": SignalMeta(category="flow", template_key="mergerequest-waiting-too-long")},
     )
-    markdown = render_markdown(report)
+    markdown = render_markdown(report, _metadata())
     assert "(<https://gitlab.example.com/mr/42?a=1&b=2>)" in markdown
     assert r"\[WIP\]" in markdown
     # No raw newline leaks into a heading, reason, or evidence line.
@@ -200,7 +215,7 @@ def test_markdown_special_chars_do_not_break_structure() -> None:
 
 
 def test_summary_and_notes_rendered() -> None:
-    markdown = render_markdown(_demo_report())
+    markdown = render_markdown(_demo_report(), _metadata())
     assert "- **Critical:** 1" in markdown
     assert "- **Warning:** 2" in markdown
     assert "- **Info:** 2" in markdown
@@ -211,8 +226,46 @@ def test_summary_and_notes_rendered() -> None:
     assert "- **gitlab:** Rate limited" in markdown
 
 
+def test_date_range_metadata_block_rendered() -> None:
+    markdown = render_markdown(_demo_report(), _metadata())
+    assert f"- **Report:** {REPORT_ID}" in markdown
+    assert f"- **Team:** Platform ({TEAM_ID})" in markdown
+    assert "- **Window:** 2026-08-01T00:00:00+00:00 to 2026-08-13T00:00:00+00:00 (date range)" in (
+        markdown
+    )
+    assert "- **Generated:** 2026-08-13T12:00:00+00:00" in markdown
+    # Metadata precedes the sections.
+    assert markdown.index("- **Report:**") < markdown.index("## Summary")
+
+
+def test_sprint_window_metadata_rendered() -> None:
+    metadata = ReportMetadata(
+        report_id=REPORT_ID,
+        generated_at=NOW,
+        window_type=WindowType.SPRINT,
+        team_id=TEAM_ID,
+        sprint_id=SPRINT_ID,
+        sprint_label="Sprint 7",
+    )
+    markdown = render_markdown(_demo_report(), metadata)
+    assert "- **Window:** Sprint Sprint 7" in markdown
+    assert f"- **Team:** {TEAM_ID}" in markdown
+    assert "to" not in markdown.split("## Summary")[0].split("- **Window:**")[1]
+
+
+def test_naive_generation_timestamp_coerced_to_utc() -> None:
+    metadata = ReportMetadata(
+        report_id=REPORT_ID,
+        generated_at=datetime(2026, 8, 13, 12, 0, 0),
+        window_type=WindowType.SPRINT,
+        sprint_label="S1",
+    )
+    markdown = render_markdown(build_sections([], {}), metadata)
+    assert "- **Generated:** 2026-08-13T12:00:00+00:00" in markdown
+
+
 def test_evidence_keys_sorted_deterministically() -> None:
-    markdown = render_markdown(_demo_report())
+    markdown = render_markdown(_demo_report(), _metadata())
     assert "- **Evidence:** open_days: 12, reviewers: 0" in markdown
 
 
@@ -229,7 +282,7 @@ def test_format_evidence_non_dict_values() -> None:
 
 def test_empty_sections_render_placeholder() -> None:
     report = build_sections([], {})
-    markdown = render_markdown(report)
+    markdown = render_markdown(report, _metadata())
     for section in Section:
         if section is Section.SUMMARY:
             continue
@@ -240,7 +293,7 @@ def test_empty_sections_render_placeholder() -> None:
 
 def test_output_is_byte_stable_across_input_orders() -> None:
     report = _demo_report()
-    assert render_markdown(report) == render_markdown(report)
+    assert render_markdown(report, _metadata()) == render_markdown(report, _metadata())
 
     meta = {
         "planning-wi": SignalMeta(category="planning", template_key="story-without-parent-epic"),
@@ -264,8 +317,8 @@ def test_output_is_byte_stable_across_input_orders() -> None:
         entity_id="00000000-0000-0000-0000-000000000102",
         source_link="https://gitlab.example.com/mr/42",
     )
-    forward = render_markdown(build_sections([a, b], meta))
-    reversed_ = render_markdown(build_sections([b, a], meta))
+    forward = render_markdown(build_sections([a, b], meta), _metadata())
+    reversed_ = render_markdown(build_sections([b, a], meta), _metadata())
     assert forward == reversed_
 
 
@@ -288,6 +341,11 @@ def test_matches_expected_snapshot() -> None:
     )
     expected = (
         "# EM Radar Report\n"
+        "\n"
+        f"- **Report:** {REPORT_ID}\n"
+        f"- **Team:** Platform ({TEAM_ID})\n"
+        "- **Window:** 2026-08-01T00:00:00+00:00 to 2026-08-13T00:00:00+00:00 (date range)\n"
+        "- **Generated:** 2026-08-13T12:00:00+00:00\n"
         "\n"
         "## Summary\n"
         "\n"
@@ -348,4 +406,15 @@ def test_matches_expected_snapshot() -> None:
         "- **Evidence:** open_days: 12, reviewers: 0\n"
         "- **Source:** [!42 - refactor pipeline](<https://gitlab.example.com/mr/42>)\n"
     )
-    assert render_markdown(report) == expected
+    assert render_markdown(report, _metadata()) == expected
+
+
+def test_empty_string_team_field_is_omitted() -> None:
+    metadata = ReportMetadata(
+        report_id=REPORT_ID,
+        generated_at=NOW,
+        window_type=WindowType.SPRINT,
+        sprint_label="S1",
+    )
+    markdown = render_markdown(build_sections([], {}), metadata)
+    assert "- **Team:**" not in markdown

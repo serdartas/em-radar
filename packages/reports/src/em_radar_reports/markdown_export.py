@@ -1,9 +1,11 @@
 import json
 import re
 from collections.abc import Iterable
+from datetime import datetime, timezone
+from uuid import UUID
 
-from em_radar_core.models import Severity, SignalFinding
-from pydantic import JsonValue
+from em_radar_core.models import Severity, SignalFinding, WindowType
+from pydantic import BaseModel, ConfigDict, JsonValue
 
 from em_radar_reports.sectioning import SECTION_ORDER, Section, SectionedReport
 
@@ -29,18 +31,42 @@ _NO_FINDINGS: str = "_No findings._"
 _WHITESPACE = re.compile(r"\s+")
 
 
-def render_markdown(report: SectionedReport) -> str:
+class ReportMetadata(BaseModel):
+    """Provenance the caller attaches to an export so runs are distinguishable.
+
+    The M6-05 API builds this from the persisted `Report`, `EvaluationWindow`, and
+    `TeamProfile`. `generated_at` is an input (the report's stored start/finish
+    time) never a wall-clock read, so identical inputs render byte-identically.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    report_id: UUID
+    generated_at: datetime
+    window_type: WindowType
+    team_name: str | None = None
+    team_id: UUID | None = None
+    window_start: datetime | None = None
+    window_end: datetime | None = None
+    sprint_id: UUID | None = None
+    sprint_label: str | None = None
+
+
+def render_markdown(report: SectionedReport, metadata: ReportMetadata) -> str:
     """Render a sectioned report to portable, deterministic Markdown.
 
-    The same `SectionedReport` always renders byte-identically: findings keep the
-    severity order M6-01 already applied, summary counts render in a fixed order,
-    evidence keys are sorted, and skip/partial-data notes are sorted before output.
-    Finding text is sanitized (whitespace collapsed, link syntax escaped, URLs
-    angle-bracket wrapped) so titles or reasons carrying Markdown metacharacters or
-    newlines cannot break a link or split a list item. Only stdlib and
-    `em_radar_core` are used, keeping the reports package source-agnostic.
+    The same `(SectionedReport, ReportMetadata)` pair always renders byte-identically:
+    findings keep the severity order M6-01 already applied, summary counts render in a
+    fixed order, evidence keys are sorted, skip/partial-data notes are sorted, and the
+    generation timestamp is an input formatted as UTC ISO 8601. Finding text is
+    sanitized (whitespace collapsed, link syntax escaped, URLs angle-bracket wrapped)
+    so titles or reasons carrying Markdown metacharacters or newlines cannot break a
+    link or split a list item. Only stdlib and `em_radar_core` are used, keeping the
+    reports package source-agnostic.
     """
     lines: list[str] = [f"# {REPORT_TITLE}", ""]
+    lines.extend(_render_metadata(metadata))
+    lines.append("")
 
     for section in SECTION_ORDER:
         lines.append(f"## {section.title}")
@@ -54,6 +80,45 @@ def render_markdown(report: SectionedReport) -> str:
     lines.extend(_render_notes(report))
 
     return "\n".join(lines).rstrip("\n") + "\n"
+
+
+def _render_metadata(metadata: ReportMetadata) -> list[str]:
+    lines = [f"- **Report:** {metadata.report_id}"]
+    team = _format_team(metadata)
+    if team:
+        lines.append(f"- **Team:** {team}")
+    lines.append(f"- **Window:** {_format_window(metadata)}")
+    lines.append(f"- **Generated:** {_format_datetime(metadata.generated_at)}")
+    return lines
+
+
+def _format_team(metadata: ReportMetadata) -> str:
+    if metadata.team_name and metadata.team_id:
+        return f"{_inline(metadata.team_name)} ({metadata.team_id})"
+    if metadata.team_name:
+        return _inline(metadata.team_name)
+    if metadata.team_id:
+        return str(metadata.team_id)
+    return ""
+
+
+def _format_window(metadata: ReportMetadata) -> str:
+    if metadata.window_type is WindowType.SPRINT:
+        label = metadata.sprint_label or (
+            str(metadata.sprint_id) if metadata.sprint_id else "unknown"
+        )
+        return f"Sprint {_inline(label)}"
+    start = _format_datetime(metadata.window_start) if metadata.window_start else "unknown"
+    end = _format_datetime(metadata.window_end) if metadata.window_end else "unknown"
+    return f"{start} to {end} (date range)"
+
+
+def _format_datetime(value: datetime) -> str:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    else:
+        value = value.astimezone(timezone.utc)
+    return value.isoformat()
 
 
 def _render_summary(report: SectionedReport) -> list[str]:
