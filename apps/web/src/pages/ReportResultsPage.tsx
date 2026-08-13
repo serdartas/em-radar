@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useState } from "react"
 import { Link, useParams } from "react-router-dom"
 
@@ -6,7 +6,7 @@ import { SeverityCounts } from "@/components/SeverityCounts"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
-import { type Finding, getReport, getReportMarkdown } from "@/lib/reports"
+import { type Finding, getReport, reportMarkdownQuery } from "@/lib/reports"
 
 export function ReportResultsPage() {
   const { reportId } = useParams<{ reportId: string }>()
@@ -71,6 +71,7 @@ export function ReportResultsPage() {
 }
 
 function ReportExportActions({ reportId }: { reportId: string }) {
+  const queryClient = useQueryClient()
   const [status, setStatus] = useState<"copied" | "error" | "idle">("idle")
   const [busy, setBusy] = useState<"copy" | "download" | null>(null)
 
@@ -78,7 +79,7 @@ function ReportExportActions({ reportId }: { reportId: string }) {
     setBusy("download")
     setStatus("idle")
     try {
-      const markdown = await getReportMarkdown(reportId)
+      const markdown = await queryClient.fetchQuery(reportMarkdownQuery(reportId))
       const url = URL.createObjectURL(new Blob([markdown], { type: "text/markdown" }))
       const anchor = document.createElement("a")
       anchor.href = url
@@ -100,7 +101,7 @@ function ReportExportActions({ reportId }: { reportId: string }) {
     setBusy("copy")
     setStatus("idle")
     try {
-      const markdown = await getReportMarkdown(reportId)
+      const markdown = await queryClient.fetchQuery(reportMarkdownQuery(reportId))
       await navigator.clipboard.writeText(markdown)
       setStatus("copied")
     } catch {

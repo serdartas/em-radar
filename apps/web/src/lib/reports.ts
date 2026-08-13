@@ -89,3 +89,10 @@ export async function getReportMarkdown(reportId: string): Promise<string> {
   }
   return response.text()
 }
+
+export function reportMarkdownQuery(reportId: string) {
+  return {
+    queryKey: ["reports", reportId, "export.md"] as const,
+    queryFn: () => getReportMarkdown(reportId),
+  }
+}
