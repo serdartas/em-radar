@@ -23,6 +23,7 @@ from em_radar_api.signal_definitions import (
     SignalDefinitionUpdate,
 )
 from em_radar_api.tables import ProjectTable, RepositoryTable
+from em_radar_connector_gitlab import GitLabConnector
 from em_radar_connector_jira import JiraConnector
 from em_radar_config import (
     PackGroupEntry,
@@ -264,5 +265,8 @@ def _validation_context(session: Session) -> PackValidationContext:
     return PackValidationContext(
         project_keys=frozenset(session.exec(select(ProjectTable.key))),
         repository_paths=frozenset(session.exec(select(RepositoryTable.full_path))),
-        signal_schemas=(JiraConnector.describe_signal_schema(),),
+        signal_schemas=(
+            JiraConnector.describe_signal_schema(),
+            GitLabConnector.describe_signal_schema(),
+        ),
     )
