@@ -104,10 +104,11 @@ def _format_team(metadata: ReportMetadata) -> str:
 
 def _format_window(metadata: ReportMetadata) -> str:
     if metadata.window_type is WindowType.SPRINT:
-        label = metadata.sprint_label or (
-            str(metadata.sprint_id) if metadata.sprint_id else "unknown"
-        )
-        return f"Sprint {_inline(label)}"
+        if metadata.sprint_label:
+            # The canonical Sprint.name already carries its own prefix (e.g. "Sprint 24").
+            return _inline(metadata.sprint_label)
+        sprint_ref = str(metadata.sprint_id) if metadata.sprint_id else "unknown"
+        return f"Sprint {sprint_ref}"
     start = _format_datetime(metadata.window_start) if metadata.window_start else "unknown"
     end = _format_datetime(metadata.window_end) if metadata.window_end else "unknown"
     return f"{start} to {end} (date range)"

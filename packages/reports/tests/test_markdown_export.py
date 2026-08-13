@@ -248,9 +248,22 @@ def test_sprint_window_metadata_rendered() -> None:
         sprint_label="Sprint 7",
     )
     markdown = render_markdown(_demo_report(), metadata)
-    assert "- **Window:** Sprint Sprint 7" in markdown
+    # The label carries its own prefix; it must not be doubled to "Sprint Sprint 7".
+    assert "- **Window:** Sprint 7\n" in markdown
+    assert "Sprint Sprint" not in markdown
     assert f"- **Team:** {TEAM_ID}" in markdown
     assert "to" not in markdown.split("## Summary")[0].split("- **Window:**")[1]
+
+
+def test_sprint_window_without_label_falls_back_to_id() -> None:
+    metadata = ReportMetadata(
+        report_id=REPORT_ID,
+        generated_at=NOW,
+        window_type=WindowType.SPRINT,
+        sprint_id=SPRINT_ID,
+    )
+    markdown = render_markdown(build_sections([], {}), metadata)
+    assert f"- **Window:** Sprint {SPRINT_ID}" in markdown
 
 
 def test_naive_generation_timestamp_coerced_to_utc() -> None:
