@@ -274,6 +274,42 @@ describe("DashboardPage", () => {
     })
   })
 
+  it("warns when a report-history refetch fails but keeps showing the cached report", async () => {
+    let reportsListCalls = 0
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = typeof input === "string" ? input : input.toString()
+      if (url.endsWith("/api/teams")) {
+        return Promise.resolve(jsonResponse([platformTeam]))
+      }
+      if (url.endsWith("/api/reports") && init?.method !== "POST") {
+        reportsListCalls += 1
+        return reportsListCalls === 1
+          ? Promise.resolve(jsonResponse([platformSummary]))
+          : Promise.resolve(new Response("boom", { status: 500 }))
+      }
+      if (url.endsWith("/api/reports/report-1")) {
+        return Promise.resolve(jsonResponse(platformDetail))
+      }
+      if (url.endsWith("/api/reports/run")) {
+        return Promise.resolve(jsonResponse(platformDetail))
+      }
+      throw new Error(`unexpected fetch: ${url}`)
+    })
+    renderPage()
+
+    await screen.findByText("PLAT-3 blocked for a week")
+    fireEvent.click(within(cardFor("Platform")).getByRole("button", { name: "Refresh" }))
+
+    const card = within(cardFor("Platform"))
+    expect(
+      await card.findByText(
+        "Report history could not be refreshed. Showing the last loaded report.",
+      ),
+    ).toBeInTheDocument()
+    // The cached report stays visible alongside the warning.
+    expect(card.getByText("PLAT-3 blocked for a week")).toBeInTheDocument()
+  })
+
   it("links Open report to the sectioned results view", async () => {
     mockApi()
     renderPage()

@@ -158,6 +158,14 @@ function TeamCard({
       <CardContent className="space-y-4 text-sm">
         {latestSummary ? (
           <>
+            {reportsError && (
+              <p
+                className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800"
+                role="alert"
+              >
+                Report history could not be refreshed. Showing the last loaded report.
+              </p>
+            )}
             {latestSummary.status === "succeeded" ? (
               <>
                 <SeverityCounts counts={latestSummary.findings_count_by_severity} />
