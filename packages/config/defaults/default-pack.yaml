@@ -3,7 +3,7 @@ kind: SignalPack
 metadata:
   name: default-signals
   version: 1.0.0
-  description: Default EM Radar signal pack - 8 work-item signals for Scrum teams using Jira.
+  description: Default EM Radar signal pack - 8 Jira work-item signals and 5 GitLab merge-request signals.
 spec:
   export_type: private_backup
   signals:
@@ -162,9 +162,105 @@ spec:
       origin: system_template
       template_key: sprint-scope-churn
 
+    - name: Merge request waiting too long
+      description: Finds open merge requests with no review activity in the past 3 days.
+      entity_type: merge_request
+      expression:
+        type: group
+        operator: all
+        conditions:
+          - field: state
+            operator: is
+            value: open
+          - field: age_since_last_review_activity
+            operator: greater_than
+            value: {amount: 3, unit: days}
+      report_settings:
+        severity: warning
+        category: flow
+      enabled: true
+      origin: system_template
+      template_key: mergerequest-waiting-too-long
+
+    - name: Merge request without linked work item
+      description: Finds open merge requests not linked to any tracked work item.
+      entity_type: merge_request
+      expression:
+        type: group
+        operator: all
+        conditions:
+          - field: state
+            operator: is
+            value: open
+          - field: linked_workitem_keys
+            operator: is_empty
+      report_settings:
+        severity: warning
+        category: quality
+      enabled: true
+      origin: system_template
+      template_key: mergerequest-without-linked-workitem
+
+    - name: Large merge request risk
+      description: Finds merge requests exceeding the default file-count threshold.
+      entity_type: merge_request
+      expression:
+        type: group
+        operator: all
+        conditions:
+          - field: changed_files_count
+            operator: greater_than
+            value: 20
+      report_settings:
+        severity: warning
+        category: quality
+      enabled: true
+      origin: system_template
+      template_key: large-mergerequest-risk
+
+    - name: Failing pipeline too long
+      description: Finds merge requests whose pipeline has been failing for more than 1 day.
+      entity_type: merge_request
+      expression:
+        type: group
+        operator: all
+        conditions:
+          - field: pipeline_status
+            operator: is
+            value: failed
+          - field: age_since_pipeline_update
+            operator: greater_than
+            value: {amount: 1, unit: days}
+      report_settings:
+        severity: warning
+        category: flow
+      enabled: true
+      origin: system_template
+      template_key: failing-pipeline-too-long
+
+    - name: Merged without enough approval
+      description: Finds merge requests that were merged with no approvals.
+      entity_type: merge_request
+      expression:
+        type: group
+        operator: all
+        conditions:
+          - field: state
+            operator: is
+            value: merged
+          - field: approval_count
+            operator: less_than
+            value: 1
+      report_settings:
+        severity: critical
+        category: quality
+      enabled: true
+      origin: system_template
+      template_key: merged-without-enough-approval
+
   groups:
     - name: Default signals
-      description: Bundled default signals for Jira + Scrum teams.
+      description: Bundled default signals for Jira + Scrum teams using GitLab.
       signals:
         - Stale in-progress work item
         - Blocked without update
@@ -174,3 +270,8 @@ spec:
         - Epic without measurable description
         - Repeated carry-over
         - Sprint scope churn
+        - Merge request waiting too long
+        - Merge request without linked work item
+        - Large merge request risk
+        - Failing pipeline too long
+        - Merged without enough approval

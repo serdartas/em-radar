@@ -40,11 +40,17 @@ EXPECTED_TEMPLATE_KEYS = {
 
 
 def test_default_pack_validates_against_schema() -> None:
-    """Validates expressions against the live Jira connector capability schema."""
+    """Validates expressions against both Jira and GitLab connector capability schemas."""
     from em_radar_config import PackValidationContext
+    from em_radar_connector_gitlab.connector import GitLabConnector
     from em_radar_connector_jira.connector import JiraConnector
 
-    ctx = PackValidationContext(signal_schemas=(JiraConnector.describe_signal_schema(),))
+    ctx = PackValidationContext(
+        signal_schemas=(
+            JiraConnector.describe_signal_schema(),
+            GitLabConnector.describe_signal_schema(),
+        )
+    )
     result = load_signal_pack(DEFAULT_PACK_PATH.read_text(encoding="utf-8"), ctx)
 
     assert result.pack.api_version == "emradar.dev/v1"
@@ -62,12 +68,12 @@ def test_all_signals_are_fully_declarative() -> None:
         assert signal.report_settings is not None
 
 
-def test_pack_contains_exactly_8_work_item_signals() -> None:
+def test_pack_contains_exactly_8_work_item_signals_plus_5_mr() -> None:
     pack = load_signal_pack(DEFAULT_PACK_PATH.read_text(encoding="utf-8")).pack
 
-    assert len(pack.spec.signals) == 8
-    actual_keys = {s.template_key for s in pack.spec.signals}
-    assert actual_keys == EXPECTED_TEMPLATE_KEYS
+    assert len(pack.spec.signals) == 13
+    wi_keys = {s.template_key for s in pack.spec.signals if s.entity_type in ("issue", "sprint")}
+    assert wi_keys == EXPECTED_TEMPLATE_KEYS
 
 
 def test_default_group_references_all_signals() -> None:
@@ -126,7 +132,7 @@ def _api_harness(tmp_path) -> Iterator[SimpleNamespace]:
         engine.dispose()
 
 
-def test_seed_creates_8_signal_definitions(_api_harness) -> None:
+def test_seed_creates_13_signal_definitions(_api_harness) -> None:
     from em_radar_api.signal_definitions import SignalDefinitionTable
 
     with _api_harness.client:
@@ -135,12 +141,12 @@ def test_seed_creates_8_signal_definitions(_api_harness) -> None:
     with _api_harness.session_factory() as session:
         definitions = session.exec(select(SignalDefinitionTable)).all()
 
-    assert len(definitions) == 8
+    assert len(definitions) == 13
     keys = {d.template_key for d in definitions}
-    assert keys == EXPECTED_TEMPLATE_KEYS
+    assert EXPECTED_TEMPLATE_KEYS.issubset(keys)  # 8 WI + 5 MR
 
 
-def test_seed_creates_default_signals_group(_api_harness) -> None:
+def test_seed_creates_default_signals_group_with_13_signals(_api_harness) -> None:
     from em_radar_api.signal_config_groups import SignalConfigGroupTable
 
     with _api_harness.client:
@@ -152,7 +158,7 @@ def test_seed_creates_default_signals_group(_api_harness) -> None:
         ).first()
 
     assert group is not None
-    assert len(group.signal_ids) == 8
+    assert len(group.signal_ids) == 13
 
 
 def test_seed_is_idempotent(_api_harness) -> None:
@@ -166,7 +172,7 @@ def test_seed_is_idempotent(_api_harness) -> None:
     with _api_harness.session_factory() as session:
         count = len(session.exec(select(SignalDefinitionTable)).all())
 
-    assert count == 8
+    assert count == 13
 
 
 def test_seeded_definitions_export_to_valid_pack(_api_harness) -> None:
@@ -190,9 +196,9 @@ def test_seeded_definitions_export_to_valid_pack(_api_harness) -> None:
     assert response.status_code == 200
     exported = load_signal_pack(response.text)
     assert exported.pack.api_version == "emradar.dev/v1"
-    assert len(exported.pack.spec.signals) == 8
+    assert len(exported.pack.spec.signals) == 13
     exported_keys = {s.template_key for s in exported.pack.spec.signals}
-    assert exported_keys == EXPECTED_TEMPLATE_KEYS
+    assert EXPECTED_TEMPLATE_KEYS.issubset(exported_keys)  # 8 WI keys must be present
 
     # Verify expressions and report_settings survive the round-trip.
     source = load_signal_pack(DEFAULT_PACK_PATH.read_text(encoding="utf-8")).pack

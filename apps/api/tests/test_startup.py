@@ -10,7 +10,7 @@ from em_radar_api.signal_definitions import SignalDefinitionTable
 
 
 def test_first_startup_seeds_default_signal_group(tmp_path: Path) -> None:
-    """Startup seeds the default signal group with 8 Jira template signals."""
+    """Startup seeds the default signal group with 13 declarative signals (8 WI + 5 MR)."""
     session_factory = _empty_session_factory(tmp_path)
 
     with TestClient(create_app(app_session_factory=session_factory)):
@@ -19,7 +19,7 @@ def test_first_startup_seeds_default_signal_group(tmp_path: Path) -> None:
     with session_factory() as session:
         count = session.exec(select(SignalDefinitionTable)).all()
 
-    assert len(count) == 8
+    assert len(count) == 13
 
 
 def test_subsequent_startup_does_not_duplicate_signals(tmp_path: Path) -> None:
@@ -35,7 +35,7 @@ def test_subsequent_startup_does_not_duplicate_signals(tmp_path: Path) -> None:
     with session_factory() as session:
         count = session.exec(select(SignalDefinitionTable)).all()
 
-    assert len(count) == 8
+    assert len(count) == 13
 
 
 def _empty_session_factory(tmp_path: Path) -> sessionmaker[Session]:
