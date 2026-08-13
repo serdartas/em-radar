@@ -25,6 +25,7 @@ from em_radar_core.evaluation import (
     check_capability_gate,
     check_window_gate,
     evaluate_signal_definition,
+    is_source_linking_signal,
 )
 from em_radar_core.models import (
     Board,
@@ -988,6 +989,7 @@ def _team_signal_pack_snapshot(
                 "enabled": definition.enabled,
                 "origin": definition.origin.value,
                 "template_key": definition.template_key,
+                "is_source_linking": is_source_linking_signal(definition),
                 "version": definition.version,
             }
             for definition in definitions

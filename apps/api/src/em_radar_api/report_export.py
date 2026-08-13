@@ -83,6 +83,7 @@ def _signal_meta_from_snapshot(snapshot: object) -> dict[str, SignalMeta]:
         meta[signal_id] = SignalMeta(
             category=category if isinstance(category, str) else "",
             template_key=template_key if isinstance(template_key, str) else None,
+            is_source_linking=bool(entry.get("is_source_linking")),
         )
     return meta
 

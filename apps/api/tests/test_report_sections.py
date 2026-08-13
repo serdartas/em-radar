@@ -179,6 +179,95 @@ def test_detail_response_exposes_summary_and_finding_ids(
     assert finding_ids == {critical_id, warning_id}
 
 
+def _persist_source_linking_report(
+    session_factory: sessionmaker[Session],
+) -> tuple[UUID, str]:
+    """A user-created MR signal (template_key=None) flagged is_source_linking."""
+    signal_id = str(uuid4())
+    with session_factory() as session:
+        team = TeamProfileTable(name="Platform Team", created_at=_NOW, updated_at=_NOW)
+        session.add(team)
+        session.commit()
+        session.refresh(team)
+
+        window = EvaluationWindowTable(
+            window_type=WindowType.DATE_RANGE,
+            start=datetime(2026, 5, 18, tzinfo=UTC),
+            end=_NOW,
+            team_profile_id=team.id,
+        )
+        session.add(window)
+        session.commit()
+        session.refresh(window)
+
+        report = ReportTable(
+            evaluation_window_id=window.id,
+            signal_pack_snapshot={
+                "schema_id": "emradar.dev/v1",
+                "signal_config_group_ids": [],
+                "signal_definitions": [
+                    {
+                        "id": signal_id,
+                        "name": "Custom unlinked MR",
+                        "entity_type": "merge_request",
+                        "category": "flow",
+                        "enabled": True,
+                        "origin": "user_created",
+                        "template_key": None,
+                        "is_source_linking": True,
+                        "version": 1,
+                    },
+                ],
+                "skipped_signals": [],
+                "partial_data_notes": [],
+            },
+            status=ReportStatus.SUCCEEDED,
+            started_at=_NOW,
+            finished_at=_NOW,
+            error=None,
+            findings_count_by_severity={
+                Severity.INFO: 0,
+                Severity.WARNING: 1,
+                Severity.CRITICAL: 0,
+            },
+        )
+        session.add(report)
+        session.commit()
+        session.refresh(report)
+
+        finding = SignalFindingTable(
+            report_id=report.id,
+            signal_id=signal_id,
+            signal_name="Custom unlinked MR",
+            severity=Severity.WARNING,
+            confidence=Confidence.HIGH,
+            entity_type=EntityType.MERGEREQUEST,
+            entity_id=uuid4(),
+            title="!42 has no linked work item",
+            reason="No linked work item.",
+            recommendation="Link the merge request to a work item.",
+            evidence={"linked_workitem_keys": []},
+            source_link="https://demo.invalid/mr/42",
+            created_at=_NOW,
+        )
+        session.add(finding)
+        session.commit()
+        session.refresh(finding)
+        return report.id, str(finding.id)
+
+
+def test_user_created_source_linking_signal_routes_to_source_linking(
+    api_client: TestClient, session_factory: sessionmaker[Session]
+) -> None:
+    report_id, finding_id = _persist_source_linking_report(session_factory)
+
+    body = api_client.get(f"/api/reports/{report_id}").json()
+    sections = {section["section"]: section for section in body["sections"]}
+
+    assert sections["source_linking"]["finding_ids"] == [finding_id]
+    assert sections["merge_request_flow"]["finding_ids"] == []
+
+
 def test_detail_response_surfaces_skip_notes(
     api_client: TestClient, session_factory: sessionmaker[Session]
 ) -> None:

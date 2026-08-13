@@ -74,7 +74,7 @@ export function ReportRunnerPage() {
       return
     }
     const start = `${startDate}T00:00:00Z`
-    const end = `${endDate}T00:00:00Z`
+    const end = `${endDate}T23:59:59.999Z`
     if (start >= end) {
       setDateError("The start date must be before the end date.")
       return
@@ -137,13 +137,13 @@ export function ReportRunnerPage() {
                 onChange={(event) => setWindowMode(event.target.value as WindowMode)}
                 value={windowMode}
               >
-                <option value="sprint">Sprint</option>
+                <option value="sprint">Active sprint</option>
                 <option value="date_range">Date range</option>
               </Select>
             </div>
             {windowMode === "sprint" ? (
               <p className="text-xs text-slate-500">
-                Uses each team&apos;s current sprint or default window.
+                Runs each team&apos;s active sprint. Kanban teams use their default rolling window.
               </p>
             ) : (
               <div className="flex flex-col gap-3 sm:flex-row">

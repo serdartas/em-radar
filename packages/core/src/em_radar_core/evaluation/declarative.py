@@ -109,6 +109,22 @@ def check_window_gate(
     )
 
 
+def is_source_linking_signal(definition: SignalDefinition) -> bool:
+    """Return True when the definition flags entities missing a linked work item.
+
+    A source-linking signal has a leaf condition checking ``linked_workitem_keys``
+    for emptiness. Detecting it here lets user-created signals (no template key)
+    route their findings to the Source Linking report section.
+    """
+    expression = definition.expression
+    if not isinstance(expression, dict):
+        return False
+    return any(
+        leaf.get("field") == "linked_workitem_keys" and leaf.get("operator") == "is_empty"
+        for leaf in _leaf_conditions(expression)
+    )
+
+
 def resolve_severity(
     per_signal: str | None,
     pack_override: str | None = None,
