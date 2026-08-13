@@ -80,6 +80,23 @@ export function RuleValueControl({ field, operator, value, onChange, id }: RuleV
   }
 
   if (field && field.values.length > 0) {
+    if (field.type === "boolean") {
+      const boolValue = typeof value === "boolean" ? value : value === "true"
+      return (
+        <Select
+          aria-label="Value"
+          id={id}
+          onChange={(event) => onChange(event.target.value === "true")}
+          value={String(boolValue)}
+        >
+          {field.values.map((item) => (
+            <option key={String(item)} value={String(item)}>
+              {String(item)}
+            </option>
+          ))}
+        </Select>
+      )
+    }
     const stringValue = typeof value === "string" ? value : String(value ?? "")
     return (
       <Select

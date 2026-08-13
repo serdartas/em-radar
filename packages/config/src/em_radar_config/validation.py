@@ -206,17 +206,16 @@ def _validate_pack(pack: SignalPack, context: PackValidationContext) -> None:
         raise PackValidationError("spec.export_type must be private_backup or public_template")
     for index, signal in enumerate(pack.spec.signals):
         if signal.expression is None:
-            # Signals with only an id (old-format, pre-M5-13) are permitted; expression
-            # becomes required once the declarative default pack ships in M5-13.
-            continue
-        if signal.expression is not None:
-            _validate_signal_expression(
-                signal.expression,
-                signal.entity_type or "issue",
-                context.signal_schemas,
-                path=f"spec.signals.{index}.expression",
-                allow_missing_values=not signal.enabled,
+            raise PackValidationError(
+                f"spec.signals.{index} ({signal.name!r}) is missing an expression"
             )
+        _validate_signal_expression(
+            signal.expression,
+            signal.entity_type or "issue",
+            context.signal_schemas,
+            path=f"spec.signals.{index}.expression",
+            allow_missing_values=not signal.enabled,
+        )
 
     signal_names = {signal.name for signal in pack.spec.signals if signal.name is not None}
     for group_index, group in enumerate(pack.spec.groups):
@@ -241,9 +240,16 @@ def _validate_signal_expression(
     schema = next((schema for schema in schemas if entity_type in schema.entity_types), None)
     if schema is None:
         raise PackValidationError(f"{path} uses unsupported entity_type {entity_type!r}")
+    primary = schema.entity_types[0] if schema.entity_types else entity_type
+    fields = {
+        field.key: field
+        for field in schema.fields
+        if field.entity_type == entity_type
+        or (field.entity_type is None and entity_type == primary)
+    }
     _validate_expression_node(
         expression,
-        {field.key: field for field in schema.fields},
+        fields,
         path=path,
         allow_missing_values=allow_missing_values,
         depth=depth,

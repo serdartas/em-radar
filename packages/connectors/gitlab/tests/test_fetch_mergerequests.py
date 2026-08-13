@@ -966,10 +966,10 @@ def test_fetch_mergerequests_deduplicates_approvers(
     asyncio.run(run())
 
 
-def test_fetch_mergerequests_approval_404_yields_zero(
+def test_fetch_mergerequests_approval_404_yields_none(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Approvals endpoint 404 (MR not EE or token has no access) defaults to 0."""
+    """Approvals endpoint 404 (MR not EE or token has no access) yields None sentinel."""
 
     async def run() -> None:
         def handler(request: httpx.Request) -> httpx.Response:
@@ -992,14 +992,16 @@ def test_fetch_mergerequests_approval_404_yields_zero(
         )
         await connector.close()
 
-        assert mrs[0].approval_count == 0
+        assert mrs[0].approval_count is None
 
     asyncio.run(run())
 
 
-def test_fetch_mergerequests_approval_403_yields_zero(
+def test_fetch_mergerequests_approval_403_yields_none(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Approvals endpoint 403 (token lacks approval scope) yields None sentinel."""
+
     async def run() -> None:
         def handler(request: httpx.Request) -> httpx.Response:
             if _is_mr_detail_path(request.url.path):
@@ -1021,7 +1023,7 @@ def test_fetch_mergerequests_approval_403_yields_zero(
         )
         await connector.close()
 
-        assert mrs[0].approval_count == 0
+        assert mrs[0].approval_count is None
 
     asyncio.run(run())
 

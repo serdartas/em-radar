@@ -17,7 +17,7 @@ const SIGNAL_TYPES = [
   { value: "issue", label: "Work tracking / tickets (Jira)" },
   { value: "merge_request", label: "Merge requests (GitLab)" },
 ]
-const CATEGORIES = ["flow", "hygiene", "sprint"]
+const CATEGORIES = ["flow", "hygiene", "quality", "sprint"]
 
 type Connector = "" | "AND" | "OR"
 

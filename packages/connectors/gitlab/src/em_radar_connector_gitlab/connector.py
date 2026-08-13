@@ -195,6 +195,12 @@ class GitLabConnector:
                     ("greater_than", "less_than", "between"),
                 ),
                 SignalField(
+                    "total_changes",
+                    "Total line changes",
+                    "number",
+                    ("greater_than", "less_than", "between"),
+                ),
+                SignalField(
                     "pipeline_status",
                     "Pipeline status",
                     "enum",
@@ -291,7 +297,7 @@ class GitLabConnector:
         async def _enrich(
             payload: Mapping[str, object],
             is_draft: bool,
-        ) -> tuple[Mapping[str, object], bool, int | None, int | None, int | None, int]:
+        ) -> tuple[Mapping[str, object], bool, int | None, int | None, int | None, int | None]:
             iid = _required_positive_int(payload, "iid")
             # Diff stats and approvals are independent — run them concurrently under the semaphore.
             # TaskGroup cancels the sibling coroutine on error; asyncio.gather would leave it
@@ -388,14 +394,15 @@ class GitLabConnector:
                 raise ConnectorDataError("GitLab MR pagination did not advance")
             page = next_page
 
-    async def _fetch_approval_count(self, project_id: str, iid: int) -> int:
+    async def _fetch_approval_count(self, project_id: str, iid: int) -> int | None:
         try:
             payload = await self._request_json(
                 f"api/v4/projects/{project_id}/merge_requests/{iid}/approvals"
             )
         except (ConnectorNotFoundError, ConnectorAuthError):
-            # Some GitLab editions or tokens do not have approvals access.
-            return 0
+            # Some GitLab editions or tokens do not expose the approvals API.
+            # Return None so the signal skips rather than falsely firing.
+            return None
         approved_by = payload.get("approved_by")
         if not isinstance(approved_by, list):
             return 0
@@ -646,7 +653,7 @@ def _mergerequest_from_payload(
     namespaced_project_id: str,
     instance_prefix: str,
     is_draft: bool,
-    approval_count: int,
+    approval_count: int | None,
     changed_files_count: int | None,
     additions: int | None,
     deletions: int | None,

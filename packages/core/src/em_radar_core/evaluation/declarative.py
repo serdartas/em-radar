@@ -46,7 +46,9 @@ class SignalSkipNote:
     reason: str
 
 
-_SPRINT_ONLY_TEMPLATES: frozenset[str] = frozenset({"repeated-carry-over", "sprint-scope-churn"})
+_SPRINT_FIELDS: frozenset[str] = frozenset(
+    {"sprint_count", "sprint_day", "sprint_phase", "sprint_scope_added_pct"}
+)
 
 # Maps expression field keys to (Capabilities attribute, human-readable reason).
 # When a signal's expression uses a field in this map and the connector reports the
@@ -84,12 +86,20 @@ def check_capability_gate(
     return None
 
 
+def _uses_sprint_fields(expression: JsonObject) -> bool:
+    """Return True when any leaf condition in the expression references a sprint-specific field."""
+    for leaf in _leaf_conditions(expression):
+        if leaf.get("field") in _SPRINT_FIELDS:
+            return True
+    return False
+
+
 def check_window_gate(
     definition: SignalDefinition,
     ctx: EvaluationContext,
 ) -> SignalSkipNote | None:
-    """Return a skip note when a sprint-only signal runs outside a sprint window, else None."""
-    if definition.template_key not in _SPRINT_ONLY_TEMPLATES:
+    """Return a skip note when a sprint-field signal runs outside a sprint window, else None."""
+    if definition.expression is None or not _uses_sprint_fields(definition.expression):
         return None
     if ctx.window.window_type is WindowType.SPRINT:
         return None
@@ -352,7 +362,8 @@ def preview_signal_definition(
 ) -> JsonObject:
     warnings: list[str] = []
     try:
-        findings = evaluate_signal_definition(definition, data, ctx, schema, scopes)
+        # Skip window-gating so sprint signals preview correctly with a date-range context.
+        findings = _evaluate_without_window_gate(definition, data, ctx, schema, scopes)
     except ExpressionValidationError as error:
         findings = []
         warnings.append(str(error))
@@ -369,6 +380,58 @@ def preview_signal_definition(
         ],
         "warnings": warnings,
     }
+
+
+def _evaluate_without_window_gate(
+    definition: SignalDefinition,
+    data: SignalData,
+    ctx: EvaluationContext,
+    schema: SignalCapabilitySchema,
+    scopes: list[ScopeDescriptor],
+) -> list[SignalFinding]:
+    """Like evaluate_signal_definition but skips check_window_gate — used by preview."""
+    if not definition.enabled or not scopes:
+        return []
+
+    for scope in scopes:
+        if scope.connector_capabilities is not None:
+            if check_capability_gate(definition, scope.connector_capabilities) is not None:
+                return []
+            break
+
+    validate_expression(definition.expression, schema, scopes)
+
+    severity = resolve_severity(definition.report_settings.severity)
+
+    if definition.entity_type == "merge_request":
+        return _evaluate_mr_signal(definition, data, ctx, severity)
+
+    if definition.entity_type == "sprint":
+        return _evaluate_sprint_signal(definition, data, ctx, severity, scopes)
+
+    findings: list[SignalFinding] = []
+    for scope in scopes:
+        for workitem in _workitems_for_scope(data, scope):
+            result = _evaluate_group(definition.expression, workitem, data, ctx, scope)
+            if not result.matched:
+                continue
+            findings.append(
+                SignalFinding(
+                    report_id=data.report_id,
+                    signal_id=str(definition.id),
+                    signal_name=definition.name,
+                    severity=severity,
+                    confidence=Confidence.HIGH,
+                    entity_type=EntityType.WORKITEM,
+                    entity_id=workitem.id,
+                    title=f"{workitem.key} - {workitem.title}",
+                    reason=result.reason,
+                    evidence={"scope_id": scope.scope_id, **result.evidence},
+                    source_link=workitem.source_url,
+                    created_at=ctx.now,
+                )
+            )
+    return findings
 
 
 def validate_expression(
@@ -582,6 +645,10 @@ def _mr_field_value(
         return mr.target_branch
     if field_key == "changed_files_count":
         return mr.changed_files_count
+    if field_key == "total_changes":
+        if mr.additions is None and mr.deletions is None:
+            return None
+        return (mr.additions or 0) + (mr.deletions or 0)
     if field_key == "pipeline_status":
         return mr.pipeline_status.value if mr.pipeline_status is not None else None
     if field_key == "age_since_pipeline_update":
@@ -608,7 +675,7 @@ def _mr_field_value(
             for r in data.reviews
             if r.mergerequest_id == mr.id and r.submitted_at is not None
         ]
-        return _age_days(ctx.now, max(submitted)) if submitted else None
+        return _age_days(ctx.now, max(submitted) if submitted else mr.created_at)
     raise ExpressionValidationError(f"unsupported MR field: {field_key}")
 
 

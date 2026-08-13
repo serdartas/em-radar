@@ -193,7 +193,7 @@ class JiraConnector:
                     "workitem_types",
                     "Workitem Types",
                     "enum",
-                    ("is", "is_not", "is_any_of", "is_none_of"),
+                    ("is", "is_not"),
                     values=("epic", "story", "task", "bug", "subtask", "spike", "other"),
                 ),
                 SignalField("issue_type", "Issue Type", "enum", ("is", "is_not", "is_any_of")),
@@ -266,6 +266,7 @@ class JiraConnector:
                     "number",
                     ("greater_than", "less_than", "between"),
                     availability=sprint_only,
+                    entity_type="sprint",
                 ),
             ),
         )

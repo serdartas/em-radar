@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -40,6 +40,7 @@ from em_radar_core.models import (
     StatusCategory,
     TeamProfile,
     WindowType,
+    WorkItem,
     WorkItemType,
 )
 from em_radar_core.signals import SignalData
@@ -134,17 +135,15 @@ def _workitem(
     item_type: WorkItemType = WorkItemType.STORY,
     status_category: StatusCategory = StatusCategory.IN_PROGRESS,
     status: str = "In Progress",
-    labels: list | None = None,
-    parent_id=None,
+    labels: list[str] | None = None,
+    parent_id: UUID | None = None,
     acceptance_criteria: str | None = "Given When Then",
     description: str | None = "Description",
-    sprint_ids: list | None = None,
-    current_sprint_id=None,
-    updated_at=None,
-    created_at=None,
-):
-    from em_radar_core.models import WorkItem
-
+    sprint_ids: list[UUID] | None = None,
+    current_sprint_id: UUID | None = None,
+    updated_at: datetime | None = None,
+    created_at: datetime | None = None,
+) -> WorkItem:
     return WorkItem(
         source=Source.JIRA,
         external_id=key,
@@ -169,11 +168,11 @@ def _workitem(
 def _mr(
     iid: int = 1,
     state: MergeRequestState = MergeRequestState.OPEN,
-    linked_workitem_keys: list | None = None,
+    linked_workitem_keys: list[str] | None = None,
     changed_files_count: int | None = None,
     pipeline_status: PipelineStatus | None = None,
     pipeline_updated_at: datetime | None = None,
-    approval_count: int = 0,
+    approval_count: int | None = None,
     merged_at: datetime | None = None,
 ) -> MergeRequest:
     if state is MergeRequestState.MERGED and merged_at is None:
@@ -523,5 +522,8 @@ def test_no_template_key_evidence_branches_in_declarative_engine() -> None:
         / "declarative.py"
     )
     source = declarative_py.read_text(encoding="utf-8")
-    matches = re.findall(r"template_key\s*==", source)
-    assert matches == [], f"Found template_key == branches in declarative.py: {matches}"
+    matches = re.findall(
+        r"template_key\s*(?:==|!=|not\s+in\b|\bin\b|\.get\()",
+        source,
+    )
+    assert matches == [], f"Found template_key dispatch branches in declarative.py: {matches}"
