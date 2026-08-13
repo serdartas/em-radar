@@ -1,4 +1,4 @@
-import { apiFetch } from "@/lib/api"
+import { API_BASE_URL, ApiError, apiFetch } from "@/lib/api"
 import type { Severity } from "@/lib/severity"
 
 export type Confidence = "high" | "low" | "medium"
@@ -73,4 +73,26 @@ export async function listReports(): Promise<ReportSummary[]> {
 
 export async function getReport(reportId: string): Promise<ReportDetail> {
   return apiFetch<ReportDetail>(`/reports/${reportId}`)
+}
+
+export function reportMarkdownExportPath(reportId: string): string {
+  return `/reports/${reportId}/export.md`
+}
+
+export async function getReportMarkdown(reportId: string): Promise<string> {
+  const response = await fetch(`${API_BASE_URL}${reportMarkdownExportPath(reportId)}`)
+  if (!response.ok) {
+    throw new ApiError(
+      response.status,
+      `Markdown export for report ${reportId} failed with status ${response.status}.`,
+    )
+  }
+  return response.text()
+}
+
+export function reportMarkdownQuery(reportId: string) {
+  return {
+    queryKey: ["reports", reportId, "export.md"] as const,
+    queryFn: () => getReportMarkdown(reportId),
+  }
 }
