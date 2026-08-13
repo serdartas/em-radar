@@ -5,7 +5,7 @@ from collections.abc import Iterable
 from datetime import datetime, timezone
 from uuid import UUID
 
-from em_radar_core.models import Severity, SignalFinding, WindowType
+from em_radar_core.models import ReportStatus, Severity, SignalFinding, WindowType
 from pydantic import BaseModel, ConfigDict, JsonValue
 
 from em_radar_reports.sectioning import SECTION_ORDER, Section, SectionedReport
@@ -26,6 +26,15 @@ _SEVERITY_LABEL: dict[Severity, str] = {
     Severity.WARNING: "Warning",
     Severity.INFO: "Info",
 }
+
+_STATUS_LABEL: dict[ReportStatus, str] = {
+    ReportStatus.PENDING: "Pending",
+    ReportStatus.RUNNING: "Running",
+    ReportStatus.SUCCEEDED: "Succeeded",
+    ReportStatus.FAILED: "Failed",
+}
+
+_FAILURE_NOTICE: str = "> **This report did not complete successfully.**"
 
 _NO_FINDINGS: str = "_No findings._"
 
@@ -51,7 +60,9 @@ class ReportMetadata(BaseModel):
 
     report_id: UUID
     generated_at: datetime
+    status: ReportStatus
     window_type: WindowType
+    error: str | None = None
     team_name: str | None = None
     team_id: UUID | None = None
     window_start: datetime | None = None
@@ -73,6 +84,10 @@ def render_markdown(report: SectionedReport, metadata: ReportMetadata) -> str:
     reports package source-agnostic.
     """
     lines: list[str] = [f"# {REPORT_TITLE}", ""]
+    notice = _render_failure_notice(metadata)
+    if notice:
+        lines.extend(notice)
+        lines.append("")
     lines.extend(_render_metadata(metadata))
     lines.append("")
 
@@ -90,6 +105,22 @@ def render_markdown(report: SectionedReport, metadata: ReportMetadata) -> str:
     return "\n".join(lines).rstrip("\n") + "\n"
 
 
+def _render_failure_notice(metadata: ReportMetadata) -> list[str]:
+    """Unmistakable notice for a non-succeeded run, so a failed export is never mistaken
+    for a valid zero-finding report. Empty for a succeeded report."""
+    if metadata.status is ReportStatus.SUCCEEDED:
+        return []
+    lines = [
+        _FAILURE_NOTICE,
+        ">",
+        f"> **Status:** {_STATUS_LABEL[metadata.status]}",
+    ]
+    if metadata.error:
+        lines.append(">")
+        lines.append(f"> **Error:** {_inline(metadata.error)}")
+    return lines
+
+
 def _render_metadata(metadata: ReportMetadata) -> list[str]:
     lines = [f"- **Report:** {metadata.report_id}"]
     team = _format_team(metadata)
@@ -97,6 +128,7 @@ def _render_metadata(metadata: ReportMetadata) -> list[str]:
         lines.append(f"- **Team:** {team}")
     lines.append(f"- **Window:** {_format_window(metadata)}")
     lines.append(f"- **Generated:** {_format_datetime(metadata.generated_at)}")
+    lines.append(f"- **Status:** {_STATUS_LABEL[metadata.status]}")
     return lines
 
 

@@ -39,6 +39,8 @@ def build_report_markdown(
     metadata = ReportMetadata(
         report_id=report.id,
         generated_at=report.started_at,
+        status=report.status,
+        error=report.error,
         window_type=window.window_type if window is not None else WindowType.DATE_RANGE,
         team_name=team.name if team is not None else None,
         team_id=team.id if team is not None else None,

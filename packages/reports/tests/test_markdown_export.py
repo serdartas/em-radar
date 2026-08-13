@@ -1,7 +1,14 @@
 from datetime import datetime, timezone
 from uuid import UUID
 
-from em_radar_core.models import Confidence, EntityType, Severity, SignalFinding, WindowType
+from em_radar_core.models import (
+    Confidence,
+    EntityType,
+    ReportStatus,
+    Severity,
+    SignalFinding,
+    WindowType,
+)
 from em_radar_reports import (
     PartialDataNote,
     ReportMetadata,
@@ -23,6 +30,7 @@ def _metadata() -> ReportMetadata:
     return ReportMetadata(
         report_id=REPORT_ID,
         generated_at=NOW,
+        status=ReportStatus.SUCCEEDED,
         window_type=WindowType.DATE_RANGE,
         team_name="Platform",
         team_id=TEAM_ID,
@@ -236,6 +244,7 @@ def test_html_like_source_text_is_escaped() -> None:
     metadata = ReportMetadata(
         report_id=REPORT_ID,
         generated_at=NOW,
+        status=ReportStatus.SUCCEEDED,
         window_type=WindowType.SPRINT,
         team_name="A & B <Squad>",
         sprint_label="Sprint <7>",
@@ -278,6 +287,7 @@ def test_markdown_syntax_in_source_text_rendered_literally() -> None:
     metadata = ReportMetadata(
         report_id=REPORT_ID,
         generated_at=NOW,
+        status=ReportStatus.SUCCEEDED,
         window_type=WindowType.SPRINT,
         team_name="Team **X** _y_",
         sprint_label="S1",
@@ -329,6 +339,7 @@ def test_sprint_window_metadata_rendered() -> None:
     metadata = ReportMetadata(
         report_id=REPORT_ID,
         generated_at=NOW,
+        status=ReportStatus.SUCCEEDED,
         window_type=WindowType.SPRINT,
         team_id=TEAM_ID,
         sprint_id=SPRINT_ID,
@@ -346,6 +357,7 @@ def test_sprint_window_without_label_falls_back_to_id() -> None:
     metadata = ReportMetadata(
         report_id=REPORT_ID,
         generated_at=NOW,
+        status=ReportStatus.SUCCEEDED,
         window_type=WindowType.SPRINT,
         sprint_id=SPRINT_ID,
     )
@@ -357,11 +369,39 @@ def test_naive_generation_timestamp_coerced_to_utc() -> None:
     metadata = ReportMetadata(
         report_id=REPORT_ID,
         generated_at=datetime(2026, 8, 13, 12, 0, 0),
+        status=ReportStatus.SUCCEEDED,
         window_type=WindowType.SPRINT,
         sprint_label="S1",
     )
     markdown = render_markdown(build_sections([], {}), metadata)
     assert "- **Generated:** 2026-08-13T12:00:00+00:00" in markdown
+
+
+def test_failed_report_renders_unmistakable_failure_notice() -> None:
+    metadata = ReportMetadata(
+        report_id=REPORT_ID,
+        generated_at=NOW,
+        status=ReportStatus.FAILED,
+        window_type=WindowType.DATE_RANGE,
+        error="all data sources failed: rate limited",
+        window_start=datetime(2026, 8, 1, 0, 0, 0, tzinfo=timezone.utc),
+        window_end=datetime(2026, 8, 13, 0, 0, 0, tzinfo=timezone.utc),
+    )
+    markdown = render_markdown(build_sections([], {}), metadata)
+
+    assert "> **This report did not complete successfully.**" in markdown
+    assert "> **Status:** Failed" in markdown
+    assert "> **Error:** all data sources failed: rate limited" in markdown
+    assert "- **Status:** Failed" in markdown
+    # The notice precedes the metadata block and the sections.
+    assert markdown.index("did not complete successfully") < markdown.index("- **Report:**")
+    assert markdown.index("- **Report:**") < markdown.index("## Summary")
+
+
+def test_succeeded_report_has_no_failure_notice() -> None:
+    markdown = render_markdown(_demo_report(), _metadata())
+    assert "- **Status:** Succeeded" in markdown
+    assert "did not complete successfully" not in markdown
 
 
 def test_evidence_keys_sorted_deterministically() -> None:
@@ -446,6 +486,7 @@ def test_matches_expected_snapshot() -> None:
         f"- **Team:** Platform ({TEAM_ID})\n"
         "- **Window:** 2026-08-01T00:00:00+00:00 to 2026-08-13T00:00:00+00:00 (date range)\n"
         "- **Generated:** 2026-08-13T12:00:00+00:00\n"
+        "- **Status:** Succeeded\n"
         "\n"
         "## Summary\n"
         "\n"
@@ -513,6 +554,7 @@ def test_empty_string_team_field_is_omitted() -> None:
     metadata = ReportMetadata(
         report_id=REPORT_ID,
         generated_at=NOW,
+        status=ReportStatus.SUCCEEDED,
         window_type=WindowType.SPRINT,
         sprint_label="S1",
     )
