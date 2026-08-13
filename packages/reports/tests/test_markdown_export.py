@@ -243,7 +243,8 @@ def test_html_like_source_text_is_escaped() -> None:
     markdown = render_markdown(report, metadata)
 
     assert "&lt;Button&gt;" in markdown
-    assert "&lt;!--" in markdown
+    # The comment opener is both HTML-escaped and Markdown-escaped (the bang backslashed).
+    assert "&lt;\\!--" in markdown
     assert "&amp;" in markdown
     assert "&lt;Component&gt;" in markdown
     # No active HTML/comment markup survives anywhere in the export.
@@ -255,6 +256,47 @@ def test_html_like_source_text_is_escaped() -> None:
     assert "Sprint &lt;7&gt;" in markdown
     # The self-generated link structure and the URL are intact and not corrupted.
     assert "(<https://gitlab.example.com/mr/42>)" in markdown
+
+
+def test_markdown_syntax_in_source_text_rendered_literally() -> None:
+    finding = _finding(
+        signal_id="flow-mr",
+        signal_name="Merge request waiting too long",
+        severity=Severity.CRITICAL,
+        entity_type=EntityType.MERGEREQUEST,
+        title="!42 - **urgent** [incident](https://example.invalid)",
+        entity_id="00000000-0000-0000-0000-00000000000d",
+        reason="see `code` and _underscore_ now",
+        recommendation="fix **now** [ticket](https://evil.invalid)",
+        evidence={"note": "**bold** `x`"},
+        source_link="https://gitlab.example.com/mr/42",
+    )
+    report = build_sections(
+        [finding],
+        {"flow-mr": SignalMeta(category="flow", template_key="mergerequest-waiting-too-long")},
+    )
+    metadata = ReportMetadata(
+        report_id=REPORT_ID,
+        generated_at=NOW,
+        window_type=WindowType.SPRINT,
+        team_name="Team **X** _y_",
+        sprint_label="S1",
+    )
+    markdown = render_markdown(report, metadata)
+
+    assert "\\*\\*urgent\\*\\*" in markdown
+    assert "\\[incident\\]" in markdown
+    assert "\\`code\\`" in markdown
+    assert "\\_underscore\\_" in markdown
+    assert "Team \\*\\*X\\*\\* \\_y\\_" in markdown
+    # No active bold, code span, or injected link from source text.
+    assert "**urgent**" not in markdown
+    assert "`code`" not in markdown
+    assert "[incident](https://example.invalid)" not in markdown
+    assert "https://example.invalid" in markdown  # present, but as inert escaped text
+    assert "(https://example.invalid)" not in markdown
+    # The self-generated source link structure stays intact.
+    assert "](<https://gitlab.example.com/mr/42>)" in markdown
 
 
 def test_summary_and_notes_rendered() -> None:
@@ -322,7 +364,7 @@ def test_naive_generation_timestamp_coerced_to_utc() -> None:
 
 def test_evidence_keys_sorted_deterministically() -> None:
     markdown = render_markdown(_demo_report(), _metadata())
-    assert "- **Evidence:** open_days: 12, reviewers: 0" in markdown
+    assert "- **Evidence:** open\\_days: 12, reviewers: 0" in markdown
 
 
 def test_format_evidence_non_dict_values() -> None:
@@ -412,12 +454,12 @@ def test_matches_expected_snapshot() -> None:
         "\n"
         "## Top Risks\n"
         "\n"
-        "### !42 - refactor pipeline\n"
+        "### \\!42 - refactor pipeline\n"
         "- **Severity:** Critical\n"
         "- **Reason:** Open 12 days without review\n"
         "- **Recommendation:** Request a reviewer\n"
-        "- **Evidence:** open_days: 12, reviewers: 0\n"
-        "- **Source:** [!42 - refactor pipeline](<https://gitlab.example.com/mr/42>)\n"
+        "- **Evidence:** open\\_days: 12, reviewers: 0\n"
+        "- **Source:** [\\!42 - refactor pipeline](<https://gitlab.example.com/mr/42>)\n"
         "\n"
         "## Planning Hygiene\n"
         "\n"
@@ -433,12 +475,12 @@ def test_matches_expected_snapshot() -> None:
         "\n"
         "## Merge Request Flow\n"
         "\n"
-        "### !42 - refactor pipeline\n"
+        "### \\!42 - refactor pipeline\n"
         "- **Severity:** Critical\n"
         "- **Reason:** Open 12 days without review\n"
         "- **Recommendation:** Request a reviewer\n"
-        "- **Evidence:** open_days: 12, reviewers: 0\n"
-        "- **Source:** [!42 - refactor pipeline](<https://gitlab.example.com/mr/42>)\n"
+        "- **Evidence:** open\\_days: 12, reviewers: 0\n"
+        "- **Source:** [\\!42 - refactor pipeline](<https://gitlab.example.com/mr/42>)\n"
         "\n"
         "## Source Linking\n"
         "\n"
@@ -446,21 +488,21 @@ def test_matches_expected_snapshot() -> None:
         "\n"
         "## Detailed Findings\n"
         "\n"
-        "### !42 - refactor pipeline\n"
+        "### \\!42 - refactor pipeline\n"
         "- **Severity:** Critical\n"
         "- **Reason:** Open 12 days without review\n"
         "- **Recommendation:** Request a reviewer\n"
-        "- **Evidence:** open_days: 12, reviewers: 0\n"
-        "- **Source:** [!42 - refactor pipeline](<https://gitlab.example.com/mr/42>)\n"
+        "- **Evidence:** open\\_days: 12, reviewers: 0\n"
+        "- **Source:** [\\!42 - refactor pipeline](<https://gitlab.example.com/mr/42>)\n"
         "\n"
         "## Suggested Actions\n"
         "\n"
-        "### !42 - refactor pipeline\n"
+        "### \\!42 - refactor pipeline\n"
         "- **Severity:** Critical\n"
         "- **Reason:** Open 12 days without review\n"
         "- **Recommendation:** Request a reviewer\n"
-        "- **Evidence:** open_days: 12, reviewers: 0\n"
-        "- **Source:** [!42 - refactor pipeline](<https://gitlab.example.com/mr/42>)\n"
+        "- **Evidence:** open\\_days: 12, reviewers: 0\n"
+        "- **Source:** [\\!42 - refactor pipeline](<https://gitlab.example.com/mr/42>)\n"
     )
     assert render_markdown(report, _metadata()) == expected
 

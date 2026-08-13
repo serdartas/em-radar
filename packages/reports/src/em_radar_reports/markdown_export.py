@@ -31,6 +31,12 @@ _NO_FINDINGS: str = "_No findings._"
 
 _WHITESPACE = re.compile(r"\s+")
 
+# CommonMark ASCII punctuation that must be backslash-escaped so source text is
+# rendered literally. Backslash is included so it is escaped too; str.translate
+# runs in a single pass, so escaped backslashes are never re-escaped. Quotes are
+# intentionally excluded so JSON-serialized evidence keeps its double quotes.
+_MD_ESCAPE = str.maketrans({char: f"\\{char}" for char in "\\`*_[](){}#+!|"})
+
 
 class ReportMetadata(BaseModel):
     """Provenance the caller attaches to an export so runs are distinguishable.
@@ -147,7 +153,7 @@ def _render_findings(findings: Iterable[SignalFinding]) -> list[str]:
             lines.append(f"- **Recommendation:** {_inline(finding.recommendation)}")
         evidence = _format_evidence(finding.evidence)
         if evidence:
-            lines.append(f"- **Evidence:** {evidence}")
+            lines.append(f"- **Evidence:** {_inline(evidence)}")
         if finding.source_link:
             lines.append(f"- **Source:** {_link(finding.title, finding.source_link)}")
         lines.append("")
@@ -164,7 +170,7 @@ def _format_evidence(evidence: JsonValue) -> str:
         return ""
     else:
         rendered = _evidence_value(evidence)
-    return _inline(rendered)
+    return _collapse_ws(rendered)
 
 
 def _evidence_value(value: JsonValue) -> str:
@@ -198,13 +204,13 @@ def _collapse_ws(text: str) -> str:
 
 
 def _inline(text: str) -> str:
-    return html.escape(_collapse_ws(text), quote=False)
+    # HTML-escape first, then neutralize Markdown syntax so source text renders literally.
+    return _escape_md(html.escape(_collapse_ws(text), quote=False))
+
+
+def _escape_md(text: str) -> str:
+    return text.translate(_MD_ESCAPE)
 
 
 def _link(text: str, url: str) -> str:
-    return f"[{_escape_link_text(text)}](<{_collapse_ws(url)}>)"
-
-
-def _escape_link_text(text: str) -> str:
-    # HTML-escape source text first, then escape the Markdown link-syntax metacharacters.
-    return _inline(text).replace("\\", "\\\\").replace("[", "\\[").replace("]", "\\]")
+    return f"[{_inline(text)}](<{_collapse_ws(url)}>)"
