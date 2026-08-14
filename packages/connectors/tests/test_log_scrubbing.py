@@ -336,6 +336,37 @@ def test_filter_handles_cyclic_extra_without_recursing_forever() -> None:
     filt.filter(record)
 
 
+def test_cyclic_extra_does_not_reintroduce_registered_secret() -> None:
+    """A cyclic reference must be replaced with a marker, not the original object, so a
+    registered secret elsewhere in the cycle cannot leak through the repeated reference."""
+    token = "cyclic-registered-secret-abcdef"
+    filt = _CredentialRedactionFilter()
+    filt.add_sensitive_values([token])
+
+    payload: dict[str, object] = {"value": token}
+    payload["self"] = payload
+    record = _make_record("request")
+    record.payload = payload
+    filt.filter(record)
+
+    assert token not in repr(record.payload)
+
+
+def test_short_token_under_credential_key_is_redacted_in_live_mapping() -> None:
+    """A short, unregistered credential under a credential-named key in a live mapping is
+    redacted by key context, so a %(headers)s render cannot emit it."""
+    filt = _CredentialRedactionFilter()
+
+    record = _make_record("request")
+    record.headers = {"Authorization": "abc", "Host": "example.com"}
+    filt.filter(record)
+
+    formatted = logging.Formatter("%(headers)s").format(record)
+    assert "abc" not in formatted
+    assert _REDACTED in formatted
+    assert "example.com" in formatted
+
+
 def test_filter_does_not_evaluate_equality_on_arbitrary_extra() -> None:
     """The attribute sweep must never invoke __eq__ on an arbitrary extra object, since a
     raising or non-boolean implementation would abort the process-wide logging hook."""

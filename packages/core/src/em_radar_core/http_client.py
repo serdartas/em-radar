@@ -23,6 +23,22 @@ _MIN_REGISTERED_LENGTH = 5
 # Redaction is keyed on the credential header name so the value is scrubbed regardless
 # of its length or form.
 _CREDENTIAL_HEADER_KEYS = r"authorization|private-token"
+_CYCLE_PLACEHOLDER = "<circular reference>"
+# Mapping keys whose value is a credential; used to redact by key context when scrubbing a
+# live structured `extra` mapping (mirrors the connection serializer's credential rule).
+_CREDENTIAL_KEY_NAMES = frozenset(
+    {
+        "accesstoken",
+        "apikey",
+        "authorization",
+        "clientsecret",
+        "password",
+        "privatetoken",
+        "refreshtoken",
+        "secret",
+        "token",
+    }
+)
 _CREDENTIAL_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     # Quoted mapping / dict / httpx Headers repr, e.g. {'private-token': 'abc'}.
     (
@@ -35,6 +51,17 @@ _CREDENTIAL_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     # Bare Bearer scheme.
     (re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+"), f"Bearer {_REDACTED}"),
 )
+
+
+def _is_credential_key(key: object) -> bool:
+    if not isinstance(key, str):
+        return False
+    normalized = "".join(character for character in key.casefold() if character.isalnum())
+    return (
+        normalized in _CREDENTIAL_KEY_NAMES
+        or normalized.endswith("token")
+        or "secret" in normalized
+    )
 
 
 class _CredentialRedactionFilter(logging.Filter):
@@ -80,12 +107,19 @@ class _CredentialRedactionFilter(logging.Filter):
             return (True, bytearray(encoded) if isinstance(value, bytearray) else encoded)
         if isinstance(value, Mapping | list | tuple | set | frozenset):
             if id(value) in seen:
-                return (False, value)
+                # Replace a repeated reference with a marker rather than the original object,
+                # which would reintroduce unsanitized content held elsewhere in the cycle.
+                return (True, _CYCLE_PLACEHOLDER)
             seen = seen | {id(value)}
             if isinstance(value, Mapping):
                 changed = False
                 result: dict[object, object] = {}
                 for key, item in value.items():
+                    if _is_credential_key(key):
+                        result[key] = _REDACTED
+                        if not (isinstance(item, str) and item == _REDACTED):
+                            changed = True
+                        continue
                     item_changed, new_item = self._redact_value(item, seen)
                     changed = changed or item_changed
                     result[key] = new_item
