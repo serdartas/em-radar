@@ -233,8 +233,13 @@ def test_sprint_scope_churn_fires_via_sprint_entity_expression() -> None:
 
     assert len(findings) == 1
     assert findings[0].entity_type is EntityType.SPRINT
-    assert "sprint_scope_added_pct" in findings[0].evidence
-    assert findings[0].evidence["sprint_scope_added_pct"] == 100.0
+    ev = findings[0].evidence
+    assert ev["churn_pct"] == 100.0
+    assert "sprint_scope_added_pct" not in ev
+    # Fixture: 1 original (transition 8 days ago, before sprint start 7 days ago),
+    # 1 added (transition 2 days ago, after sprint start).
+    assert ev["original_count"] == 1
+    assert ev["added_count"] == 1
 
 
 def test_sprint_scope_churn_multi_transition_item_counted_once() -> None:
@@ -310,6 +315,56 @@ def test_sprint_scope_churn_below_threshold_does_not_fire() -> None:
     )
 
     assert findings == []
+
+
+def test_sprint_scope_churn_evidence_counts_with_multiple_originals() -> None:
+    """Evidence counts are correct when original_count > 1, proving they are not always 1/1."""
+    s = sprint(name="Sprint 1", start_date=NOW - timedelta(days=7))
+    # 3 originals (transition before sprint start), 2 added (transition after sprint start)
+    originals = [
+        workitem(key=f"RAD-{i}", sprint_ids=[s.id], current_sprint_id=s.id) for i in range(3)
+    ]
+    added_items = [
+        workitem(key=f"RAD-NEW-{i}", sprint_ids=[s.id], current_sprint_id=s.id) for i in range(2)
+    ]
+    original_transitions = tuple(
+        transition(
+            wi.id,
+            occurred_at=NOW - timedelta(days=8),
+            to_status_category=StatusCategory.IN_PROGRESS,
+        )
+        for wi in originals
+    )
+    added_transitions = tuple(
+        transition(
+            wi.id,
+            occurred_at=NOW - timedelta(days=2),
+            to_status_category=StatusCategory.IN_PROGRESS,
+        )
+        for wi in added_items
+    )
+    data = SignalData(
+        report_id=uuid4(),
+        projects=(project(),),
+        boards=(board(),),
+        sprints=(s,),
+        workitems=tuple([*originals, *added_items]),
+        transitions=original_transitions + added_transitions,
+    )
+    ctx = context(sprint_id=s.id)
+    definition = instantiate_jira_signal_template("sprint-scope-churn")
+
+    findings = evaluate_signal_definition(
+        definition, data, ctx, JiraConnector.describe_signal_schema(), [_sprint_scope()]
+    )
+
+    # 2/3 = 66.67% churn — above the 20% threshold, must fire
+    assert len(findings) == 1
+    ev = findings[0].evidence
+    assert ev["original_count"] == 3
+    assert ev["added_count"] == 2
+    assert ev["churn_pct"] == round(2 / 3 * 100.0, 2)
+    assert "sprint_scope_added_pct" not in ev
 
 
 # ---------------------------------------------------------------------------

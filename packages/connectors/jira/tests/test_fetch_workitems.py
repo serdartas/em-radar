@@ -129,7 +129,7 @@ def test_fetch_workitems_normalizes_fixture_issues(monkeypatch: pytest.MonkeyPat
 
     assert seen_jql == [
         'project in ("10000") AND issuetype in ("Epic", "Story", "Bug") '
-        'AND updated <= "2026-06-15 00:00"'
+        'AND updated < "2026-06-15 00:00"'
     ]
 
 
@@ -289,10 +289,10 @@ def test_fetch_workitems_falls_back_to_classic_search_when_jql_missing(
     assert seen_paths == ["/rest/api/2/search/jql", "/rest/api/2/search"]
 
 
-def test_fetch_workitems_date_range_jql_includes_upper_bound(
+def test_fetch_workitems_date_range_jql_uses_exclusive_upper_bound(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """DATE_RANGE windows must emit updated <= end in the JQL.
+    """DATE_RANGE windows must emit updated < end in the JQL (exclusive end, half-open [start, end)).
 
     No lower bound is added — stale in-progress issues (e.g. updated 20+ days ago)
     must not be excluded because signals like StaleInProgressSignal target them
@@ -325,7 +325,81 @@ def test_fetch_workitems_date_range_jql_includes_upper_bound(
 
     assert len(seen_jql) == 1
     assert "updated >= " not in seen_jql[0]
-    assert 'updated <= "2026-06-15 00:00"' in seen_jql[0]
+    assert 'updated < "2026-06-15 00:00"' in seen_jql[0]
+    assert 'updated <= "2026-06-15 00:00"' not in seen_jql[0]
+
+
+def test_fetch_workitems_non_midnight_end_ceil_and_exact_postfilter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DATE_RANGE with a non-minute-aligned end must ceil the JQL boundary and apply
+    an exact exclusive-end post-filter so the final partial minute is handled correctly.
+
+    window.end = 2026-06-15T14:30:45Z
+      - JQL must use updated < "2026-06-15 14:31"  (ceiled, NOT 14:30)
+      - issue updated at 14:30:10 IS returned (inside the window)
+      - issue updated at 14:30:45 is EXCLUDED (exactly at end — exclusive)
+      - issue updated at 14:30:50 is EXCLUDED (after the exact end, same minute)
+    """
+    seen_jql: list[str] = []
+
+    async def run() -> None:
+        # All three issues are returned by the mock API (the JQL is coarse).
+        # The exact post-filter under test must exclude the last two.
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen_jql.append(request.url.params["jql"])
+            return httpx.Response(
+                200,
+                json={
+                    "issues": [
+                        _issue(
+                            issue_id="10001",
+                            key="ENG-1",
+                            updated="2026-06-15T14:30:10.000Z",  # inside — kept
+                        ),
+                        _issue(
+                            issue_id="10002",
+                            key="ENG-2",
+                            updated="2026-06-15T14:30:45.000Z",  # at end — excluded
+                        ),
+                        _issue(
+                            issue_id="10003",
+                            key="ENG-3",
+                            updated="2026-06-15T14:30:50.000Z",  # after end — excluded
+                        ),
+                    ]
+                },
+            )
+
+        monkeypatch.setattr(jira_connector_module, "CLIENT_FACTORY", _client_factory_for(handler))
+        connector = JiraConnector(
+            {
+                "base_url": "https://jira.example.com",
+                "token": "jira-token-1234",
+            }
+        )
+
+        window = EvaluationWindow(
+            window_type=WindowType.DATE_RANGE,
+            start=datetime(2026, 6, 1, tzinfo=timezone.utc),
+            end=datetime(2026, 6, 15, 14, 30, 45, tzinfo=timezone.utc),
+            team_profile_id=uuid4(),
+        )
+        workitems = await _collect(
+            connector.fetch_workitems(WorkItemScope(project_external_ids=["10000"]), window)
+        )
+        await connector.close()
+
+        assert len(workitems) == 1
+        assert workitems[0].key == "ENG-1"
+
+    asyncio.run(run())
+
+    assert len(seen_jql) == 1
+    # Ceiled boundary: 14:30:45 → 14:31
+    assert 'updated < "2026-06-15 14:31"' in seen_jql[0], f"unexpected JQL: {seen_jql[0]}"
+    # Must NOT use the truncated (floor) boundary
+    assert 'updated < "2026-06-15 14:30"' not in seen_jql[0]
 
 
 def test_fetch_workitems_mid_stream_404_raises_without_restarting(
@@ -446,6 +520,7 @@ def _issue(
     reporter: Mapping[str, object] | None = None,
     resolutiondate: str | None = None,
     epic_link: str | None = None,
+    updated: str = "2026-06-02T09:00:00.000+0200",
 ) -> Mapping[str, object]:
     fields: dict[str, object] = {
         "summary": f"Summary {key}",
@@ -459,7 +534,7 @@ def _issue(
         "labels": labels or [],
         "components": components or [],
         "created": "2026-06-01T09:00:00.000+0200",
-        "updated": "2026-06-02T09:00:00.000+0200",
+        "updated": updated,
         "resolutiondate": resolutiondate,
         "duedate": None,
         "customfield_10016": story_points,

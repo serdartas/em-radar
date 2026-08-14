@@ -115,6 +115,7 @@ class GitLabConnector:
             headers={"PRIVATE-TOKEN": token},
             verify=self.config.verify_tls,
         )
+        self.approvals_unavailable: bool = False
 
     async def test_connection(self) -> ConnectionTestResult:
         user_payload = await self._request_json("api/v4/user")
@@ -401,7 +402,8 @@ class GitLabConnector:
             )
         except (ConnectorNotFoundError, ConnectorAuthError):
             # Some GitLab editions or tokens do not expose the approvals API.
-            # Return None so the signal skips rather than falsely firing.
+            # Track unavailability so the runner can surface a partial-data note (REQ-NF-070).
+            self.approvals_unavailable = True
             return None
         approved_by = payload.get("approved_by")
         if not isinstance(approved_by, list):
@@ -741,15 +743,18 @@ def _within_window_bounds(moment: datetime | None, window: EvaluationWindow) -> 
         return False
     if window.start is not None and moment < window.start:
         return False
-    if window.end is not None and moment > window.end:
+    if window.end is not None and moment >= window.end:
         return False
     return True
 
 
 def _mr_in_window(mr: MergeRequest, window: EvaluationWindow) -> bool:
-    # Open/draft MRs are always included: a stale open MR last touched before the window
-    # start is exactly the case the "waiting too long" signal is designed to catch.
+    # Open/draft MRs are included: a stale open MR last touched before the window start
+    # is exactly the case the "waiting too long" signal is designed to catch.
+    # MRs created after the window end didn't exist during the reported period.
     if mr.state in (MergeRequestState.OPEN, MergeRequestState.DRAFT):
+        if window.end is not None and mr.created_at >= window.end:
+            return False
         return True
     # Without bounds there is nothing to filter against.
     if window.start is None and window.end is None:

@@ -32,6 +32,7 @@ export interface SignalField {
   values: unknown[]
   value_provider: SignalValueProvider | null
   availability: SignalFieldAvailability | null
+  entity_type: string | null
 }
 
 export interface SignalCapabilitySchema {

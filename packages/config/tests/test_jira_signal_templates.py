@@ -78,7 +78,7 @@ def test_all_eight_jira_templates_preserve_evidence_contracts() -> None:
         "epic-too-broad": ("issue_type", "child_count"),
         "epic-without-measurable-description": ("issue_type", "description_length"),
         "repeated-carry-over": ("status_category", "sprint_count"),
-        "sprint-scope-churn": ("sprint_scope_added_pct",),
+        "sprint-scope-churn": ("original_count", "added_count", "churn_pct"),
     }
 
     assert {template.key: template.evidence_shape for template in JIRA_SIGNAL_TEMPLATES} == expected
@@ -209,7 +209,7 @@ def test_sprint_scope_churn_template_uses_sprint_level_evidence() -> None:
 
     assert len(findings) == 1
     assert findings[0].entity_type is EntityType.SPRINT
-    assert findings[0].evidence["sprint_scope_added_pct"] == 100.0
+    assert findings[0].evidence["churn_pct"] == 100.0
 
 
 def test_template_evidence_reflects_observed_field_values() -> None:

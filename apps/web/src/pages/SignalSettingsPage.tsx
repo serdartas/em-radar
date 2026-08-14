@@ -27,12 +27,16 @@ export function SignalSettingsPage() {
 
   // Build fieldsByEntityType from all registered connector schemas.
   // issue fields come from Jira; merge_request fields come from GitLab.
+  // Fields with a declared entity_type are restricted to that entity; fields
+  // without one (entity_type: null) are available to all entity types.
   const fieldsByEntityType: Record<string, SignalField[]> =
     connectorsQuery.data?.reduce(
       (acc, connector) => {
         for (const entityType of connector.signal_schema?.entity_types ?? []) {
           if (!acc[entityType]) {
-            acc[entityType] = connector.signal_schema?.fields ?? []
+            acc[entityType] = (connector.signal_schema?.fields ?? []).filter(
+              (f) => f.entity_type == null || f.entity_type === entityType,
+            )
           }
         }
         return acc

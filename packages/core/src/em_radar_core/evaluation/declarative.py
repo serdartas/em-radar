@@ -1,7 +1,7 @@
 import fnmatch
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import TypeAlias
+from typing import NamedTuple, TypeAlias
 
 from em_radar_core.connectors import Capabilities, SignalCapabilitySchema, SignalField
 from em_radar_core.models import (
@@ -107,6 +107,44 @@ def check_window_gate(
         signal_id=str(definition.id),
         reason="requires a sprint window",
     )
+
+
+def _guarantees_link_emptiness(expression: object) -> bool:
+    """Return True when every match of the expression has an empty ``linked_workitem_keys``.
+
+    Section metadata is signal-wide, so link-emptiness must be guaranteed for all matches:
+    a mandatory ``all`` conjunct suffices, but every branch of an ``any`` must guarantee it.
+    """
+    if not isinstance(expression, dict):
+        return False
+    if expression.get("type") != "group":
+        return (
+            expression.get("field") == "linked_workitem_keys"
+            and expression.get("operator") == "is_empty"
+        )
+    conditions = expression.get("conditions")
+    if not isinstance(conditions, list):
+        return False
+    checks = [_guarantees_link_emptiness(c) for c in conditions if isinstance(c, dict)]
+    if not checks:
+        return False
+    operator = expression.get("operator")
+    if operator == "all":
+        return any(checks)
+    if operator == "any":
+        return all(checks)
+    return False
+
+
+def is_source_linking_signal(definition: SignalDefinition) -> bool:
+    """Return True when the definition flags entities missing a linked work item.
+
+    A source-linking signal's expression guarantees an empty ``linked_workitem_keys``
+    for every match (see ``_guarantees_link_emptiness``). Detecting it here lets
+    user-created signals (no template key) route their findings to the Source Linking
+    report section.
+    """
+    return _guarantees_link_emptiness(definition.expression)
 
 
 def resolve_severity(
@@ -295,30 +333,38 @@ def _evaluate_sprint_condition(
     field_key = str(condition["field"])
     operator = str(condition["operator"])
     expected = condition.get("value")
-    observed = _sprint_field_value(field_key, sprint, data, ctx)
+    evidence: JsonObject
+    if field_key == "sprint_scope_added_pct":
+        churn = _sprint_scope_churn(sprint, data, ctx)
+        observed: object = churn.pct if churn is not None else None
+        if churn is not None:
+            evidence = {
+                "original_count": churn.original_count,
+                "added_count": churn.added_count,
+                "churn_pct": _json_value(churn.pct),
+            }
+        else:
+            evidence = {}
+    else:
+        raise ExpressionValidationError(f"unsupported sprint field: {field_key}")
     matched = _compare(observed, operator, expected)
     return ConditionMatch(
         matched=matched,
         reason=f"{field_key} {operator} {expected} (observed {observed})",
-        evidence={field_key: _json_value(observed)},
+        evidence=evidence,
     )
 
 
-def _sprint_field_value(
-    field_key: str,
-    sprint: Sprint,
-    data: SignalData,
-    ctx: EvaluationContext,
-) -> object:
-    if field_key == "sprint_scope_added_pct":
-        return _sprint_scope_added_pct(sprint, data, ctx)
-    raise ExpressionValidationError(f"unsupported sprint field: {field_key}")
+class _ChurnResult(NamedTuple):
+    pct: float
+    original_count: int
+    added_count: int
 
 
-def _sprint_scope_added_pct(
+def _sprint_scope_churn(
     sprint: Sprint, data: SignalData, ctx: EvaluationContext
-) -> float | None:
-    """Return the percentage of sprint items added after sprint start (churn %).
+) -> _ChurnResult | None:
+    """Compute sprint scope churn, returning pct and constituent counts or None.
 
     Returns None when sprint has no start_date or no items, so numeric operators
     correctly produce no match. Uses sprint_ids (not current_sprint_id) to match
@@ -330,16 +376,20 @@ def _sprint_scope_added_pct(
     if not sprint_items:
         return None
     original = 0
+    valid_count = 0
     for wi in sprint_items:
         first_seen = _first_seen_at(wi, data)
         if first_seen is None or first_seen > ctx.now:
-            continue  # unknown or future-dated — skip
+            continue  # unknown or future-dated — exclude from both numerator and denominator
+        valid_count += 1
         if first_seen <= sprint.start_date:
             original += 1
-    added = len(sprint_items) - original
+    added = valid_count - original
     if original == 0:
         return None
-    return round(added / original * 100.0, 2)
+    return _ChurnResult(
+        pct=round(added / original * 100.0, 2), original_count=original, added_count=added
+    )
 
 
 def _first_seen_at(wi: WorkItem, data: SignalData) -> datetime | None:
@@ -650,7 +700,7 @@ def _mr_field_value(
             return None
         return (mr.additions or 0) + (mr.deletions or 0)
     if field_key == "pipeline_status":
-        return mr.pipeline_status.value if mr.pipeline_status is not None else None
+        return mr.pipeline_status.value if mr.pipeline_status is not None else "none"
     if field_key == "age_since_pipeline_update":
         return _age_days(ctx.now, mr.pipeline_updated_at)
     if field_key == "approval_count":

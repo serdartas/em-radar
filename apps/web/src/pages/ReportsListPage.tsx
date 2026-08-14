@@ -1,18 +1,63 @@
+import { useState } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { Link } from "react-router-dom"
+import { Link, useLocation } from "react-router-dom"
 
 import { SeverityCounts } from "@/components/SeverityCounts"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
-import { listReports, type ReportSummary } from "@/lib/reports"
+import { formatTimestamp, listReports, type ReportSummary } from "@/lib/reports"
 
-function formatTimestamp(value: string): string {
-  const parsed = new Date(value)
-  return Number.isNaN(parsed.valueOf()) ? value : parsed.toLocaleString()
+interface TeamReportGroup {
+  key: string
+  teamName: string
+  reports: ReportSummary[]
+}
+
+// Reports arrive sorted by started_at descending. Grouping by first appearance therefore
+// preserves most-recent-first order within each team and orders the groups by their most
+// recent report.
+function groupReportsByTeam(reports: ReportSummary[]): TeamReportGroup[] {
+  const groups = new Map<string, TeamReportGroup>()
+  for (const report of reports) {
+    const key = report.team_profile_id ?? "unknown"
+    const existing = groups.get(key)
+    if (existing) {
+      existing.reports.push(report)
+    } else {
+      groups.set(key, {
+        key,
+        teamName: report.team_name ?? "Unknown team",
+        reports: [report],
+      })
+    }
+  }
+  return [...groups.values()]
 }
 
 export function ReportsListPage() {
   const query = useQuery({ queryKey: ["reports"], queryFn: listReports })
+  const groups = query.data ? groupReportsByTeam(query.data) : []
+  const location = useLocation()
+
+  // Capture on mount so a subsequent re-render (e.g. after invalidateQueries) does not
+  // re-read a stale location.state. Clear from browser history so a manual refresh does
+  // not replay the note.
+  const [failedTeams] = useState<string[]>(() => {
+    const s = location.state
+    if (
+      s !== null &&
+      typeof s === "object" &&
+      "failedTeams" in s &&
+      Array.isArray((s as Record<string, unknown>).failedTeams)
+    ) {
+      const teams = ((s as Record<string, unknown>).failedTeams as unknown[]).filter(
+        (t): t is string => typeof t === "string",
+      )
+      window.history.replaceState({}, "")
+      return teams
+    }
+    return []
+  })
 
   return (
     <section aria-labelledby="page-title" className="space-y-6">
@@ -30,6 +75,14 @@ export function ReportsListPage() {
         </Button>
       </header>
 
+      {failedTeams.length > 0 && (
+        <p
+          className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-700"
+          role="alert"
+        >
+          {`Report generation failed for ${failedTeams.join(", ")}. Successful reports were still created.`}
+        </p>
+      )}
       {query.isLoading && <p className="text-sm text-slate-500">Loading reports…</p>}
       {query.isError && (
         <p className="text-sm text-red-700" role="alert">
@@ -41,13 +94,29 @@ export function ReportsListPage() {
           No reports yet. Run a report to create one.
         </p>
       )}
-      {query.data && query.data.length > 0 && (
-        <ul aria-label="Reports" className="space-y-3">
-          {query.data.map((report) => (
-            <ReportRow key={report.id} report={report} />
+      {groups.length > 0 && (
+        <div className="space-y-8">
+          {groups.map((group) => (
+            <TeamReportGroupSection group={group} key={group.key} />
           ))}
-        </ul>
+        </div>
       )}
+    </section>
+  )
+}
+
+function TeamReportGroupSection({ group }: { group: TeamReportGroup }) {
+  const headingId = `team-${group.key}`
+  return (
+    <section aria-labelledby={headingId} className="space-y-3">
+      <h2 className="text-lg font-semibold tracking-tight" id={headingId}>
+        {group.teamName}
+      </h2>
+      <ul aria-labelledby={headingId} className="space-y-3">
+        {group.reports.map((report) => (
+          <ReportRow key={report.id} report={report} />
+        ))}
+      </ul>
     </section>
   )
 }

@@ -58,6 +58,7 @@ def persist_fetch(
     reviews: Sequence[Review] = (),
     transitions: Sequence[Transition] = (),
     comments: Sequence[Comment] = (),
+    preserve_sprint_links: bool = False,
 ) -> PersistResult:
     """Upsert canonical entities and resolve cross-entity references.
 
@@ -66,6 +67,12 @@ def persist_fetch(
     keyed by a deterministic identity derived from their resolved content, so idempotence
     does not rely on connectors emitting stable event ids. Re-running an identical fetch
     updates existing rows in place rather than duplicating them.
+
+    ``preserve_sprint_links`` is set only when sprint metadata could not be fetched (a degraded
+    date-range run): without a sprint identity map the incoming work-item sprint fields cannot
+    be resolved, so rather than clobbering cached links this keeps an existing row's persisted
+    ``current_sprint_id``/``sprint_ids`` and writes no unresolved connector ids for a new row.
+    A healthy fetch that genuinely returns no sprints keeps this False and reconciles normally.
     """
     groups: tuple[tuple[type[SQLModel], Sequence[SQLModel]], ...] = (
         (UserTable, users),
@@ -97,7 +104,10 @@ def persist_fetch(
         data = instance.model_dump()
         resolve_references(table_cls, data, identity_map)
         _drop_dangling_references(table_cls, data, persisted_ids)
-        data["id"] = internal_id if internal_id is not None else _history_id(table_cls, data)
+        row_id = internal_id if internal_id is not None else _history_id(table_cls, data)
+        data["id"] = row_id
+        if preserve_sprint_links and table_cls is WorkItemTable:
+            _preserve_work_item_sprint_links(session, data, row_id)
         session.merge(table_cls(**data))
     session.commit()
 
@@ -143,6 +153,25 @@ def _drop_dangling_references(
         value = data.get(column.name)
         if isinstance(value, UUID) and value not in persisted_ids:
             data[column.name] = None
+
+
+def _preserve_work_item_sprint_links(
+    session: Session, data: dict[str, object], row_id: UUID
+) -> None:
+    """Keep sprint links intact when sprint metadata is unavailable (degraded date-range run).
+
+    A full-column ``session.merge`` would otherwise overwrite an existing row's resolved sprint
+    fields with unresolved incoming values. An existing row keeps its persisted
+    ``current_sprint_id``/``sprint_ids``; a new row is written without unresolvable connector
+    ids (null ``current_sprint_id``, empty ``sprint_ids``).
+    """
+    existing = session.get(WorkItemTable, row_id)
+    if existing is not None:
+        data["current_sprint_id"] = existing.current_sprint_id
+        data["sprint_ids"] = list(existing.sprint_ids)
+    else:
+        data["current_sprint_id"] = None
+        data["sprint_ids"] = []
 
 
 def _natural_key_id(session: Session, table_cls: type[SQLModel], instance: SQLModel) -> UUID | None:

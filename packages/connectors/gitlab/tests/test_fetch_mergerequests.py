@@ -1523,6 +1523,166 @@ def test_fetch_mergerequests_closed_mr_after_window_end_excluded(
     asyncio.run(run())
 
 
+def test_fetch_mergerequests_merged_mr_at_exact_window_end_excluded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A merged MR whose merged_at equals window.end exactly is excluded (half-open [start, end)).
+
+    The window is exclusive on the right: a moment at exactly window.end belongs to the
+    next window, not this one.
+    """
+
+    async def run() -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            if _is_mr_detail_path(request.url.path):
+                return httpx.Response(200, json=_mr_detail_response())
+            if request.url.path.endswith("/approvals"):
+                return httpx.Response(200, json=_approvals_response([]))
+            return httpx.Response(
+                200,
+                headers={"X-Next-Page": ""},
+                json=[
+                    _mr_payload(
+                        state="merged",
+                        # merged_at is exactly at window.end (2026-05-31T00:00:00Z)
+                        merged_at="2026-05-31T00:00:00Z",
+                    )
+                ],
+            )
+
+        connector = _make_connector(monkeypatch, handler)
+        mrs = await _collect(
+            connector.fetch_mergerequests(
+                MergeRequestScope(repository_external_ids=["gitlab.example.com/101"]),
+                _date_window(),
+            )
+        )
+        await connector.close()
+
+        assert len(mrs) == 0
+
+    asyncio.run(run())
+
+
+def test_fetch_mergerequests_merged_mr_just_before_window_end_included(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A merged MR whose merged_at is one second before window.end is included."""
+
+    async def run() -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            if _is_mr_detail_path(request.url.path):
+                return httpx.Response(200, json=_mr_detail_response())
+            if request.url.path.endswith("/approvals"):
+                return httpx.Response(200, json=_approvals_response([]))
+            return httpx.Response(
+                200,
+                headers={"X-Next-Page": ""},
+                json=[
+                    _mr_payload(
+                        state="merged",
+                        # merged_at is one second before window.end (2026-05-31T00:00:00Z)
+                        merged_at="2026-05-30T23:59:59Z",
+                    )
+                ],
+            )
+
+        connector = _make_connector(monkeypatch, handler)
+        mrs = await _collect(
+            connector.fetch_mergerequests(
+                MergeRequestScope(repository_external_ids=["gitlab.example.com/101"]),
+                _date_window(),
+            )
+        )
+        await connector.close()
+
+        assert len(mrs) == 1
+        assert mrs[0].state is MergeRequestState.MERGED
+
+    asyncio.run(run())
+
+
+def test_fetch_mergerequests_closed_mr_at_exact_window_end_excluded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A closed MR whose closed_at equals window.end exactly is excluded (half-open [start, end))."""
+
+    async def run() -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            if _is_mr_detail_path(request.url.path):
+                return httpx.Response(200, json=_mr_detail_response())
+            if request.url.path.endswith("/approvals"):
+                return httpx.Response(200, json=_approvals_response([]))
+            return httpx.Response(
+                200,
+                headers={"X-Next-Page": ""},
+                json=[
+                    _mr_payload(
+                        state="closed",
+                        # closed_at is exactly at window.end (2026-05-31T00:00:00Z)
+                        closed_at="2026-05-31T00:00:00Z",
+                    )
+                ],
+            )
+
+        connector = _make_connector(monkeypatch, handler)
+        mrs = await _collect(
+            connector.fetch_mergerequests(
+                MergeRequestScope(
+                    repository_external_ids=["gitlab.example.com/101"],
+                    include_closed_unmerged=True,
+                ),
+                _date_window(),
+            )
+        )
+        await connector.close()
+
+        assert len(mrs) == 0
+
+    asyncio.run(run())
+
+
+def test_fetch_mergerequests_closed_mr_just_before_window_end_included(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A closed MR whose closed_at is one second before window.end is included."""
+
+    async def run() -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            if _is_mr_detail_path(request.url.path):
+                return httpx.Response(200, json=_mr_detail_response())
+            if request.url.path.endswith("/approvals"):
+                return httpx.Response(200, json=_approvals_response([]))
+            return httpx.Response(
+                200,
+                headers={"X-Next-Page": ""},
+                json=[
+                    _mr_payload(
+                        state="closed",
+                        # closed_at is one second before window.end (2026-05-31T00:00:00Z)
+                        closed_at="2026-05-30T23:59:59Z",
+                    )
+                ],
+            )
+
+        connector = _make_connector(monkeypatch, handler)
+        mrs = await _collect(
+            connector.fetch_mergerequests(
+                MergeRequestScope(
+                    repository_external_ids=["gitlab.example.com/101"],
+                    include_closed_unmerged=True,
+                ),
+                _date_window(),
+            )
+        )
+        await connector.close()
+
+        assert len(mrs) == 1
+        assert mrs[0].state is MergeRequestState.CLOSED
+
+    asyncio.run(run())
+
+
 def test_fetch_mergerequests_closed_mr_outside_window_excluded(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

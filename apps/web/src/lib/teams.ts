@@ -42,6 +42,11 @@ export interface TeamProfileUpdate {
   sprint_length_days?: number | null
 }
 
+/** A team with no board scope and no code connection has no sources and cannot run a report. */
+export function teamHasNoSources(team: TeamProfile): boolean {
+  return team.scope_ids.length === 0 && !team.code_connection_id
+}
+
 export async function listTeams(): Promise<TeamProfile[]> {
   return apiFetch<TeamProfile[]>("/teams")
 }
