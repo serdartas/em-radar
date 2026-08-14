@@ -48,8 +48,10 @@ _CREDENTIAL_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
         re.compile(rf"(?i)(['\"](?:{_CREDENTIAL_HEADER_KEYS})['\"]\s*:\s*)(['\"]).*?\2"),
         r"\1\2" + _REDACTED + r"\2",
     ),
-    # Header-line form, e.g. Authorization: Bearer xxx / PRIVATE-TOKEN: xxx.
-    (re.compile(r"(?i)(authorization\s*[:=]\s*)(?:bearer|basic)\s+\S+"), r"\1" + _REDACTED),
+    # Header-line form, e.g. Authorization: Bearer xxx / Digest xxx / xxx; PRIVATE-TOKEN: xxx.
+    # The Authorization value is redacted for any scheme (or none): an optional scheme word
+    # plus the credential token.
+    (re.compile(r"(?i)(authorization\s*[:=]\s*)(?:\S+\s+)?\S+"), r"\1" + _REDACTED),
     (re.compile(r"(?i)(private-token\s*[:=]\s*)\S+"), r"\1" + _REDACTED),
     # Bare Bearer scheme.
     (re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+"), f"Bearer {_REDACTED}"),
@@ -137,14 +139,18 @@ class _CredentialRedactionFilter(logging.Filter):
             items = []
             for item in value:
                 # (key, value) pairs, e.g. httpx Headers.raw = [(b"PRIVATE-TOKEN", b"abc")],
-                # are redacted by key context so short/byte values are not missed.
+                # are redacted by key context so short/byte values are not missed. The key is
+                # scrubbed too in case it is itself a registered credential.
                 if (
                     isinstance(item, tuple | list)
                     and len(item) == 2
                     and _is_credential_key(item[0])
                 ):
+                    _, new_pair_key = self._redact_value(item[0], seen)
                     items.append(
-                        (item[0], _REDACTED) if isinstance(item, tuple) else [item[0], _REDACTED]
+                        (new_pair_key, _REDACTED)
+                        if isinstance(item, tuple)
+                        else [new_pair_key, _REDACTED]
                     )
                     changed = True
                     continue

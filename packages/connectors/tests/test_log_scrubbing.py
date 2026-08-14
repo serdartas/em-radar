@@ -437,6 +437,36 @@ def test_credential_free_exception_keeps_exc_info() -> None:
     assert record.exc_text is None
 
 
+def test_filter_redacts_authorization_value_for_any_scheme() -> None:
+    """An Authorization header value is redacted for any scheme (or none)."""
+    filt = _CredentialRedactionFilter()
+    cases = {
+        "Authorization: Digest digest-secret-xyz": "digest-secret-xyz",
+        "Authorization: bareTokenValue": "bareTokenValue",
+        "authorization = Custom-Scheme creds-123": "creds-123",
+    }
+    for line, secret in cases.items():
+        record = _make_record("%s", line)
+        filt.filter(record)
+        msg = record.getMessage()
+        assert secret not in msg, f"{secret!r} leaked in {msg!r}"
+        assert _REDACTED in msg
+
+
+def test_filter_redacts_registered_token_used_as_pair_key() -> None:
+    """A registered credential used as the key of a (key, value) pair is redacted."""
+    token = "pairkey-registered-token-abcdef"
+    filt = _CredentialRedactionFilter()
+    filt.add_sensitive_values([token])
+
+    record = _make_record("request")
+    record.payload = [(token, "cached")]
+    filt.filter(record)
+
+    assert token not in repr(record.payload)
+    assert _REDACTED in repr(record.payload)
+
+
 def test_filter_does_not_evaluate_equality_on_arbitrary_extra() -> None:
     """The attribute sweep must never invoke __eq__ on an arbitrary extra object, since a
     raising or non-boolean implementation would abort the process-wide logging hook."""
