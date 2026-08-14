@@ -11,6 +11,11 @@ _UPSTREAM_MAKE_RECORD: Callable[..., logging.LogRecord] | None = None
 _EXCEPTION_FORMATTER = logging.Formatter()
 # Record attributes handled explicitly by filter(); the generic attribute sweep skips them.
 _SKIP_ATTRIBUTES = frozenset({"msg", "args", "exc_info", "exc_text", "stack_info"})
+# Exact-value redaction is skipped for trivially short values: a 1-4 char token would
+# otherwise mangle unrelated log lines wherever those characters occur. This matches the
+# M7-01 read-surface rule that treats tokens of 4 or fewer characters as fully maskable;
+# such credentials are still caught structurally by the header patterns below.
+_MIN_REGISTERED_LENGTH = 5
 
 # Defense-in-depth: credential-shaped substrings are scrubbed even when the exact
 # value was never registered by a connector (a token pasted into a URL, a second
@@ -33,7 +38,9 @@ class _CredentialRedactionFilter(logging.Filter):
 
     def add_sensitive_values(self, values: Sequence[str]) -> None:
         with self._lock:
-            self._sensitive_values.update(value for value in values if value)
+            self._sensitive_values.update(
+                value for value in values if len(value) >= _MIN_REGISTERED_LENGTH
+            )
 
     def redact(self, text: str) -> str:
         with self._lock:
@@ -47,10 +54,22 @@ class _CredentialRedactionFilter(logging.Filter):
     def _redact_value(self, value: object) -> object:
         if isinstance(value, str):
             return self.redact(value)
+        if isinstance(value, bytes):
+            decoded = value.decode("utf-8", "replace")
+            redacted = self.redact(decoded)
+            return redacted.encode("utf-8") if redacted != decoded else value
         if isinstance(value, Mapping):
             return {key: self._redact_value(item) for key, item in value.items()}
-        if isinstance(value, list | tuple | set | frozenset):
-            return type(value)(self._redact_value(item) for item in value)
+        # Rebuild with base-type constructors so tuple/mapping subclasses (e.g. NamedTuple)
+        # never hit an incompatible constructor. Equality below leaves untouched values as-is.
+        if isinstance(value, list):
+            return [self._redact_value(item) for item in value]
+        if isinstance(value, tuple):
+            return tuple(self._redact_value(item) for item in value)
+        if isinstance(value, frozenset):
+            return frozenset(self._redact_value(item) for item in value)
+        if isinstance(value, set):
+            return {self._redact_value(item) for item in value}
         return value
 
     def filter(self, record: logging.LogRecord) -> bool:

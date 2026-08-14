@@ -25,6 +25,7 @@ import base64
 import io
 import logging
 import sys
+from collections import namedtuple
 from collections.abc import Callable
 
 import httpx
@@ -220,6 +221,51 @@ def test_late_handler_and_nested_extra_are_redacted() -> None:
     output = stream.getvalue()
     assert token not in output
     assert _REDACTED in output
+
+
+def test_filter_redacts_bytes_leaf_in_extra() -> None:
+    """A credential carried as a bytes leaf inside a container is redacted too."""
+    token = "bytes-leaf-secret-abcdef"
+    filt = _CredentialRedactionFilter()
+    filt.add_sensitive_values([token])
+
+    record = _make_record("request")
+    record.headers = [(b"Authorization", b"Bearer " + token.encode())]
+    filt.filter(record)
+
+    rendered = repr(record.headers)
+    assert token not in rendered
+    assert _REDACTED in rendered
+
+
+def test_filter_handles_namedtuple_extra_without_crashing() -> None:
+    """Rebuilding a tuple subclass must not raise; secret-free values stay intact and a
+    secret-bearing one is still redacted."""
+    Pair = namedtuple("Pair", ["key", "value"])
+    token = "namedtuple-secret-abcdef"
+    filt = _CredentialRedactionFilter()
+    filt.add_sensitive_values([token])
+
+    intact = _make_record("request")
+    intact.pair = Pair("region", "eu-west-1")
+    filt.filter(intact)
+    assert intact.pair == Pair("region", "eu-west-1")
+
+    secret = _make_record("request")
+    secret.pair = Pair("Authorization", f"Bearer {token}")
+    filt.filter(secret)
+    assert token not in str(secret.pair)
+
+
+def test_short_value_below_threshold_is_not_registered() -> None:
+    """A very short token is not registered for exact-match replacement, so it cannot
+    mangle unrelated log lines."""
+    filt = _CredentialRedactionFilter()
+    filt.add_sensitive_values(["xy"])
+
+    record = _make_record("xylophone status ok")
+    filt.filter(record)
+    assert record.getMessage() == "xylophone status ok"
 
 
 # --------------------------------------------------------------------------- #
