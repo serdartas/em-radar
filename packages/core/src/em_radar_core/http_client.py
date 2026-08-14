@@ -1,13 +1,16 @@
 import logging
 import re
 import threading
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 
 import httpx
 
 _REDACTED = "[REDACTED]"
 _UPSTREAM_RECORD_FACTORY: Callable[..., logging.LogRecord] | None = None
+_UPSTREAM_MAKE_RECORD: Callable[..., logging.LogRecord] | None = None
 _EXCEPTION_FORMATTER = logging.Formatter()
+# Record attributes handled explicitly by filter(); the generic attribute sweep skips them.
+_SKIP_ATTRIBUTES = frozenset({"msg", "args", "exc_info", "exc_text", "stack_info"})
 
 # Defense-in-depth: credential-shaped substrings are scrubbed even when the exact
 # value was never registered by a connector (a token pasted into a URL, a second
@@ -41,6 +44,15 @@ class _CredentialRedactionFilter(logging.Filter):
             text = pattern.sub(replacement, text)
         return text
 
+    def _redact_value(self, value: object) -> object:
+        if isinstance(value, str):
+            return self.redact(value)
+        if isinstance(value, Mapping):
+            return {key: self._redact_value(item) for key, item in value.items()}
+        if isinstance(value, list | tuple | set | frozenset):
+            return type(value)(self._redact_value(item) for item in value)
+        return value
+
     def filter(self, record: logging.LogRecord) -> bool:
         message = record.getMessage()
         redacted = self.redact(message)
@@ -55,13 +67,15 @@ class _CredentialRedactionFilter(logging.Filter):
             record.exc_text = self.redact(_EXCEPTION_FORMATTER.formatException(record.exc_info))
         if record.stack_info is not None:
             record.stack_info = self.redact(record.stack_info)
-        # Structured `extra` attributes are attached after the record factory returns,
-        # so scrub every string attribute when this filter also runs at handler stage.
+        # Structured `extra` attributes (including nested containers) are attached after
+        # the record factory runs; sweep every remaining attribute so a formatter that
+        # renders them cannot emit a raw credential.
         for key, value in list(record.__dict__.items()):
-            if isinstance(value, str):
-                scrubbed = self.redact(value)
-                if scrubbed != value:
-                    record.__dict__[key] = scrubbed
+            if key in _SKIP_ATTRIBUTES:
+                continue
+            scrubbed = self._redact_value(value)
+            if scrubbed != value:
+                record.__dict__[key] = scrubbed
         return True
 
 
@@ -76,6 +90,16 @@ def _redacting_record_factory(*args: object, **kwargs: object) -> logging.LogRec
     return record
 
 
+def _redacting_make_record(
+    self: logging.Logger, *args: object, **kwargs: object
+) -> logging.LogRecord:
+    if _UPSTREAM_MAKE_RECORD is None:
+        raise RuntimeError("Credential-redacting makeRecord was not initialized")
+    record = _UPSTREAM_MAKE_RECORD(self, *args, **kwargs)
+    _CREDENTIAL_FILTER.filter(record)
+    return record
+
+
 def _install_redacting_record_factory() -> None:
     global _UPSTREAM_RECORD_FACTORY
 
@@ -85,22 +109,32 @@ def _install_redacting_record_factory() -> None:
     logging.setLogRecordFactory(_redacting_record_factory)
 
 
+def _install_redacting_make_record() -> None:
+    global _UPSTREAM_MAKE_RECORD
+
+    if _UPSTREAM_MAKE_RECORD is not None:
+        return
+    _UPSTREAM_MAKE_RECORD = logging.Logger.makeRecord
+    logging.Logger.makeRecord = _redacting_make_record  # type: ignore[method-assign]
+
+
 def configure_log_scrubbing() -> None:
     """Install credential redaction process-wide.
 
-    The record factory scrubs every record's message, args, traceback and stack info at
-    creation. `extra` attributes are attached only afterwards, so the same filter is also
-    registered on the root logger and its handlers, where it runs once the record is fully
-    populated. Call this once at application startup, before any connector is initialised;
-    calling it more than once is safe.
+    Two hooks cooperate so no log record can carry a raw credential regardless of how or
+    where it is emitted:
+
+    - The record factory scrubs every record's message, args, traceback and stack info at
+      creation, for records from any logger.
+    - `Logger.makeRecord` is wrapped so redaction also runs *after* structured `extra`
+      attributes are attached — the universal record-creation chokepoint, so it covers
+      handlers registered later and non-propagating child loggers too.
+
+    Call this once at application startup, before any connector is initialised; calling it
+    more than once is safe.
     """
     _install_redacting_record_factory()
-    root = logging.getLogger()
-    if _CREDENTIAL_FILTER not in root.filters:
-        root.addFilter(_CREDENTIAL_FILTER)
-    for handler in root.handlers:
-        if _CREDENTIAL_FILTER not in handler.filters:
-            handler.addFilter(_CREDENTIAL_FILTER)
+    _install_redacting_make_record()
 
 
 def create_redacting_async_client(
@@ -111,6 +145,7 @@ def create_redacting_async_client(
 ) -> httpx.AsyncClient:
     _CREDENTIAL_FILTER.add_sensitive_values(sensitive_values)
     _install_redacting_record_factory()
+    _install_redacting_make_record()
     return client_factory(**client_kwargs)
 
 

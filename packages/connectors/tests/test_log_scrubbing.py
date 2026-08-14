@@ -8,6 +8,8 @@ Coverage:
 - Credential-shaped values are scrubbed even without registration (defense in depth)
 - A registered token embedded in an exception traceback is scrubbed before formatting
 - A credential passed through logging `extra` is scrubbed at handler stage
+- A late-registered handler on a non-propagating logger with nested-container `extra`
+  still emits no raw credential (makeRecord wrap covers every emission path)
 - configure_log_scrubbing() public API is idempotent
 - Jira connector (Bearer PAT mode): token and Authorization header not in any log record
 - Jira connector (Basic auth mode): token and encoded Authorization header not in any log record
@@ -20,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import io
 import logging
 import sys
 from collections.abc import Callable
@@ -190,6 +193,33 @@ def test_filter_redacts_token_in_extra_field() -> None:
     formatted = logging.Formatter("%(message)s auth=%(authorization)s").format(record)
     assert token not in formatted
     assert _REDACTED in formatted
+
+
+def test_late_handler_and_nested_extra_are_redacted() -> None:
+    """End-to-end: a handler registered after configure_log_scrubbing(), on a
+    non-propagating child logger, formatting a nested-container `extra`, still emits
+    no raw credential — proving the makeRecord wrap covers every emission path."""
+    token = "late-handler-nested-secret-abcdef"
+    configure_log_scrubbing()
+    _CREDENTIAL_FILTER.add_sensitive_values([token])
+
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    handler.setFormatter(logging.Formatter("%(message)s headers=%(headers)s"))
+    logger = logging.getLogger(f"{_TEST_LOGGER_NAME}.late")
+    logger.handlers.clear()
+    logger.addHandler(handler)
+    logger.propagate = False
+    logger.setLevel(logging.INFO)
+
+    try:
+        logger.info("outbound", extra={"headers": {"Authorization": f"Bearer {token}"}})
+    finally:
+        logger.removeHandler(handler)
+
+    output = stream.getvalue()
+    assert token not in output
+    assert _REDACTED in output
 
 
 # --------------------------------------------------------------------------- #
