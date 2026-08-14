@@ -368,13 +368,15 @@ def _sprint_scope_added_pct(
     if not sprint_items:
         return None
     original = 0
+    valid_count = 0
     for wi in sprint_items:
         first_seen = _first_seen_at(wi, data)
         if first_seen is None or first_seen > ctx.now:
-            continue  # unknown or future-dated — skip
+            continue  # unknown or future-dated — exclude from both numerator and denominator
+        valid_count += 1
         if first_seen <= sprint.start_date:
             original += 1
-    added = len(sprint_items) - original
+    added = valid_count - original
     if original == 0:
         return None
     return round(added / original * 100.0, 2)

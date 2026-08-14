@@ -73,11 +73,13 @@ def preview_signal_pack_import_route(
     request: SignalPackImportRequest,
     session: Session = Depends(get_session),
 ) -> SignalPackImportPreview:
+    if request.mode == "replace_all":
+        raise HTTPException(status_code=422, detail="replace_all mode is not yet supported")
     try:
         return preview_signal_pack_import(
             session,
             request.raw_yaml,
-            replace_all=request.mode == "replace_all",
+            replace_all=False,
         )
     except PackValidationError as error:
         raise _invalid_pack(error) from error
@@ -91,11 +93,13 @@ def apply_signal_pack_import_route(
     request: SignalPackImportRequest,
     session: Session = Depends(get_write_session),
 ) -> SignalPackImportPreview:
+    if request.mode == "replace_all":
+        raise HTTPException(status_code=422, detail="replace_all mode is not yet supported")
     try:
         return apply_signal_pack_import(
             session,
             request.raw_yaml,
-            replace_all=request.mode == "replace_all",
+            replace_all=False,
             conflict=request.conflict,
         )
     except PackValidationError as error:
