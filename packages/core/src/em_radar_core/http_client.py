@@ -48,10 +48,10 @@ _CREDENTIAL_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
         re.compile(rf"(?i)(['\"](?:{_CREDENTIAL_HEADER_KEYS})['\"]\s*:\s*)(['\"]).*?\2"),
         r"\1\2" + _REDACTED + r"\2",
     ),
-    # Header-line form, e.g. Authorization: Bearer xxx / Digest xxx / xxx; PRIVATE-TOKEN: xxx.
-    # The Authorization value is redacted for any scheme (or none): an optional scheme word
-    # plus the credential token.
-    (re.compile(r"(?i)(authorization\s*[:=]\s*)(?:\S+\s+)?\S+"), r"\1" + _REDACTED),
+    # Header-line form, e.g. Authorization: Bearer xxx / Digest a=1, b=2; PRIVATE-TOKEN: xxx.
+    # The whole Authorization value (to end of line) is the credential, so redact all of it —
+    # this covers any scheme (or none) and multi-part values such as Digest / AWS signatures.
+    (re.compile(r"(?i)(authorization\s*[:=]\s*).+"), r"\1" + _REDACTED),
     (re.compile(r"(?i)(private-token\s*[:=]\s*)\S+"), r"\1" + _REDACTED),
     # Bare Bearer scheme.
     (re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+"), f"Bearer {_REDACTED}"),

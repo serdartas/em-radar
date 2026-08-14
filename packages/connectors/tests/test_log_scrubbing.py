@@ -453,6 +453,21 @@ def test_filter_redacts_authorization_value_for_any_scheme() -> None:
         assert _REDACTED in msg
 
 
+def test_filter_redacts_full_multipart_authorization_value() -> None:
+    """A multi-part Authorization value (Digest/AWS) is redacted in full, not just the
+    scheme and first field."""
+    filt = _CredentialRedactionFilter()
+    record = _make_record(
+        "%s", 'Authorization: Digest username="M", realm="r", nonce="n", response="hash"'
+    )
+    filt.filter(record)
+
+    msg = record.getMessage()
+    for part in ("username", "realm", "nonce", "response", "hash"):
+        assert part not in msg, f"{part!r} leaked in {msg!r}"
+    assert _REDACTED in msg
+
+
 def test_filter_redacts_registered_token_used_as_pair_key() -> None:
     """A registered credential used as the key of a (key, value) pair is redacted."""
     token = "pairkey-registered-token-abcdef"
