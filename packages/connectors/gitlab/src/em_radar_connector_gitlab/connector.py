@@ -743,7 +743,7 @@ def _within_window_bounds(moment: datetime | None, window: EvaluationWindow) -> 
         return False
     if window.start is not None and moment < window.start:
         return False
-    if window.end is not None and moment > window.end:
+    if window.end is not None and moment >= window.end:
         return False
     return True
 

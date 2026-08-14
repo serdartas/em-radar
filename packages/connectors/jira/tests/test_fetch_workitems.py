@@ -129,7 +129,7 @@ def test_fetch_workitems_normalizes_fixture_issues(monkeypatch: pytest.MonkeyPat
 
     assert seen_jql == [
         'project in ("10000") AND issuetype in ("Epic", "Story", "Bug") '
-        'AND updated <= "2026-06-15 00:00"'
+        'AND updated < "2026-06-15 00:00"'
     ]
 
 
@@ -289,10 +289,10 @@ def test_fetch_workitems_falls_back_to_classic_search_when_jql_missing(
     assert seen_paths == ["/rest/api/2/search/jql", "/rest/api/2/search"]
 
 
-def test_fetch_workitems_date_range_jql_includes_upper_bound(
+def test_fetch_workitems_date_range_jql_uses_exclusive_upper_bound(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """DATE_RANGE windows must emit updated <= end in the JQL.
+    """DATE_RANGE windows must emit updated < end in the JQL (exclusive end, half-open [start, end)).
 
     No lower bound is added — stale in-progress issues (e.g. updated 20+ days ago)
     must not be excluded because signals like StaleInProgressSignal target them
@@ -325,7 +325,8 @@ def test_fetch_workitems_date_range_jql_includes_upper_bound(
 
     assert len(seen_jql) == 1
     assert "updated >= " not in seen_jql[0]
-    assert 'updated <= "2026-06-15 00:00"' in seen_jql[0]
+    assert 'updated < "2026-06-15 00:00"' in seen_jql[0]
+    assert 'updated <= "2026-06-15 00:00"' not in seen_jql[0]
 
 
 def test_fetch_workitems_mid_stream_404_raises_without_restarting(

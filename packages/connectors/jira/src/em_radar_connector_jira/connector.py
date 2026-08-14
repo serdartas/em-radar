@@ -1164,7 +1164,7 @@ def _workitem_jql(scope: WorkItemScope, window: EvaluationWindow) -> str:
     if window.window_type is WindowType.DATE_RANGE:
         if window.end is None:
             raise ConnectorDataError("Date-range window was missing end")
-        clauses.append(f'updated <= "{_jql_datetime(window.end)}"')
+        clauses.append(f'updated < "{_jql_datetime(window.end)}"')
     return " AND ".join(clauses) if clauses else "ORDER BY updated ASC"
 
 
