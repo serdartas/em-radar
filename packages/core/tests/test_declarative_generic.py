@@ -234,7 +234,8 @@ def test_sprint_scope_churn_fires_via_sprint_entity_expression() -> None:
     assert len(findings) == 1
     assert findings[0].entity_type is EntityType.SPRINT
     ev = findings[0].evidence
-    assert ev["sprint_scope_added_pct"] == 100.0
+    assert ev["churn_pct"] == 100.0
+    assert "sprint_scope_added_pct" not in ev
     # Fixture: 1 original (transition 8 days ago, before sprint start 7 days ago),
     # 1 added (transition 2 days ago, after sprint start).
     assert ev["original_count"] == 1
@@ -362,7 +363,8 @@ def test_sprint_scope_churn_evidence_counts_with_multiple_originals() -> None:
     ev = findings[0].evidence
     assert ev["original_count"] == 3
     assert ev["added_count"] == 2
-    assert ev["sprint_scope_added_pct"] == round(2 / 3 * 100.0, 2)
+    assert ev["churn_pct"] == round(2 / 3 * 100.0, 2)
+    assert "sprint_scope_added_pct" not in ev
 
 
 # ---------------------------------------------------------------------------

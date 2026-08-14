@@ -337,10 +337,14 @@ def _evaluate_sprint_condition(
     if field_key == "sprint_scope_added_pct":
         churn = _sprint_scope_churn(sprint, data, ctx)
         observed: object = churn.pct if churn is not None else None
-        evidence = {field_key: _json_value(observed)}
         if churn is not None:
-            evidence["original_count"] = churn.original_count
-            evidence["added_count"] = churn.added_count
+            evidence = {
+                "original_count": churn.original_count,
+                "added_count": churn.added_count,
+                "churn_pct": _json_value(churn.pct),
+            }
+        else:
+            evidence = {}
     else:
         raise ExpressionValidationError(f"unsupported sprint field: {field_key}")
     matched = _compare(observed, operator, expected)

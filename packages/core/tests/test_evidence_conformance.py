@@ -374,7 +374,7 @@ def _churn_fixture():
         _ctx(sprint_id=s.id),
         JiraConnector.describe_signal_schema(),
         [_board_scope()],
-        {"sprint_scope_added_pct", "original_count", "added_count"},
+        {"original_count", "added_count", "churn_pct"},
     )
 
 
