@@ -47,7 +47,7 @@ _CREDENTIAL_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     # {'private-token': 'abc'} or [(b'private-token', b'abc')]. The key/value may be `:` or
     # `,` separated and either may carry a `b` prefix.
     (
-        re.compile(rf"(?i)(b?['\"](?:{_CREDENTIAL_HEADER_KEYS})['\"]\s*[:,]\s*b?)(['\"])[^'\"]*\2"),
+        re.compile(rf"(?i)(b?['\"](?:{_CREDENTIAL_HEADER_KEYS})['\"]\s*[:,]\s*b?)(['\"]).*?\2"),
         r"\1\2" + _REDACTED + r"\2",
     ),
     # Header-line form, e.g. Authorization: Bearer xxx / Digest a=1, b=2; PRIVATE-TOKEN: xxx.

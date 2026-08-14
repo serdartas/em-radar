@@ -479,6 +479,17 @@ def test_filter_redacts_prerendered_byte_header_pair_string() -> None:
     assert _REDACTED in msg
 
 
+def test_filter_redacts_value_containing_other_quote_type() -> None:
+    """A quoted credential value may contain the other quote type as a literal character."""
+    filt = _CredentialRedactionFilter()
+    record = _make_record("%s", "Headers({'private-token': \"a'b\"})")
+    filt.filter(record)
+
+    msg = record.getMessage()
+    assert "a'b" not in msg
+    assert _REDACTED in msg
+
+
 def test_numeric_value_under_credential_key_does_not_break_formatting() -> None:
     """A non-string value under a credential-named key (e.g. %(token)d = 42) must not be
     turned into a string, which would raise TypeError when the message is re-formatted."""
