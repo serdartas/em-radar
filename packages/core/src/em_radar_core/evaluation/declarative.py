@@ -1,7 +1,7 @@
 import fnmatch
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import TypeAlias
+from typing import NamedTuple, TypeAlias
 
 from em_radar_core.connectors import Capabilities, SignalCapabilitySchema, SignalField
 from em_radar_core.models import (
@@ -333,30 +333,34 @@ def _evaluate_sprint_condition(
     field_key = str(condition["field"])
     operator = str(condition["operator"])
     expected = condition.get("value")
-    observed = _sprint_field_value(field_key, sprint, data, ctx)
+    evidence: JsonObject
+    if field_key == "sprint_scope_added_pct":
+        churn = _sprint_scope_churn(sprint, data, ctx)
+        observed: object = churn.pct if churn is not None else None
+        evidence = {field_key: _json_value(observed)}
+        if churn is not None:
+            evidence["original_count"] = churn.original_count
+            evidence["added_count"] = churn.added_count
+    else:
+        raise ExpressionValidationError(f"unsupported sprint field: {field_key}")
     matched = _compare(observed, operator, expected)
     return ConditionMatch(
         matched=matched,
         reason=f"{field_key} {operator} {expected} (observed {observed})",
-        evidence={field_key: _json_value(observed)},
+        evidence=evidence,
     )
 
 
-def _sprint_field_value(
-    field_key: str,
-    sprint: Sprint,
-    data: SignalData,
-    ctx: EvaluationContext,
-) -> object:
-    if field_key == "sprint_scope_added_pct":
-        return _sprint_scope_added_pct(sprint, data, ctx)
-    raise ExpressionValidationError(f"unsupported sprint field: {field_key}")
+class _ChurnResult(NamedTuple):
+    pct: float
+    original_count: int
+    added_count: int
 
 
-def _sprint_scope_added_pct(
+def _sprint_scope_churn(
     sprint: Sprint, data: SignalData, ctx: EvaluationContext
-) -> float | None:
-    """Return the percentage of sprint items added after sprint start (churn %).
+) -> _ChurnResult | None:
+    """Compute sprint scope churn, returning pct and constituent counts or None.
 
     Returns None when sprint has no start_date or no items, so numeric operators
     correctly produce no match. Uses sprint_ids (not current_sprint_id) to match
@@ -379,7 +383,9 @@ def _sprint_scope_added_pct(
     added = valid_count - original
     if original == 0:
         return None
-    return round(added / original * 100.0, 2)
+    return _ChurnResult(
+        pct=round(added / original * 100.0, 2), original_count=original, added_count=added
+    )
 
 
 def _first_seen_at(wi: WorkItem, data: SignalData) -> datetime | None:

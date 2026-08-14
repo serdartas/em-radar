@@ -153,7 +153,7 @@ JIRA_SIGNAL_TEMPLATES: tuple[JiraSignalTemplate, ...] = (
         },
         report_settings=ReportSettings(severity="warning", category="delivery"),
         required_scope_capabilities=("sprint",),
-        evidence_shape=("sprint_scope_added_pct",),
+        evidence_shape=("sprint_scope_added_pct", "original_count", "added_count"),
     ),
 )
 

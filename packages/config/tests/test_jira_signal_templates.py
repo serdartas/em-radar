@@ -78,7 +78,7 @@ def test_all_eight_jira_templates_preserve_evidence_contracts() -> None:
         "epic-too-broad": ("issue_type", "child_count"),
         "epic-without-measurable-description": ("issue_type", "description_length"),
         "repeated-carry-over": ("status_category", "sprint_count"),
-        "sprint-scope-churn": ("sprint_scope_added_pct",),
+        "sprint-scope-churn": ("sprint_scope_added_pct", "original_count", "added_count"),
     }
 
     assert {template.key: template.evidence_shape for template in JIRA_SIGNAL_TEMPLATES} == expected
