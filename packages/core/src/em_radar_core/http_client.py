@@ -10,7 +10,9 @@ _UPSTREAM_RECORD_FACTORY: Callable[..., logging.LogRecord] | None = None
 _UPSTREAM_MAKE_RECORD: Callable[..., logging.LogRecord] | None = None
 _EXCEPTION_FORMATTER = logging.Formatter()
 # Record attributes handled explicitly by filter(); the generic attribute sweep skips them.
-_SKIP_ATTRIBUTES = frozenset({"msg", "args", "exc_info", "exc_text", "stack_info"})
+# `args` is swept (not skipped) so a credential in an argument not referenced by the message
+# template — which getMessage() never exposes — is still sanitized.
+_SKIP_ATTRIBUTES = frozenset({"msg", "exc_info", "exc_text", "stack_info"})
 # Exact-value redaction is skipped for trivially short values: a 1-4 char token would
 # otherwise mangle unrelated log lines wherever those characters occur. This matches the
 # M7-01 read-surface rule that treats tokens of 4 or fewer characters as fully maskable;
@@ -54,6 +56,8 @@ _CREDENTIAL_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
 
 
 def _is_credential_key(key: object) -> bool:
+    if isinstance(key, bytes | bytearray):
+        key = bytes(key).decode("utf-8", "replace")
     if not isinstance(key, str):
         return False
     normalized = "".join(character for character in key.casefold() if character.isalnum())
@@ -127,6 +131,18 @@ class _CredentialRedactionFilter(logging.Filter):
             changed = False
             items = []
             for item in value:
+                # (key, value) pairs, e.g. httpx Headers.raw = [(b"PRIVATE-TOKEN", b"abc")],
+                # are redacted by key context so short/byte values are not missed.
+                if (
+                    isinstance(item, tuple | list)
+                    and len(item) == 2
+                    and _is_credential_key(item[0])
+                ):
+                    items.append(
+                        (item[0], _REDACTED) if isinstance(item, tuple) else [item[0], _REDACTED]
+                    )
+                    changed = True
+                    continue
                 item_changed, new_item = self._redact_value(item, seen)
                 changed = changed or item_changed
                 items.append(new_item)

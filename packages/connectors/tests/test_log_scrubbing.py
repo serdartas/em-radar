@@ -367,6 +367,33 @@ def test_short_token_under_credential_key_is_redacted_in_live_mapping() -> None:
     assert "example.com" in formatted
 
 
+def test_filter_redacts_credential_in_unreferenced_args() -> None:
+    """A credential in a message argument not referenced by the template must be sanitized,
+    since getMessage() never exposes it but %(args)s / structured handlers could."""
+    token = "unreferenced-arg-secret-abcdef"
+    filt = _CredentialRedactionFilter()
+    filt.add_sensitive_values([token])
+
+    record = _make_record("%(safe)s", {"safe": "ok", "token": token})
+    filt.filter(record)
+
+    assert token not in repr(record.args)
+
+
+def test_filter_redacts_byte_header_pairs_by_key() -> None:
+    """Byte (key, value) header pairs (e.g. httpx Headers.raw) are redacted by key context."""
+    filt = _CredentialRedactionFilter()
+
+    record = _make_record("request")
+    record.raw_headers = [(b"PRIVATE-TOKEN", b"abc"), (b"Host", b"example.com")]
+    filt.filter(record)
+
+    rendered = repr(record.raw_headers)
+    assert "abc" not in rendered
+    assert _REDACTED in rendered
+    assert "example.com" in rendered
+
+
 def test_filter_does_not_evaluate_equality_on_arbitrary_extra() -> None:
     """The attribute sweep must never invoke __eq__ on an arbitrary extra object, since a
     raising or non-boolean implementation would abort the process-wide logging hook."""
