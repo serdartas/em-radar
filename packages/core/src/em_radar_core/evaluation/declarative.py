@@ -690,7 +690,7 @@ def _mr_field_value(
             return None
         return (mr.additions or 0) + (mr.deletions or 0)
     if field_key == "pipeline_status":
-        return mr.pipeline_status.value if mr.pipeline_status is not None else None
+        return mr.pipeline_status.value if mr.pipeline_status is not None else "none"
     if field_key == "age_since_pipeline_update":
         return _age_days(ctx.now, mr.pipeline_updated_at)
     if field_key == "approval_count":

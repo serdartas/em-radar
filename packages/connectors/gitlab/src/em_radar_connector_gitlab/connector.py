@@ -747,9 +747,12 @@ def _within_window_bounds(moment: datetime | None, window: EvaluationWindow) -> 
 
 
 def _mr_in_window(mr: MergeRequest, window: EvaluationWindow) -> bool:
-    # Open/draft MRs are always included: a stale open MR last touched before the window
-    # start is exactly the case the "waiting too long" signal is designed to catch.
+    # Open/draft MRs are included: a stale open MR last touched before the window start
+    # is exactly the case the "waiting too long" signal is designed to catch.
+    # MRs created after the window end didn't exist during the reported period.
     if mr.state in (MergeRequestState.OPEN, MergeRequestState.DRAFT):
+        if window.end is not None and mr.created_at > window.end:
+            return False
         return True
     # Without bounds there is nothing to filter against.
     if window.start is None and window.end is None:
