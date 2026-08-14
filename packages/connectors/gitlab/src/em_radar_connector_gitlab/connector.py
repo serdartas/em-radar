@@ -751,7 +751,7 @@ def _mr_in_window(mr: MergeRequest, window: EvaluationWindow) -> bool:
     # is exactly the case the "waiting too long" signal is designed to catch.
     # MRs created after the window end didn't exist during the reported period.
     if mr.state in (MergeRequestState.OPEN, MergeRequestState.DRAFT):
-        if window.end is not None and mr.created_at > window.end:
+        if window.end is not None and mr.created_at >= window.end:
             return False
         return True
     # Without bounds there is nothing to filter against.
