@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import base64
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import ClassVar, Literal, cast
 from uuid import UUID, uuid5
 
@@ -1164,7 +1164,7 @@ def _workitem_jql(scope: WorkItemScope, window: EvaluationWindow) -> str:
     if window.window_type is WindowType.DATE_RANGE:
         if window.end is None:
             raise ConnectorDataError("Date-range window was missing end")
-        clauses.append(f'updated < "{_jql_datetime(window.end)}"')
+        clauses.append(f'updated < "{_jql_datetime(_ceil_to_minute(window.end))}"')
     return " AND ".join(clauses) if clauses else "ORDER BY updated ASC"
 
 
@@ -1173,6 +1173,10 @@ def _workitem_in_window(workitem: WorkItem, window: EvaluationWindow) -> bool:
         if window.sprint_id is None:
             raise ConnectorDataError("Sprint window was missing sprint_id")
         return window.sprint_id in workitem.sprint_ids
+    if window.window_type is WindowType.DATE_RANGE and window.end is not None:
+        # Exact exclusive-end filter: the coarse JQL boundary is rounded up to the next
+        # minute, so items in the final partial minute must be dropped here precisely.
+        return workitem.updated_at is None or workitem.updated_at < window.end
     return True
 
 
@@ -1191,6 +1195,19 @@ def _jira_issue_type_names(types: Sequence[WorkItemType]) -> list[str]:
         WorkItemType.OTHER: "Other",
     }
     return [names[item_type] for item_type in types]
+
+
+def _ceil_to_minute(value: datetime) -> datetime:
+    """Round a datetime UP to the next whole minute if it has sub-minute precision.
+
+    This ensures a JQL `updated < "<minute>"` coarse boundary never drops candidates
+    updated in the final partial minute of a window. For already-aligned datetimes
+    (zero seconds and microseconds) the value is returned unchanged.
+    """
+    if value.second == 0 and value.microsecond == 0:
+        return value
+    floored = value.replace(second=0, microsecond=0)
+    return floored + timedelta(minutes=1)
 
 
 def _jql_datetime(value: datetime) -> str:
