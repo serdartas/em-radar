@@ -115,6 +115,7 @@ class GitLabConnector:
             headers={"PRIVATE-TOKEN": token},
             verify=self.config.verify_tls,
         )
+        self.approvals_unavailable: bool = False
 
     async def test_connection(self) -> ConnectionTestResult:
         user_payload = await self._request_json("api/v4/user")
@@ -401,7 +402,8 @@ class GitLabConnector:
             )
         except (ConnectorNotFoundError, ConnectorAuthError):
             # Some GitLab editions or tokens do not expose the approvals API.
-            # Return None so the signal skips rather than falsely firing.
+            # Track unavailability so the runner can surface a partial-data note (REQ-NF-070).
+            self.approvals_unavailable = True
             return None
         approved_by = payload.get("approved_by")
         if not isinstance(approved_by, list):

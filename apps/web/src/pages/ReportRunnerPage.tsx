@@ -27,22 +27,20 @@ export function ReportRunnerPage() {
   const [endDate, setEndDate] = useState("")
   const [dateError, setDateError] = useState<string | null>(null)
 
-  const openReport = (report: ReportDetail) => {
-    void queryClient.invalidateQueries({ queryKey: ["reports"], exact: true })
-    navigate(`/reports/results/${report.id}`)
-  }
-
   const teamRun = useMutation({
     mutationFn: async ({ teamIds, window }: TeamRunInput) => {
-      let last: ReportDetail | null = null
+      const reports: ReportDetail[] = []
       for (const teamId of teamIds) {
-        last = await runTeamReport(teamId, window)
+        reports.push(await runTeamReport(teamId, window))
       }
-      return last
+      return reports
     },
-    onSuccess: (report) => {
-      if (report) {
-        openReport(report)
+    onSuccess: (reports) => {
+      void queryClient.invalidateQueries({ queryKey: ["reports"], exact: true })
+      if (reports.length === 1) {
+        navigate(`/reports/results/${reports[0].id}`)
+      } else {
+        navigate("/reports/results")
       }
     },
   })

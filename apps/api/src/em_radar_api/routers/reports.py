@@ -281,6 +281,7 @@ class _CodeFetchResult:
     repositories: list[Repository]
     mergerequests: list[MergeRequest]
     reviews: list[Review]
+    approvals_unavailable: bool = False
 
 
 async def _run_team_report(
@@ -411,6 +412,13 @@ async def _run_team_report(
             raise code_result
     else:
         code_data = code_result
+        if code_data is not None and code_data.approvals_unavailable:
+            partial_data_notes.append(
+                {
+                    "source": "approvals",
+                    "reason": "GitLab approvals API unavailable for this edition or token scope",
+                }
+            )
 
     code_mergerequests = code_data.mergerequests if code_data else []
     code_reviews = code_data.reviews if code_data else []
@@ -730,6 +738,7 @@ async def _fetch_code_data(
             if isinstance(code_connector, ReviewProvider)
             else []
         )
+        approvals_unavailable = getattr(code_connector, "approvals_unavailable", False)
     except (ConnectorRateLimitedError, ConnectorTransientError, ConnectorAuthError):
         # Partial-data errors propagate to _run_team_report for graceful handling.
         raise
@@ -738,7 +747,12 @@ async def _fetch_code_data(
     finally:
         await code_connector.close()
 
-    return _CodeFetchResult(repositories=repositories, mergerequests=mergerequests, reviews=reviews)
+    return _CodeFetchResult(
+        repositories=repositories,
+        mergerequests=mergerequests,
+        reviews=reviews,
+        approvals_unavailable=approvals_unavailable,
+    )
 
 
 @router.get("/reports", response_model=list[ReportSummaryResponse])
