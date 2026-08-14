@@ -61,36 +61,45 @@ class _CredentialRedactionFilter(logging.Filter):
             text = pattern.sub(replacement, text)
         return text
 
-    def _redact_value(self, value: object) -> tuple[bool, object]:
+    def _redact_value(
+        self, value: object, seen: frozenset[int] = frozenset()
+    ) -> tuple[bool, object]:
         # Returns (changed, new_value). The changed flag is tracked structurally so the
         # caller never evaluates equality on an arbitrary object whose __eq__ could raise.
+        # `seen` carries the identities on the current path to stop self-referential extras
+        # from recursing forever.
         if isinstance(value, str):
             redacted = self.redact(value)
             return (redacted != value, redacted)
-        if isinstance(value, bytes):
-            decoded = value.decode("utf-8", "replace")
+        if isinstance(value, bytes | bytearray):
+            decoded = bytes(value).decode("utf-8", "replace")
             redacted = self.redact(decoded)
-            changed = redacted != decoded
-            return (changed, redacted.encode("utf-8") if changed else value)
-        if isinstance(value, Mapping):
-            changed = False
-            result: dict[object, object] = {}
-            for key, item in value.items():
-                item_changed, new_item = self._redact_value(item)
-                changed = changed or item_changed
-                result[key] = new_item
-            return (changed, result if changed else value)
-        # Rebuild with base-type constructors so tuple/mapping subclasses (e.g. NamedTuple)
-        # never hit an incompatible constructor; unchanged values keep their original object.
-        if isinstance(value, list | tuple | set | frozenset):
+            if redacted == decoded:
+                return (False, value)
+            encoded = redacted.encode("utf-8")
+            return (True, bytearray(encoded) if isinstance(value, bytearray) else encoded)
+        if isinstance(value, Mapping | list | tuple | set | frozenset):
+            if id(value) in seen:
+                return (False, value)
+            seen = seen | {id(value)}
+            if isinstance(value, Mapping):
+                changed = False
+                result: dict[object, object] = {}
+                for key, item in value.items():
+                    item_changed, new_item = self._redact_value(item, seen)
+                    changed = changed or item_changed
+                    result[key] = new_item
+                return (changed, result if changed else value)
             changed = False
             items = []
             for item in value:
-                item_changed, new_item = self._redact_value(item)
+                item_changed, new_item = self._redact_value(item, seen)
                 changed = changed or item_changed
                 items.append(new_item)
             if not changed:
                 return (False, value)
+            # Rebuild with base-type constructors so tuple/set subclasses (e.g. NamedTuple)
+            # never hit an incompatible constructor.
             if isinstance(value, list):
                 return (True, items)
             if isinstance(value, tuple):
@@ -107,11 +116,15 @@ class _CredentialRedactionFilter(logging.Filter):
             record.msg = redacted
             record.args = ()
         # Tracebacks and stack traces bypass getMessage(); a Formatter renders them
-        # after this filter runs, so pre-fill (and scrub) the cached text here.
+        # after this filter runs, so pre-fill (and scrub) the cached text here. The raw
+        # exc_info tuple is dropped once the redacted text is cached so a formatter that
+        # renders %(exc_info)s cannot emit the unsanitized exception.
         if record.exc_text is not None:
             record.exc_text = self.redact(record.exc_text)
+            record.exc_info = None
         elif record.exc_info is not None and record.exc_info[0] is not None:
             record.exc_text = self.redact(_EXCEPTION_FORMATTER.formatException(record.exc_info))
+            record.exc_info = None
         if record.stack_info is not None:
             record.stack_info = self.redact(record.stack_info)
         # Structured `extra` attributes (including nested containers) are attached after

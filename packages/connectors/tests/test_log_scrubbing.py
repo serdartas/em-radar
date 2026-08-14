@@ -291,6 +291,51 @@ def test_short_token_in_headers_repr_is_redacted_by_key() -> None:
     assert "'host': 'x'" in msg
 
 
+def test_filter_redacts_bytearray_leaf() -> None:
+    """A credential carried as a bytearray leaf is redacted while keeping its type."""
+    token = "bytearray-secret-abcdef"
+    filt = _CredentialRedactionFilter()
+    filt.add_sensitive_values([token])
+
+    record = _make_record("request")
+    record.blob = bytearray(f"Bearer {token}".encode())
+    filt.filter(record)
+
+    assert isinstance(record.blob, bytearray)
+    assert token not in record.blob.decode()
+    assert _REDACTED in record.blob.decode()
+
+
+def test_filter_clears_exc_info_after_caching_redacted_traceback() -> None:
+    """A formatter rendering %(exc_info)s directly must not see the raw exception object."""
+    token = "exc-info-secret-abcdef"
+    configure_log_scrubbing()
+    _CREDENTIAL_FILTER.add_sensitive_values([token])
+
+    logger = logging.getLogger(f"{_TEST_LOGGER_NAME}.excinfo")
+    try:
+        raise ValueError(f"failure carrying {token}")
+    except ValueError:
+        record = logger.makeRecord(
+            logger.name, logging.ERROR, "", 0, "request failed", (), sys.exc_info()
+        )
+
+    formatted = logging.Formatter("%(message)s exc=%(exc_info)s").format(record)
+    assert token not in formatted
+    assert _REDACTED in formatted
+
+
+def test_filter_handles_cyclic_extra_without_recursing_forever() -> None:
+    """A self-referential extra container must not raise RecursionError."""
+    filt = _CredentialRedactionFilter()
+
+    payload: dict[str, object] = {}
+    payload["self"] = payload
+    record = _make_record("request")
+    record.payload = payload
+    filt.filter(record)
+
+
 def test_filter_does_not_evaluate_equality_on_arbitrary_extra() -> None:
     """The attribute sweep must never invoke __eq__ on an arbitrary extra object, since a
     raising or non-boolean implementation would abort the process-wide logging hook."""
