@@ -7,13 +7,14 @@ from pydantic import SecretStr
 from sqlmodel import Session, select
 
 from em_radar_api.connector_registry import get_connector_capabilities
+from em_radar_api.scope_definitions import ScopeDefinitionTable
+from em_radar_api.security import mask_secret
 from em_radar_api.source_connections import (
     SourceConnectionCreate,
     SourceConnectionRead,
     SourceConnectionTable,
     SourceConnectionUpdate,
 )
-from em_radar_api.scope_definitions import ScopeDefinitionTable
 from em_radar_api.tables import TeamProfileTable
 from em_radar_core.connectors import ConnectorBase
 
@@ -204,22 +205,16 @@ def _unwrap_marked_secrets(value: object) -> object:
 
 def _mask_value(value: object, field_name: str | None = None) -> object:
     if isinstance(value, SecretStr):
-        return _mask_secret(value.get_secret_value())
+        return mask_secret(value.get_secret_value())
     if isinstance(value, Mapping) and set(value) == {SECRET_MARKER}:
-        return _mask_secret(str(value[SECRET_MARKER]))
+        return mask_secret(str(value[SECRET_MARKER]))
     if field_name is not None and is_credential_field_name(field_name):
-        return _mask_secret(str(value))
+        return mask_secret(str(value))
     if isinstance(value, Mapping):
         return {str(key): _mask_value(item, str(key)) for key, item in value.items()}
     if isinstance(value, Sequence) and not isinstance(value, str | bytes | bytearray):
-        return [_mask_value(item) for item in value]
+        return [_mask_value(item, field_name) for item in value]
     return deepcopy(value)
-
-
-def _mask_secret(secret: str) -> str:
-    if len(secret) <= 4:
-        return "****"
-    return f"****{secret[-4:]}"
 
 
 def is_credential_field_name(field_name: str) -> bool:
