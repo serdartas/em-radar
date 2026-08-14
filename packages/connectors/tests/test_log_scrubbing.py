@@ -63,6 +63,15 @@ def _client_factory_for(
     return factory
 
 
+class _RaisingEq:
+    """An object whose equality must never be evaluated by the redaction sweep."""
+
+    __hash__ = None
+
+    def __eq__(self, other: object) -> bool:
+        raise AssertionError("equality must not be evaluated on arbitrary extras")
+
+
 def _make_record(message: str, *args: object) -> logging.LogRecord:
     return logging.LogRecord(
         name="test",
@@ -266,6 +275,33 @@ def test_short_value_below_threshold_is_not_registered() -> None:
     record = _make_record("xylophone status ok")
     filt.filter(record)
     assert record.getMessage() == "xylophone status ok"
+
+
+def test_short_token_in_headers_repr_is_redacted_by_key() -> None:
+    """A short, unregistered token inside a mapping/Headers repr is redacted by header
+    key context, while non-credential headers are left intact."""
+    filt = _CredentialRedactionFilter()
+
+    record = _make_record("outbound %s", "Headers({'private-token': 'abc', 'host': 'x'})")
+    filt.filter(record)
+
+    msg = record.getMessage()
+    assert "'abc'" not in msg
+    assert _REDACTED in msg
+    assert "'host': 'x'" in msg
+
+
+def test_filter_does_not_evaluate_equality_on_arbitrary_extra() -> None:
+    """The attribute sweep must never invoke __eq__ on an arbitrary extra object, since a
+    raising or non-boolean implementation would abort the process-wide logging hook."""
+    filt = _CredentialRedactionFilter()
+
+    record = _make_record("request")
+    sentinel = _RaisingEq()
+    record.payload = sentinel
+    filt.filter(record)
+
+    assert record.payload is sentinel
 
 
 # --------------------------------------------------------------------------- #

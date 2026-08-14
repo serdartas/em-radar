@@ -19,10 +19,20 @@ _MIN_REGISTERED_LENGTH = 5
 
 # Defense-in-depth: credential-shaped substrings are scrubbed even when the exact
 # value was never registered by a connector (a token pasted into a URL, a second
-# auth scheme, a byte-for-byte different header string, etc.).
+# auth scheme, a byte-for-byte different header string, a short token, etc.).
+# Redaction is keyed on the credential header name so the value is scrubbed regardless
+# of its length or form.
+_CREDENTIAL_HEADER_KEYS = r"authorization|private-token"
 _CREDENTIAL_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    # Quoted mapping / dict / httpx Headers repr, e.g. {'private-token': 'abc'}.
+    (
+        re.compile(rf"(?i)(['\"](?:{_CREDENTIAL_HEADER_KEYS})['\"]\s*:\s*)(['\"]).*?\2"),
+        r"\1\2" + _REDACTED + r"\2",
+    ),
+    # Header-line form, e.g. Authorization: Bearer xxx / PRIVATE-TOKEN: xxx.
     (re.compile(r"(?i)(authorization\s*[:=]\s*)(?:bearer|basic)\s+\S+"), r"\1" + _REDACTED),
     (re.compile(r"(?i)(private-token\s*[:=]\s*)\S+"), r"\1" + _REDACTED),
+    # Bare Bearer scheme.
     (re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+"), f"Bearer {_REDACTED}"),
 )
 
@@ -51,26 +61,44 @@ class _CredentialRedactionFilter(logging.Filter):
             text = pattern.sub(replacement, text)
         return text
 
-    def _redact_value(self, value: object) -> object:
+    def _redact_value(self, value: object) -> tuple[bool, object]:
+        # Returns (changed, new_value). The changed flag is tracked structurally so the
+        # caller never evaluates equality on an arbitrary object whose __eq__ could raise.
         if isinstance(value, str):
-            return self.redact(value)
+            redacted = self.redact(value)
+            return (redacted != value, redacted)
         if isinstance(value, bytes):
             decoded = value.decode("utf-8", "replace")
             redacted = self.redact(decoded)
-            return redacted.encode("utf-8") if redacted != decoded else value
+            changed = redacted != decoded
+            return (changed, redacted.encode("utf-8") if changed else value)
         if isinstance(value, Mapping):
-            return {key: self._redact_value(item) for key, item in value.items()}
+            changed = False
+            result: dict[object, object] = {}
+            for key, item in value.items():
+                item_changed, new_item = self._redact_value(item)
+                changed = changed or item_changed
+                result[key] = new_item
+            return (changed, result if changed else value)
         # Rebuild with base-type constructors so tuple/mapping subclasses (e.g. NamedTuple)
-        # never hit an incompatible constructor. Equality below leaves untouched values as-is.
-        if isinstance(value, list):
-            return [self._redact_value(item) for item in value]
-        if isinstance(value, tuple):
-            return tuple(self._redact_value(item) for item in value)
-        if isinstance(value, frozenset):
-            return frozenset(self._redact_value(item) for item in value)
-        if isinstance(value, set):
-            return {self._redact_value(item) for item in value}
-        return value
+        # never hit an incompatible constructor; unchanged values keep their original object.
+        if isinstance(value, list | tuple | set | frozenset):
+            changed = False
+            items = []
+            for item in value:
+                item_changed, new_item = self._redact_value(item)
+                changed = changed or item_changed
+                items.append(new_item)
+            if not changed:
+                return (False, value)
+            if isinstance(value, list):
+                return (True, items)
+            if isinstance(value, tuple):
+                return (True, tuple(items))
+            if isinstance(value, frozenset):
+                return (True, frozenset(items))
+            return (True, set(items))
+        return (False, value)
 
     def filter(self, record: logging.LogRecord) -> bool:
         message = record.getMessage()
@@ -92,8 +120,8 @@ class _CredentialRedactionFilter(logging.Filter):
         for key, value in list(record.__dict__.items()):
             if key in _SKIP_ATTRIBUTES:
                 continue
-            scrubbed = self._redact_value(value)
-            if scrubbed != value:
+            changed, scrubbed = self._redact_value(value)
+            if changed:
                 record.__dict__[key] = scrubbed
         return True
 
