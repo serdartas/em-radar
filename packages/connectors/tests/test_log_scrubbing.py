@@ -7,6 +7,7 @@ Coverage:
 - _CredentialRedactionFilter unit tests for Bearer, Basic-auth, and PRIVATE-TOKEN patterns
 - Credential-shaped values are scrubbed even without registration (defense in depth)
 - A registered token embedded in an exception traceback is scrubbed before formatting
+- A credential passed through logging `extra` is scrubbed at handler stage
 - configure_log_scrubbing() public API is idempotent
 - Jira connector (Bearer PAT mode): token and Authorization header not in any log record
 - Jira connector (Basic auth mode): token and encoded Authorization header not in any log record
@@ -161,6 +162,32 @@ def test_filter_redacts_token_in_exception_traceback() -> None:
         )
 
     formatted = logging.Formatter().format(record)
+    assert token not in formatted
+    assert _REDACTED in formatted
+
+
+def test_filter_redacts_token_in_extra_field() -> None:
+    """A credential passed via logging `extra` is attached after the record factory,
+    so the handler-stage filter must scrub arbitrary string attributes too."""
+    token = "extra-field-secret-abcdef"
+    configure_log_scrubbing()
+    _CREDENTIAL_FILTER.add_sensitive_values([token])
+
+    logger = logging.getLogger(f"{_TEST_LOGGER_NAME}.extra")
+    record = logger.makeRecord(
+        logger.name,
+        logging.INFO,
+        "",
+        0,
+        "outbound request",
+        (),
+        None,
+        extra={"authorization": f"Bearer {token}"},
+    )
+    # Simulate the handler-stage invocation where `extra` attributes are present.
+    _CREDENTIAL_FILTER.filter(record)
+
+    formatted = logging.Formatter("%(message)s auth=%(authorization)s").format(record)
     assert token not in formatted
     assert _REDACTED in formatted
 

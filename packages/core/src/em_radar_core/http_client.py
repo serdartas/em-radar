@@ -48,13 +48,20 @@ class _CredentialRedactionFilter(logging.Filter):
             record.msg = redacted
             record.args = ()
         # Tracebacks and stack traces bypass getMessage(); a Formatter renders them
-        # after this factory runs, so pre-fill (and scrub) the cached text here.
+        # after this filter runs, so pre-fill (and scrub) the cached text here.
         if record.exc_text is not None:
             record.exc_text = self.redact(record.exc_text)
         elif record.exc_info is not None and record.exc_info[0] is not None:
             record.exc_text = self.redact(_EXCEPTION_FORMATTER.formatException(record.exc_info))
         if record.stack_info is not None:
             record.stack_info = self.redact(record.stack_info)
+        # Structured `extra` attributes are attached after the record factory returns,
+        # so scrub every string attribute when this filter also runs at handler stage.
+        for key, value in list(record.__dict__.items()):
+            if isinstance(value, str):
+                scrubbed = self.redact(value)
+                if scrubbed != value:
+                    record.__dict__[key] = scrubbed
         return True
 
 
@@ -79,12 +86,21 @@ def _install_redacting_record_factory() -> None:
 
 
 def configure_log_scrubbing() -> None:
-    """Install the credential-redacting log record factory process-wide.
+    """Install credential redaction process-wide.
 
-    Call this once at application startup so the factory is active before any connector
-    is initialised. Calling it more than once is safe — subsequent calls are no-ops.
+    The record factory scrubs every record's message, args, traceback and stack info at
+    creation. `extra` attributes are attached only afterwards, so the same filter is also
+    registered on the root logger and its handlers, where it runs once the record is fully
+    populated. Call this once at application startup, before any connector is initialised;
+    calling it more than once is safe.
     """
     _install_redacting_record_factory()
+    root = logging.getLogger()
+    if _CREDENTIAL_FILTER not in root.filters:
+        root.addFilter(_CREDENTIAL_FILTER)
+    for handler in root.handlers:
+        if _CREDENTIAL_FILTER not in handler.filters:
+            handler.addFilter(_CREDENTIAL_FILTER)
 
 
 def create_redacting_async_client(
