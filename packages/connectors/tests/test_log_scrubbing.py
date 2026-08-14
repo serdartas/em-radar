@@ -394,6 +394,49 @@ def test_filter_redacts_byte_header_pairs_by_key() -> None:
     assert "example.com" in rendered
 
 
+def test_filter_redacts_registered_token_used_as_mapping_key() -> None:
+    """A registered credential used as a mapping key is redacted, not copied verbatim."""
+    token = "keypos-registered-value-abcdef"
+    filt = _CredentialRedactionFilter()
+    filt.add_sensitive_values([token])
+
+    record = _make_record("request")
+    record.payload = {token: "cached"}
+    filt.filter(record)
+
+    assert token not in repr(record.payload)
+    assert _REDACTED in repr(record.payload)
+
+
+def test_filter_redacts_mapping_valued_message() -> None:
+    """A mapping passed as the log message is sanitized by credential-key context."""
+    filt = _CredentialRedactionFilter()
+
+    record = _make_record({"token": "abc", "safe": "ok"})  # type: ignore[arg-type]
+    filt.filter(record)
+
+    rendered = record.getMessage()
+    assert "abc" not in rendered
+    assert _REDACTED in rendered
+    assert "ok" in rendered
+
+
+def test_credential_free_exception_keeps_exc_info() -> None:
+    """An exception whose traceback holds no credential must keep its exc_info tuple so
+    structured handlers still receive the exception type/value/traceback."""
+    filt = _CredentialRedactionFilter()
+    filt.add_sensitive_values(["some-registered-secret-abcdef"])
+
+    try:
+        raise ValueError("ordinary failure, no secrets here")
+    except ValueError:
+        record = logging.LogRecord("t", logging.ERROR, "", 0, "failed", (), sys.exc_info())
+    filt.filter(record)
+
+    assert record.exc_info is not None
+    assert record.exc_text is None
+
+
 def test_filter_does_not_evaluate_equality_on_arbitrary_extra() -> None:
     """The attribute sweep must never invoke __eq__ on an arbitrary extra object, since a
     raising or non-boolean implementation would abort the process-wide logging hook."""

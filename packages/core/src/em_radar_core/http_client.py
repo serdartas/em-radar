@@ -10,9 +10,10 @@ _UPSTREAM_RECORD_FACTORY: Callable[..., logging.LogRecord] | None = None
 _UPSTREAM_MAKE_RECORD: Callable[..., logging.LogRecord] | None = None
 _EXCEPTION_FORMATTER = logging.Formatter()
 # Record attributes handled explicitly by filter(); the generic attribute sweep skips them.
-# `args` is swept (not skipped) so a credential in an argument not referenced by the message
-# template — which getMessage() never exposes — is still sanitized.
-_SKIP_ATTRIBUTES = frozenset({"msg", "exc_info", "exc_text", "stack_info"})
+# `msg` and `args` are swept (not skipped) so a credential in a mapping-valued message or in
+# an argument the template does not reference — which getMessage() never exposes as text — is
+# still sanitized.
+_SKIP_ATTRIBUTES = frozenset({"exc_info", "exc_text", "stack_info"})
 # Exact-value redaction is skipped for trivially short values: a 1-4 char token would
 # otherwise mangle unrelated log lines wherever those characters occur. This matches the
 # M7-01 read-surface rule that treats tokens of 4 or fewer characters as fully maskable;
@@ -119,14 +120,18 @@ class _CredentialRedactionFilter(logging.Filter):
                 changed = False
                 result: dict[object, object] = {}
                 for key, item in value.items():
+                    # Keys can carry a credential too (a token used as a dict key); redact
+                    # the key, but decide credential-key context from the original key.
+                    key_changed, new_key = self._redact_value(key, seen)
+                    changed = changed or key_changed
                     if _is_credential_key(key):
-                        result[key] = _REDACTED
+                        result[new_key] = _REDACTED
                         if not (isinstance(item, str) and item == _REDACTED):
                             changed = True
                         continue
                     item_changed, new_item = self._redact_value(item, seen)
                     changed = changed or item_changed
-                    result[key] = new_item
+                    result[new_key] = new_item
                 return (changed, result if changed else value)
             changed = False
             items = []
@@ -167,14 +172,20 @@ class _CredentialRedactionFilter(logging.Filter):
             record.args = ()
         # Tracebacks and stack traces bypass getMessage(); a Formatter renders them
         # after this filter runs, so pre-fill (and scrub) the cached text here. The raw
-        # exc_info tuple is dropped once the redacted text is cached so a formatter that
-        # renders %(exc_info)s cannot emit the unsanitized exception.
+        # exc_info tuple is dropped only when its traceback actually contained a credential,
+        # so a formatter rendering %(exc_info)s cannot emit it — while credential-free
+        # exceptions keep their tuple for structured handlers.
         if record.exc_text is not None:
-            record.exc_text = self.redact(record.exc_text)
-            record.exc_info = None
+            redacted_exc = self.redact(record.exc_text)
+            if redacted_exc != record.exc_text:
+                record.exc_text = redacted_exc
+                record.exc_info = None
         elif record.exc_info is not None and record.exc_info[0] is not None:
-            record.exc_text = self.redact(_EXCEPTION_FORMATTER.formatException(record.exc_info))
-            record.exc_info = None
+            formatted_exc = _EXCEPTION_FORMATTER.formatException(record.exc_info)
+            redacted_exc = self.redact(formatted_exc)
+            if redacted_exc != formatted_exc:
+                record.exc_text = redacted_exc
+                record.exc_info = None
         if record.stack_info is not None:
             record.stack_info = self.redact(record.stack_info)
         # Structured `extra` attributes (including nested containers) are attached after
