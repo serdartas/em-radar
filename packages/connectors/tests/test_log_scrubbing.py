@@ -468,6 +468,29 @@ def test_filter_redacts_full_multipart_authorization_value() -> None:
     assert _REDACTED in msg
 
 
+def test_filter_redacts_prerendered_byte_header_pair_string() -> None:
+    """A byte-literal (key, value) header pair already rendered into a string is redacted."""
+    filt = _CredentialRedactionFilter()
+    record = _make_record("headers: %s", "[(b'private-token', b'abc')]")
+    filt.filter(record)
+
+    msg = record.getMessage()
+    assert "abc" not in msg
+    assert _REDACTED in msg
+
+
+def test_numeric_value_under_credential_key_does_not_break_formatting() -> None:
+    """A non-string value under a credential-named key (e.g. %(token)d = 42) must not be
+    turned into a string, which would raise TypeError when the message is re-formatted."""
+    configure_log_scrubbing()
+    logger = logging.getLogger(f"{_TEST_LOGGER_NAME}.numeric")
+    record = logger.makeRecord(
+        logger.name, logging.INFO, "", 0, "parsed %(token)d", ({"token": 42},), None
+    )
+
+    assert record.getMessage() == "parsed 42"
+
+
 def test_filter_redacts_registered_token_used_as_pair_key() -> None:
     """A registered credential used as the key of a (key, value) pair is redacted."""
     token = "pairkey-registered-token-abcdef"

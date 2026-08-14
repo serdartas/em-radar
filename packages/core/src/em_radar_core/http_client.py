@@ -43,9 +43,11 @@ _CREDENTIAL_KEY_NAMES = frozenset(
     }
 )
 _CREDENTIAL_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
-    # Quoted mapping / dict / httpx Headers repr, e.g. {'private-token': 'abc'}.
+    # Quoted mapping / dict / tuple repr, incl. byte-literal reprs, e.g.
+    # {'private-token': 'abc'} or [(b'private-token', b'abc')]. The key/value may be `:` or
+    # `,` separated and either may carry a `b` prefix.
     (
-        re.compile(rf"(?i)(['\"](?:{_CREDENTIAL_HEADER_KEYS})['\"]\s*:\s*)(['\"]).*?\2"),
+        re.compile(rf"(?i)(b?['\"](?:{_CREDENTIAL_HEADER_KEYS})['\"]\s*[:,]\s*b?)(['\"])[^'\"]*\2"),
         r"\1\2" + _REDACTED + r"\2",
     ),
     # Header-line form, e.g. Authorization: Bearer xxx / Digest a=1, b=2; PRIVATE-TOKEN: xxx.
@@ -126,7 +128,11 @@ class _CredentialRedactionFilter(logging.Filter):
                     # the key, but decide credential-key context from the original key.
                     key_changed, new_key = self._redact_value(key, seen)
                     changed = changed or key_changed
-                    if _is_credential_key(key):
+                    # Only string/bytes values under a credential key are credentials.
+                    # Non-string scalars (e.g. an int rendered with %(token)d) are left
+                    # intact so re-formatting the message cannot raise; containers still
+                    # recurse so nested credentials are sanitized.
+                    if _is_credential_key(key) and isinstance(item, str | bytes | bytearray):
                         result[new_key] = _REDACTED
                         if not (isinstance(item, str) and item == _REDACTED):
                             changed = True
