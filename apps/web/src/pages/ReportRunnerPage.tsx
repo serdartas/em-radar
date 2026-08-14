@@ -27,6 +27,7 @@ interface TeamFailure {
   teamId: string
   teamName: string | null
   error: unknown
+  message: string
 }
 
 interface RunOutcome {
@@ -43,6 +44,7 @@ export function ReportRunnerPage() {
   const [startDate, setStartDate] = useState("")
   const [endDate, setEndDate] = useState("")
   const [dateError, setDateError] = useState<string | null>(null)
+  const [allFailures, setAllFailures] = useState<TeamFailure[] | null>(null)
 
   // Derived before useMutation so the closure captures an initialized binding.
   const teams = teamsQuery.data ?? []
@@ -58,19 +60,24 @@ export function ReportRunnerPage() {
           const report = await runTeamReport(teamId, window)
           successes.push({ teamId, teamName, report })
         } catch (err: unknown) {
-          failures.push({ teamId, teamName, error: err })
+          failures.push({
+            teamId,
+            teamName,
+            error: err,
+            message: apiErrorMessage(err, "An unexpected error occurred."),
+          })
         }
-      }
-      if (successes.length === 0) {
-        const firstError = failures[0]?.error
-        throw firstError instanceof Error
-          ? firstError
-          : new Error("All selected team reports failed.")
       }
       return { successes, failures }
     },
     onSuccess: ({ successes, failures }: RunOutcome) => {
-      void queryClient.invalidateQueries({ queryKey: ["reports"], exact: true })
+      if (successes.length >= 1) {
+        void queryClient.invalidateQueries({ queryKey: ["reports"], exact: true })
+      }
+      if (successes.length === 0) {
+        setAllFailures(failures)
+        return
+      }
       if (successes.length === 1 && failures.length === 0) {
         navigate(`/reports/results/${successes[0].report.id}`)
       } else if (failures.length > 0) {
@@ -95,6 +102,7 @@ export function ReportRunnerPage() {
 
   function handleRun() {
     setDateError(null)
+    setAllFailures(null)
     if (windowMode === "sprint") {
       teamRun.mutate({ teamIds: selectedTeamIds })
       return
@@ -104,9 +112,9 @@ export function ReportRunnerPage() {
       return
     }
     const start = `${startDate}T00:00:00Z`
-    // window.end is inclusive (Jira `updated <= end`, GitLab window bounds). Jira truncates
-    // to the minute, so the robust inclusive boundary for the selected day is the next day at
-    // midnight UTC: it survives truncation and never drops updates from the final minute.
+    // The evaluation window is half-open [start, end): end is exclusive. Setting end to the
+    // next day at midnight UTC means the entire selected end day is included; an item
+    // timestamped exactly at the boundary belongs to the next window.
     const endBoundary = new Date(`${endDate}T00:00:00Z`)
     endBoundary.setUTCDate(endBoundary.getUTCDate() + 1)
     const end = endBoundary.toISOString()
@@ -221,6 +229,21 @@ export function ReportRunnerPage() {
           <p className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-700" role="alert">
             {apiErrorMessage(teamRun.error, "The report run failed. Please try again.")}
           </p>
+        )}
+        {allFailures !== null && allFailures.length > 0 && (
+          <div
+            className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-700"
+            role="alert"
+          >
+            <p className="mb-2 font-medium">All team reports failed. No reports were created.</p>
+            <ul className="space-y-1 text-sm">
+              {allFailures.map((f) => (
+                <li key={f.teamId}>
+                  {f.teamName ?? f.teamId}: {f.message}
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
         <p className="rounded-lg border border-dashed p-4 text-center text-slate-500">
           <Link

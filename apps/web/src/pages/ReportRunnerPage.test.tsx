@@ -296,24 +296,45 @@ describe("ReportRunnerPage", () => {
     ).toBe(false)
   })
 
-  it("shows an error when the team run fails", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+  it("shows a per-team failure breakdown when all selected teams fail", async () => {
+    const teamAlpha = { ...team, id: "team-1", name: "Alpha" }
+    const teamBeta = { ...team, id: "team-2", name: "Beta" }
+
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
       const url = typeof input === "string" ? input : input.toString()
       if (url.endsWith("/api/teams")) {
-        return Promise.resolve(jsonResponse([team]))
+        return Promise.resolve(jsonResponse([teamAlpha, teamBeta]))
       }
-      return Promise.resolve(
-        new Response(JSON.stringify({ detail: "Report run failed." }), { status: 500 }),
-      )
+      if (url.endsWith("/api/reports/run")) {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { team_profile_id?: string }
+        const teamId = body.team_profile_id ?? ""
+        if (teamId === "team-1") {
+          return Promise.resolve(
+            new Response(JSON.stringify({ detail: "Alpha connector unavailable." }), {
+              status: 500,
+            }),
+          )
+        }
+        return Promise.resolve(
+          new Response(JSON.stringify({ detail: "Beta token expired." }), { status: 500 }),
+        )
+      }
+      throw new Error(`unexpected fetch: ${url}`)
     })
 
-    renderApp()
-    fireEvent.click(await screen.findByLabelText("Platform"))
+    renderWithRoutes()
+    fireEvent.click(await screen.findByLabelText("Alpha"))
+    fireEvent.click(screen.getByLabelText("Beta"))
     fireEvent.click(screen.getByRole("button", { name: "Run team reports" }))
 
-    await waitFor(() => {
-      expect(screen.getByText("Report run failed.")).toBeInTheDocument()
-    })
+    // Per-team failure breakdown appears on the runner page
+    await screen.findByText(/Alpha: Alpha connector unavailable\./)
+    expect(screen.getByText(/Beta: Beta token expired\./)).toBeInTheDocument()
+
+    // Still on the runner page -- no navigation to the results list
+    expect(screen.getByRole("heading", { name: "Report Runner", level: 1 })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Run team reports" })).toBeInTheDocument()
+    expect(screen.queryByRole("heading", { name: "Report Results", level: 1 })).toBeNull()
   })
 
   it("runs all teams despite a single failure, navigates to the list, and shows a failure note", async () => {
