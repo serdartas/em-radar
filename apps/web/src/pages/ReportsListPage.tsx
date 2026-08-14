@@ -1,5 +1,6 @@
+import { useState } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { Link } from "react-router-dom"
+import { Link, useLocation } from "react-router-dom"
 
 import { SeverityCounts } from "@/components/SeverityCounts"
 import { Button } from "@/components/ui/button"
@@ -36,6 +37,27 @@ function groupReportsByTeam(reports: ReportSummary[]): TeamReportGroup[] {
 export function ReportsListPage() {
   const query = useQuery({ queryKey: ["reports"], queryFn: listReports })
   const groups = query.data ? groupReportsByTeam(query.data) : []
+  const location = useLocation()
+
+  // Capture on mount so a subsequent re-render (e.g. after invalidateQueries) does not
+  // re-read a stale location.state. Clear from browser history so a manual refresh does
+  // not replay the note.
+  const [failedTeams] = useState<string[]>(() => {
+    const s = location.state
+    if (
+      s !== null &&
+      typeof s === "object" &&
+      "failedTeams" in s &&
+      Array.isArray((s as Record<string, unknown>).failedTeams)
+    ) {
+      const teams = ((s as Record<string, unknown>).failedTeams as unknown[]).filter(
+        (t): t is string => typeof t === "string",
+      )
+      window.history.replaceState({}, "")
+      return teams
+    }
+    return []
+  })
 
   return (
     <section aria-labelledby="page-title" className="space-y-6">
@@ -53,6 +75,14 @@ export function ReportsListPage() {
         </Button>
       </header>
 
+      {failedTeams.length > 0 && (
+        <p
+          className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-700"
+          role="alert"
+        >
+          {`Report generation failed for ${failedTeams.join(", ")}. Successful reports were still created.`}
+        </p>
+      )}
       {query.isLoading && <p className="text-sm text-slate-500">Loading reports…</p>}
       {query.isError && (
         <p className="text-sm text-red-700" role="alert">

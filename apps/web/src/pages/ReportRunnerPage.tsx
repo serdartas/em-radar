@@ -17,6 +17,23 @@ interface TeamRunInput {
   window?: { start: string; end: string }
 }
 
+interface TeamSuccess {
+  teamId: string
+  teamName: string | null
+  report: ReportDetail
+}
+
+interface TeamFailure {
+  teamId: string
+  teamName: string | null
+  error: unknown
+}
+
+interface RunOutcome {
+  successes: TeamSuccess[]
+  failures: TeamFailure[]
+}
+
 export function ReportRunnerPage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
@@ -27,25 +44,45 @@ export function ReportRunnerPage() {
   const [endDate, setEndDate] = useState("")
   const [dateError, setDateError] = useState<string | null>(null)
 
+  // Derived before useMutation so the closure captures an initialized binding.
+  const teams = teamsQuery.data ?? []
+
   const teamRun = useMutation({
-    mutationFn: async ({ teamIds, window }: TeamRunInput) => {
-      const reports: ReportDetail[] = []
+    mutationFn: async ({ teamIds, window }: TeamRunInput): Promise<RunOutcome> => {
+      const successes: TeamSuccess[] = []
+      const failures: TeamFailure[] = []
       for (const teamId of teamIds) {
-        reports.push(await runTeamReport(teamId, window))
+        const teamMeta = teams.find((t) => t.id === teamId)
+        const teamName = teamMeta?.name ?? null
+        try {
+          const report = await runTeamReport(teamId, window)
+          successes.push({ teamId, teamName, report })
+        } catch (err: unknown) {
+          failures.push({ teamId, teamName, error: err })
+        }
       }
-      return reports
+      if (successes.length === 0) {
+        const firstError = failures[0]?.error
+        throw firstError instanceof Error
+          ? firstError
+          : new Error("All selected team reports failed.")
+      }
+      return { successes, failures }
     },
-    onSuccess: (reports) => {
+    onSuccess: ({ successes, failures }: RunOutcome) => {
       void queryClient.invalidateQueries({ queryKey: ["reports"], exact: true })
-      if (reports.length === 1) {
-        navigate(`/reports/results/${reports[0].id}`)
+      if (successes.length === 1 && failures.length === 0) {
+        navigate(`/reports/results/${successes[0].report.id}`)
+      } else if (failures.length > 0) {
+        navigate("/reports/results", {
+          state: { failedTeams: failures.map((f) => f.teamName ?? f.teamId) },
+        })
       } else {
         navigate("/reports/results")
       }
     },
   })
 
-  const teams = teamsQuery.data ?? []
   const running = teamRun.isPending
 
   function toggleTeam(teamId: string) {

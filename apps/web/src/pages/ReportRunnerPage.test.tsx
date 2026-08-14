@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { ReportResultsPage } from "@/pages/ReportResultsPage"
 import { ReportRunnerPage } from "@/pages/ReportRunnerPage"
+import { ReportsListPage } from "@/pages/ReportsListPage"
 
 const report = {
   id: "report-1",
@@ -315,6 +316,92 @@ describe("ReportRunnerPage", () => {
     })
   })
 
+  it("runs all teams despite a single failure, navigates to the list, and shows a failure note", async () => {
+    const teamAlpha = { ...team, id: "team-1", name: "Alpha" }
+    const teamBeta = { ...team, id: "team-2", name: "Beta" }
+    const teamGamma = { ...team, id: "team-3", name: "Gamma" }
+    const reportAlpha = { ...report, id: "report-1" }
+    const reportGamma = { ...report, id: "report-3" }
+
+    const runCalls: string[] = []
+
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = typeof input === "string" ? input : input.toString()
+      if (url.endsWith("/api/teams")) {
+        return Promise.resolve(jsonResponse([teamAlpha, teamBeta, teamGamma]))
+      }
+      if (url.endsWith("/api/reports/run")) {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { team_profile_id?: string }
+        const teamId = body.team_profile_id ?? ""
+        runCalls.push(teamId)
+        if (teamId === "team-2") {
+          return Promise.resolve(
+            new Response(JSON.stringify({ detail: "Source error." }), { status: 500 }),
+          )
+        }
+        const resp = teamId === "team-1" ? reportAlpha : reportGamma
+        return Promise.resolve(jsonResponse(resp))
+      }
+      if (url.endsWith("/api/reports")) {
+        return Promise.resolve(jsonResponse([]))
+      }
+      throw new Error(`unexpected fetch: ${url}`)
+    })
+
+    renderWithRoutes()
+
+    fireEvent.click(await screen.findByLabelText("Alpha"))
+    fireEvent.click(screen.getByLabelText("Beta"))
+    fireEvent.click(screen.getByLabelText("Gamma"))
+    fireEvent.click(screen.getByRole("button", { name: "Run team reports" }))
+
+    // (b) navigation goes to the list — "Report Results" h1 is only on ReportsListPage
+    await screen.findByRole("heading", { name: "Report Results", level: 1 })
+
+    // (a) all three teams were attempted, including the third despite the second failing
+    expect(runCalls).toEqual(["team-1", "team-2", "team-3"])
+
+    // (c) failure note names the failed team and is visible on the DESTINATION page
+    expect(
+      screen.getByText(/Report generation failed for Beta\. Successful reports were still created\./),
+    ).toBeInTheDocument()
+  })
+
+  it("navigates to the list when multiple teams all succeed", async () => {
+    const teamAlpha = { ...team, id: "team-1", name: "Alpha" }
+    const teamGamma = { ...team, id: "team-3", name: "Gamma" }
+    const reportGamma = { ...report, id: "report-3" }
+
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = typeof input === "string" ? input : input.toString()
+      if (url.endsWith("/api/teams")) {
+        return Promise.resolve(jsonResponse([teamAlpha, teamGamma]))
+      }
+      if (url.endsWith("/api/reports/run")) {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { team_profile_id?: string }
+        const teamId = body.team_profile_id ?? ""
+        const resp = teamId === "team-1" ? report : reportGamma
+        return Promise.resolve(jsonResponse(resp))
+      }
+      if (url.endsWith("/api/reports")) {
+        return Promise.resolve(jsonResponse([]))
+      }
+      throw new Error(`unexpected fetch: ${url}`)
+    })
+
+    renderWithRoutes()
+
+    fireEvent.click(await screen.findByLabelText("Alpha"))
+    fireEvent.click(screen.getByLabelText("Gamma"))
+    fireEvent.click(screen.getByRole("button", { name: "Run team reports" }))
+
+    // "Report Results" h1 is only on ReportsListPage — confirms we landed on the list
+    await screen.findByRole("heading", { name: "Report Results", level: 1 })
+
+    // No failure note when all teams succeeded
+    expect(screen.queryByText(/Report generation failed/)).toBeNull()
+  })
+
   it("disables the checkbox and shows a message for a team with no sources", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const url = typeof input === "string" ? input : input.toString()
@@ -341,6 +428,24 @@ function renderPage() {
       <MemoryRouter initialEntries={["/reports/run"]}>
         <Routes>
           <Route element={<ReportRunnerPage />} path="/reports/run" />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+}
+
+// Renders the runner and list routes so that navigation between them fully unmounts/mounts
+// the respective pages — the realistic production behaviour the tests need to exercise.
+function renderWithRoutes() {
+  const queryClient = new QueryClient({
+    defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
+  })
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={["/reports/run"]}>
+        <Routes>
+          <Route element={<ReportRunnerPage />} path="/reports/run" />
+          <Route element={<ReportsListPage />} path="/reports/results" />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
