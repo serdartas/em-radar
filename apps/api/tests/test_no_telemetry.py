@@ -591,6 +591,70 @@ def test_no_outbound_calls_during_app_import_and_startup() -> None:
 
 
 # ---------------------------------------------------------------------------
+# P2-A2: Connector import-time and entry-point discovery isolation (subprocess)
+# ---------------------------------------------------------------------------
+
+# Installs socket blockers BEFORE importing any connector module or running
+# entry-point discovery.  This guards against module-level phone-homes that would
+# slip past the in-process tests (connectors are imported during pytest plugin
+# initialisation, before any autouse fixture runs).
+_CONNECTOR_IMPORT_PROGRAM = """\
+import socket as _socket
+
+def _blocked_connect(self, addr, *a, **kw):
+    raise AssertionError(f"socket.connect blocked during connector import: {addr!r}")
+
+def _blocked_create_connection(addr, *a, **kw):
+    raise AssertionError(f"socket.create_connection blocked during connector import: {addr!r}")
+
+def _blocked_sendto(self, *a, **kw):
+    raise AssertionError("socket.sendto blocked during connector import")
+
+_socket.socket.connect = _blocked_connect
+_socket.create_connection = _blocked_create_connection
+_socket.socket.sendto = _blocked_sendto
+if hasattr(_socket.socket, "sendmsg"):
+    def _blocked_sendmsg(self, *a, **kw):
+        raise AssertionError("socket.sendmsg blocked during connector import")
+    _socket.socket.sendmsg = _blocked_sendmsg
+
+# Import each connector module directly — proves no module-level network call.
+import em_radar_connector_demo.connector
+import em_radar_connector_jira.connector
+import em_radar_connector_gitlab.connector
+
+# Run the contracts-plugin discovery path, which loads all entry points just as
+# the pytest plugin does during collection.
+from em_radar_connector_contracts.plugin import _discover_connector_classes
+classes = _discover_connector_classes()
+assert len(classes) >= 3, f"expected at least 3 connector classes, got {classes}"
+"""
+
+
+def test_no_outbound_calls_during_connector_import_and_discovery() -> None:
+    """Socket blockers installed before any connector import prove no module-level
+    or entry-point-discovery network call fires in the three shipped connectors.
+
+    The in-process demo-connector test cannot catch import-time phone-homes because
+    connectors are loaded by the pytest contracts plugin before any autouse fixture
+    runs.  This subprocess test closes that gap: blockers are installed first, then
+    the three connector modules and the entry-point discovery routine are imported.
+    """
+    result = subprocess.run(
+        [sys.executable, "-c", _CONNECTOR_IMPORT_PROGRAM],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env=os.environ,
+    )
+    assert result.returncode == 0, (
+        f"Subprocess exited with returncode {result.returncode}.\n"
+        f"stdout:\n{result.stdout}\n"
+        f"stderr:\n{result.stderr}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Static-connector integration test
 # ---------------------------------------------------------------------------
 
