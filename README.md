@@ -38,6 +38,29 @@ docker compose -f deploy/docker/docker-compose.yml up
 
 Then open http://localhost:8080.
 
+By default the container binds only to `127.0.0.1:8080`, so the app is not reachable from
+other machines on your network. To opt into LAN access, choose one of the options below -
+only do this on a trusted network, as EM Radar has no authentication in the current release.
+
+**Option A - edit `docker-compose.yml` directly (simplest):** change the `ports` entry from
+`"127.0.0.1:8080:8080"` to `"0.0.0.0:8080:8080"` (or `"8080:8080"`).
+
+**Option B - Compose override file (keeps the base file unchanged):** create
+`deploy/docker/docker-compose.override.yml` with `!override` so the base mapping is
+replaced rather than merged:
+
+```yaml
+# deploy/docker/docker-compose.override.yml  (not committed; place next to docker-compose.yml)
+services:
+  emradar:
+    ports: !override
+      - "0.0.0.0:8080:8080"
+```
+
+```bash
+docker compose -f deploy/docker/docker-compose.yml -f deploy/docker/docker-compose.override.yml up
+```
+
 ## Development
 
 This is a monorepo: a Python FastAPI backend and a React Vite frontend, built into a single container that serves the UI at / and the API under /api.
