@@ -13,8 +13,13 @@ Covers:
 import pytest
 import yaml
 from fastapi.testclient import TestClient
+from sqlalchemy.orm import sessionmaker
+from sqlmodel import Session, select
 
+from em_radar_api.models.signal_pack_history import SignalPackHistory
 from em_radar_api.repositories.source_connections import is_credential_field_name
+from em_radar_api.signal_config_groups import SignalConfigGroupTable
+from em_radar_api.signal_definitions import SignalDefinitionTable
 
 
 # ── Field-name sets ───────────────────────────────────────────────────────────
@@ -110,6 +115,14 @@ def _create_group(api_client: TestClient, name: str, signal_ids: list[str]) -> s
         "/api/signal-config-groups",
         json={"name": name, "signal_ids": signal_ids},
     ).json()["id"]
+
+
+def _assert_nothing_persisted(session_factory: sessionmaker[Session]) -> None:
+    """Assert that a rejected apply left all import-related tables empty."""
+    with session_factory() as session:
+        assert session.exec(select(SignalDefinitionTable)).all() == []
+        assert session.exec(select(SignalConfigGroupTable)).all() == []
+        assert session.exec(select(SignalPackHistory)).all() == []
 
 
 def _assert_no_sentinel_values(text: str) -> None:
@@ -242,6 +255,7 @@ def test_export_carries_no_connectors_scopes_or_teams(api_client: TestClient) ->
     assert response.status_code == 200
     parsed = yaml.safe_load(response.text)
     assert "connectors" not in parsed, "Top-level 'connectors' key must not appear in exports"
+    assert "scopes" not in parsed, "Top-level 'scopes' key must not appear in exports"
     assert "teams" not in parsed, "Top-level 'teams' key must not appear in exports"
     spec = parsed.get("spec", {})
     assert "connectors" not in spec, "'connectors' must not appear inside spec"
@@ -274,6 +288,7 @@ def test_multi_group_export_has_no_credential_keys_and_no_forbidden_structure(
         f"Multi-group export contains credential-named keys: {_credential_keys(parsed)}"
     )
     assert "connectors" not in parsed
+    assert "scopes" not in parsed
     assert "teams" not in parsed
     spec = parsed.get("spec", {})
     assert "connectors" not in spec
@@ -308,10 +323,12 @@ def test_import_preview_rejects_credential_bearing_pack(
 @pytest.mark.parametrize("credential_field", _CREDENTIAL_FIELDS)
 def test_import_apply_rejects_credential_bearing_pack_and_writes_nothing(
     api_client: TestClient,
+    session_factory: sessionmaker[Session],
     credential_field: str,
 ) -> None:
     """Applying an import of a pack that contains a credential-named key is rejected
-    with 422 and no signal definitions are written (REQ-NF-003, signal spec §14)."""
+    with 422 and nothing is persisted — no signal definitions, config groups, or pack-history
+    rows (REQ-NF-003, signal spec §14)."""
     response = api_client.post(
         "/api/signal-pack/import/apply",
         json={"raw_yaml": _credential_pack(credential_field)},
@@ -321,7 +338,7 @@ def test_import_apply_rejects_credential_bearing_pack_and_writes_nothing(
     detail = response.json()["detail"]
     assert detail["code"] == "invalid-signal-pack"
     assert "credential" in detail["message"].lower()
-    assert api_client.get("/api/signal-definitions").json() == []
+    _assert_nothing_persisted(session_factory)
 
 
 # ── Import rejection tests — executable / forbidden content ───────────────────
@@ -348,10 +365,12 @@ def test_import_preview_rejects_executable_key_pack(
 @pytest.mark.parametrize("field_name", _EXECUTABLE_KEY_FIELDS)
 def test_import_apply_rejects_executable_key_pack_and_writes_nothing(
     api_client: TestClient,
+    session_factory: sessionmaker[Session],
     field_name: str,
 ) -> None:
     """Applying an import of a pack with a forbidden executable field key is rejected
-    with 422 and nothing is written (REQ-NF-012, signal spec §14)."""
+    with 422 and nothing is persisted — no signal definitions, config groups, or pack-history
+    rows (REQ-NF-012, signal spec §14)."""
     response = api_client.post(
         "/api/signal-pack/import/apply",
         json={"raw_yaml": _executable_key_pack(field_name)},
@@ -361,7 +380,7 @@ def test_import_apply_rejects_executable_key_pack_and_writes_nothing(
     detail = response.json()["detail"]
     assert detail["code"] == "invalid-signal-pack"
     assert "executable" in detail["message"].lower()
-    assert api_client.get("/api/signal-definitions").json() == []
+    _assert_nothing_persisted(session_factory)
 
 
 @pytest.mark.parametrize("payload", _EXECUTABLE_VALUE_PAYLOADS)
@@ -385,10 +404,12 @@ def test_import_preview_rejects_executable_value_pack(
 @pytest.mark.parametrize("payload", _EXECUTABLE_VALUE_PAYLOADS)
 def test_import_apply_rejects_executable_value_pack_and_writes_nothing(
     api_client: TestClient,
+    session_factory: sessionmaker[Session],
     payload: str,
 ) -> None:
     """Applying an import of a pack whose description contains executable content is rejected
-    with 422 and nothing is written (REQ-NF-012, signal spec §14)."""
+    with 422 and nothing is persisted — no signal definitions, config groups, or pack-history
+    rows (REQ-NF-012, signal spec §14)."""
     response = api_client.post(
         "/api/signal-pack/import/apply",
         json={"raw_yaml": _executable_value_pack(payload)},
@@ -398,4 +419,4 @@ def test_import_apply_rejects_executable_value_pack_and_writes_nothing(
     detail = response.json()["detail"]
     assert detail["code"] == "invalid-signal-pack"
     assert "executable" in detail["message"].lower()
-    assert api_client.get("/api/signal-definitions").json() == []
+    _assert_nothing_persisted(session_factory)
