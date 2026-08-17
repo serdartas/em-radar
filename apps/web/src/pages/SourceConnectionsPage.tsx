@@ -5,8 +5,10 @@ import { ConnectionForm } from "@/components/connections/ConnectionForm"
 import { TestResult } from "@/components/connections/TestResult"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
+import { ApiError } from "@/lib/api"
 import { type Connector, getConnectors } from "@/lib/connectors"
 import {
+  type ConnectionConflict,
   deleteConnection,
   listConnections,
   type SourceConnection,
@@ -14,23 +16,11 @@ import {
 } from "@/lib/connections"
 
 export function SourceConnectionsPage() {
-  const queryClient = useQueryClient()
   const connectorsQuery = useQuery({ queryKey: ["connectors"], queryFn: getConnectors })
   const connectionsQuery = useQuery({ queryKey: ["connections"], queryFn: listConnections })
 
   const connectors = useMemo(() => connectorsQuery.data ?? [], [connectorsQuery.data])
   const [editing, setEditing] = useState<SourceConnection | null>(null)
-
-  const deleteMutation = useMutation({
-    mutationFn: deleteConnection,
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["connections"] }),
-  })
-
-  function removeConnection(id: string) {
-    if (window.confirm("Delete this connection and its cached data?")) {
-      deleteMutation.mutate(id)
-    }
-  }
 
   return (
     <section aria-labelledby="page-title" className="space-y-8">
@@ -48,7 +38,6 @@ export function SourceConnectionsPage() {
         connections={connectionsQuery.data ?? []}
         connectors={connectors}
         isLoading={connectionsQuery.isLoading}
-        onDelete={removeConnection}
         onEdit={setEditing}
       />
 
@@ -67,18 +56,11 @@ interface ConnectionListProps {
   connectors: Connector[]
   isLoading: boolean
   onEdit: (connection: SourceConnection) => void
-  onDelete: (id: string) => void
 }
 
-function ConnectionList({
-  connections,
-  connectors,
-  isLoading,
-  onDelete,
-  onEdit,
-}: ConnectionListProps) {
+function ConnectionList({ connections, connectors, isLoading, onEdit }: ConnectionListProps) {
   if (isLoading) {
-    return <p className="text-sm text-slate-500">Loading connections…</p>
+    return <p className="text-sm text-slate-500">Loading connections&hellip;</p>
   }
 
   if (connections.length === 0) {
@@ -100,7 +82,6 @@ function ConnectionList({
             connection={connection}
             displayName={connector?.display_name ?? connection.connector_name}
             key={connection.id}
-            onDelete={onDelete}
             onEdit={onEdit}
           />
         )
@@ -113,11 +94,35 @@ interface ConnectionRowProps {
   connection: SourceConnection
   displayName: string
   onEdit: (connection: SourceConnection) => void
-  onDelete: (id: string) => void
 }
 
-function ConnectionRow({ connection, displayName, onDelete, onEdit }: ConnectionRowProps) {
+function ConnectionRow({ connection, displayName, onEdit }: ConnectionRowProps) {
+  const queryClient = useQueryClient()
+  const [confirming, setConfirming] = useState(false)
+  const [conflict, setConflict] = useState<ConnectionConflict | null>(null)
+
   const retest = useMutation({ mutationFn: () => testExistingConnection(connection.id) })
+
+  const deleteMutation = useMutation({
+    mutationFn: (force: boolean) => deleteConnection(connection.id, force),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["connections"] })
+      setConfirming(false)
+      setConflict(null)
+    },
+    onError: (error: unknown) => {
+      if (
+        error instanceof ApiError &&
+        error.status === 409 &&
+        typeof error.detail === "object" &&
+        error.detail !== null &&
+        "dependent_teams" in error.detail
+      ) {
+        setConflict(error.detail as ConnectionConflict)
+      }
+    },
+  })
+
   const entries = Object.entries(connection.config)
 
   return (
@@ -146,12 +151,75 @@ function ConnectionRow({ connection, displayName, onDelete, onEdit }: Connection
             <Button onClick={() => onEdit(connection)} size="sm" variant="outline">
               Edit
             </Button>
-            <Button onClick={() => onDelete(connection.id)} size="sm" variant="outline">
-              Delete
-            </Button>
+            {!confirming && (
+              <Button
+                onClick={() => {
+                  setConfirming(true)
+                  setConflict(null)
+                }}
+                size="sm"
+                variant="outline"
+              >
+                Delete
+              </Button>
+            )}
           </div>
         </CardContent>
       </Card>
+
+      {confirming && (
+        <div
+          aria-label={`Confirm: Delete connection ${connection.name}`}
+          className="mt-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"
+          role="alertdialog"
+        >
+          {conflict ? (
+            <>
+              {conflict.dependent_teams.length > 0 ? (
+                <>
+                  <p className="font-medium">This connection is used by the following teams:</p>
+                  <ul className="mt-1 list-disc pl-4">
+                    {conflict.dependent_teams.map((t) => (
+                      <li key={t.id}>{t.name}</li>
+                    ))}
+                  </ul>
+                </>
+              ) : (
+                <p className="font-medium">
+                  This connection has scope definitions that will be removed.
+                </p>
+              )}
+              <p className="mt-2">
+                Proceeding will remove the connection, its cached data, and all references to it.
+                This cannot be undone.
+              </p>
+            </>
+          ) : (
+            <p>
+              This removes the connection and all cached source data for it. This cannot be undone.
+            </p>
+          )}
+          <div className="mt-3 flex gap-2">
+            <Button
+              disabled={deleteMutation.isPending}
+              onClick={() => deleteMutation.mutate(conflict !== null)}
+              size="sm"
+            >
+              {conflict ? "Confirm force delete" : "Confirm delete"}
+            </Button>
+            <Button
+              onClick={() => {
+                setConfirming(false)
+                setConflict(null)
+              }}
+              size="sm"
+              variant="outline"
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
     </li>
   )
 }

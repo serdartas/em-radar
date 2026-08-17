@@ -122,7 +122,7 @@ def test_source_connection_referenced_by_team_cannot_be_deleted() -> None:
         assert updated is not None
         assert updated.config == {"base_url": "https://jira.example.com"}
 
-        # The scope references the connection; deletion is blocked at the scope level.
-        with pytest.raises(SourceConnectionInUse, match="referenced by a scope definition"):
+        # The scope (and team) references the connection; deletion is blocked.
+        with pytest.raises(SourceConnectionInUse, match="referenced by one or more teams"):
             delete_source_connection(session, connection.id)
         assert get_source_connection(session, connection.id) == updated

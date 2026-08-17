@@ -86,8 +86,13 @@ export async function updateConnection(
   })
 }
 
-export async function deleteConnection(id: string): Promise<void> {
-  await apiFetch<void>(`/connections/${id}`, { method: "DELETE" })
+export interface ConnectionConflict {
+  message: string
+  dependent_teams: Array<{ id: string; name: string }>
+}
+
+export async function deleteConnection(id: string, force = false): Promise<void> {
+  await apiFetch<void>(`/connections/${id}${force ? "?force=true" : ""}`, { method: "DELETE" })
 }
 
 export async function testConnectionDraft(draft: ConnectionDraft): Promise<ConnectionTestResult> {
