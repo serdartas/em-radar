@@ -298,19 +298,27 @@ _CANNED_JI_STATUS: dict[str, object] = {
 
 
 def _jira_canned_handler(request: httpx.Request) -> httpx.Response:
-    """Route canned Jira API responses by path so every real connector endpoint is served.
+    """Route canned Jira API responses by explicit (method, path) set.
 
-    Endpoints covered:
+    Every (method, path) pair is enumerated; anything not in the set raises
+    AssertionError so a phone-home to an unknown endpoint on the Jira host fails
+    the test immediately.
+
+    Accepted GET endpoints:
     - GET /rest/api/2/myself                         — test_connection (current user)
     - GET /rest/api/2/mypermissions                  — test_connection (permission check)
     - GET /rest/api/2/project                        — list_projects
     - GET /rest/agile/1.0/board                      — list_boards
     - GET /rest/agile/1.0/board/{id}/sprint          — list_sprints
-    - GET /rest/api/2/search/jql                     — fetch_workitems
+    - GET /rest/api/2/search/jql (or /search)        — fetch_workitems
     - GET /rest/api/2/status                         — _status_categories (fetch_transitions)
-    - GET /rest/api/2/issue/{id}                     — fetch_transitions issue lookup
     - GET /rest/api/2/issue/{id}/changelog           — fetch_transitions changelog pages
+    - GET /rest/api/2/issue/{id}                     — fetch_transitions issue lookup
     """
+    if request.method != "GET":
+        raise AssertionError(
+            f"Unexpected non-GET Jira source-API request: {request.method} {request.url.path}"
+        )
     path = request.url.path.rstrip("/")
 
     if path == "/rest/api/2/myself":
@@ -328,16 +336,16 @@ def _jira_canned_handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"values": [_CANNED_JI_BOARD], "isLast": True})
     if path.startswith("/rest/agile/1.0/board/") and path.endswith("/sprint"):
         return httpx.Response(200, json={"values": [_CANNED_JI_SPRINT], "isLast": True})
-    if "search" in path:
+    # /rest/api/2/search/jql (enhanced) and /rest/api/2/search (legacy fallback).
+    if path.startswith("/rest/api/2/search"):
         return httpx.Response(200, json={"issues": [_CANNED_JI_ISSUE], "total": 1})
-    # Changelog endpoint must be checked before the generic issue-detail branch so that
-    # /rest/api/2/issue/{id}/changelog is not swallowed by the "/rest/api/2/issue/" check.
-    if path.endswith("/changelog"):
+    # Changelog must be checked before the generic issue-detail branch.
+    if path.startswith("/rest/api/2/issue/") and path.endswith("/changelog"):
         return httpx.Response(200, json={"values": [], "total": 0})
-    if "/rest/api/2/issue/" in path:
+    if path.startswith("/rest/api/2/issue/"):
         # Issue detail: needs at least "key" (for issue_key) and "changelog" (fallback histories).
         return httpx.Response(200, json={**_CANNED_JI_ISSUE, "changelog": {"values": []}})
-    return httpx.Response(200, json={})
+    raise AssertionError(f"Unexpected Jira source-API request: {request.method} {request.url.path}")
 
 
 # ---------------------------------------------------------------------------
@@ -386,19 +394,27 @@ _CANNED_GL_MR_DETAIL: dict[str, object] = {
 
 
 def _gitlab_canned_handler(request: httpx.Request) -> httpx.Response:
-    """Route canned GitLab API responses by path so every real connector endpoint is served.
+    """Route canned GitLab API responses by explicit (method, path) set.
 
-    Endpoints covered:
+    Every (method, path) pair is enumerated; anything not in the set raises
+    AssertionError so a phone-home to an unknown endpoint on the GitLab host fails
+    the test immediately.
+
+    Accepted GET endpoints:
     - GET /api/v4/user                                           — test_connection (current user)
     - GET /api/v4/personal_access_tokens/self                    — test_connection (token info)
     - GET /api/v4/projects                                       — list_repositories
     - GET /api/v4/projects/{id}/merge_requests                   — fetch_mergerequests list
-    - GET /api/v4/projects/{id}/merge_requests/{iid}             — diff-stats detail
     - GET /api/v4/projects/{id}/merge_requests/{iid}/approvals   — approval count
-    - GET /api/v4/merge_requests/{id}                            — global MR (fetch_reviews)
     - GET /api/v4/projects/{id}/merge_requests/{iid}/notes       — review activity
     - GET /api/v4/projects/{id}/merge_requests/{iid}/reviewers   — reviewer requests
+    - GET /api/v4/projects/{id}/merge_requests/{iid}             — diff-stats detail
+    - GET /api/v4/merge_requests/{id}                            — global MR (fetch_reviews)
     """
+    if request.method != "GET":
+        raise AssertionError(
+            f"Unexpected non-GET GitLab source-API request: {request.method} {request.url.path}"
+        )
     path = request.url.path.rstrip("/")
 
     if path == "/api/v4/user":
@@ -409,23 +425,25 @@ def _gitlab_canned_handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=[_CANNED_GL_REPO], headers={"X-Next-Page": ""})
     # Sub-resource suffixes are checked before the bare /merge_requests suffix so that
     # /merge_requests/1/notes etc. do not accidentally match the list-endpoint branch.
-    if path.endswith("/approvals"):
+    if path.startswith("/api/v4/projects/") and path.endswith("/approvals"):
         return httpx.Response(200, json={"approved_by": []})
-    if path.endswith("/notes"):
+    if path.startswith("/api/v4/projects/") and path.endswith("/notes"):
         return httpx.Response(200, json=[], headers={"X-Next-Page": ""})
-    if path.endswith("/reviewers"):
+    if path.startswith("/api/v4/projects/") and path.endswith("/reviewers"):
         return httpx.Response(200, json=[], headers={"X-Next-Page": ""})
-    if path.endswith("/merge_requests"):
+    if path.startswith("/api/v4/projects/") and path.endswith("/merge_requests"):
         return httpx.Response(200, json=[_CANNED_GL_MR], headers={"X-Next-Page": ""})
-    # Global (non-project-scoped) MR endpoint: /api/v4/merge_requests/{id}
-    # fetch_reviews calls this to resolve project_id and iid before fetching notes/reviewers.
-    if "/projects/" not in path and "/merge_requests/" in path:
-        return httpx.Response(200, json=_CANNED_GL_MR_DETAIL)
     # Project-scoped MR detail: /api/v4/projects/{id}/merge_requests/{iid}
     # _resolve_diff_stats calls this for additions/deletions.
-    if "/merge_requests/" in path:
+    if path.startswith("/api/v4/projects/") and "/merge_requests/" in path:
         return httpx.Response(200, json=_CANNED_GL_MR_DETAIL)
-    return httpx.Response(200, json={})
+    # Global (non-project-scoped) MR endpoint: /api/v4/merge_requests/{id}
+    # fetch_reviews calls this to resolve project_id and iid before fetching notes/reviewers.
+    if path.startswith("/api/v4/merge_requests/"):
+        return httpx.Response(200, json=_CANNED_GL_MR_DETAIL)
+    raise AssertionError(
+        f"Unexpected GitLab source-API request: {request.method} {request.url.path}"
+    )
 
 
 # ---------------------------------------------------------------------------
