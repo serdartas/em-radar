@@ -65,16 +65,23 @@ token to complete setup; a GitLab connection is optional and can be added later.
 The quickstart above outlines the wizard flow. This section adds the token-creation steps and
 the Markdown export, so you can follow the full path from a fresh install to a shareable report.
 
-**Step 1 - Create a read-only Jira API token**
+**Step 1 - Create a read-only Jira token**
 
-1. Sign in to https://id.atlassian.com/manage-profile/security/api-tokens with the Atlassian
-   account that can browse the Jira projects and boards you want to report on.
-2. Click **Create API token**, give it a label (for example `EM Radar`), and copy the token.
-3. Keep the token ready - you will paste it into EM Radar in step 4.
+The token type depends on whether you use Jira Cloud or Jira Server / Data Center.
 
-For annotated screenshots, see the in-app guide at http://localhost:8080/help/jira (available
-once the app is running). Minimum token scopes are documented in the permissions reference
-(added separately).
+**Jira Cloud**: Sign in to https://id.atlassian.com/manage-profile/security/api-tokens with
+the Atlassian account that can browse the projects and boards you want to report on. Click
+**Create API token**, give it a label (for example `EM Radar`), and copy the token. In Step 4,
+enter that account's email in **Auth Email** and paste the token into **Token**.
+
+**Jira Server / Data Center**: In Jira, open your user menu and go to **Profile** -
+**Personal Access Tokens**. Create a token with at least read access to the projects and boards
+you want to report on and copy it. In Step 4, leave **Auth Email** blank and paste the PAT into
+**Token** (the connector sends it as a Bearer token, which is what Jira Server/DC expects).
+
+For annotated screenshots of the Cloud steps, see the in-app guide at
+http://localhost:8080/help/jira (available once the app is running). Minimum token scopes are
+documented in the permissions reference (added separately).
 
 **Step 2 - Create a read-only GitLab personal access token**
 
@@ -126,6 +133,13 @@ Type the name of the team you manage (for example `Payments`) and click **Create
 Under **Task-board source**: choose a **Ticketing connection**, pick a **Project** and a
 **Board** from the searchable dropdowns, confirm or adjust the detected working mode and
 sprint length, and click **Save board source**.
+
+Note: for a **Scrum** board, the automatic first report (Step 8) requires an active sprint. If
+your board has no active sprint - common between sprints or for backlog-only boards - the wizard
+will stay on the Setup page with the error "Jira board has no active sprint". To avoid this,
+change the **Working mode** dropdown to **Kanban** before clicking **Save board source**; EM
+Radar will then use a 14-day rolling date range instead of requiring a sprint. You can switch
+the working mode back to **Scrum** from the Teams page once a sprint is active.
 
 Under **Code source**: choose your GitLab connection from the dropdown. The selection saves
 automatically - no extra click needed.
