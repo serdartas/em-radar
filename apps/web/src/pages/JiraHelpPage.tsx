@@ -49,7 +49,7 @@ export function JiraHelpPage() {
 
       <Card>
         <CardHeader>
-          <h2 className="text-lg font-semibold">Jira Cloud — API token</h2>
+          <h2 className="text-lg font-semibold">Jira Cloud - API token</h2>
         </CardHeader>
         <CardContent className="space-y-3 text-sm text-slate-600">
           <ol className="list-decimal space-y-1 pl-5">
@@ -74,7 +74,7 @@ export function JiraHelpPage() {
 
       <Card>
         <CardHeader>
-          <h2 className="text-lg font-semibold">Jira Server / Data Center — Personal Access Token</h2>
+          <h2 className="text-lg font-semibold">Jira Server / Data Center - Personal Access Token</h2>
         </CardHeader>
         <CardContent className="space-y-3 text-sm text-slate-600">
           <ol className="list-decimal space-y-1 pl-5">
@@ -94,9 +94,27 @@ export function JiraHelpPage() {
         </CardContent>
       </Card>
 
+      <Card>
+        <CardHeader>
+          <h2 className="text-lg font-semibold">Minimum permissions</h2>
+        </CardHeader>
+        <CardContent className="space-y-2 text-sm text-slate-600">
+          <p>
+            The account that owns the token needs only <strong>Browse Projects</strong>{" "}
+            permission in the Jira projects you report on. No admin rights are needed. Jira
+            API tokens carry no separate scope selector - the token inherits the account&apos;s
+            existing project permissions.
+          </p>
+          <p>
+            EM Radar never writes to Jira. No issues are created, updated, or deleted. The
+            connector issues only read-only requests.
+          </p>
+        </CardContent>
+      </Card>
+
       <p className="text-sm text-slate-500">
-        Use a read-only account where possible. Tokens are stored locally, never written back to
-        Jira, and shown masked in EM Radar.
+        Tokens are stored locally on your machine and shown masked in EM Radar. They are never
+        logged or included in exported configurations.
       </p>
     </section>
   )

@@ -26,4 +26,15 @@ describe("JiraHelpPage", () => {
       "https://confluence.atlassian.com/enterprise/using-personal-access-tokens-1026032365.html",
     )
   })
+
+  it("shows the minimum permissions section with Browse Projects and read-only guarantee", () => {
+    render(
+      <MemoryRouter>
+        <JiraHelpPage />
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByText(/Browse Projects/)).toBeInTheDocument()
+    expect(screen.getByText(/EM Radar never writes to Jira/)).toBeInTheDocument()
+  })
 })

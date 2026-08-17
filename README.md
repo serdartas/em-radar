@@ -81,7 +81,7 @@ you want to report on and copy it. In Step 4, leave **Auth Email** blank and pas
 
 For annotated screenshots of the Cloud steps, see the in-app guide at
 http://localhost:8080/help/jira (available once the app is running). Minimum token scopes are
-documented in the permissions reference (added separately).
+documented in [docs/minimum-permissions.md](docs/minimum-permissions.md).
 
 **Step 2 - Create a read-only GitLab personal access token**
 
@@ -91,7 +91,7 @@ documented in the permissions reference (added separately).
    and tick only the `read_api` scope. That is the only scope EM Radar needs.
 3. Click **Create personal access token** and copy the token.
 
-Minimum token scopes are documented in the permissions reference (added separately).
+Minimum token scopes are documented in [docs/minimum-permissions.md](docs/minimum-permissions.md).
 
 **Step 3 - Start the app and open the wizard**
 
