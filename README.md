@@ -38,6 +38,28 @@ docker compose -f deploy/docker/docker-compose.yml up
 
 Then open http://localhost:8080.
 
+### Get to your first report
+
+The app opens a setup wizard on the first visit. You need a Jira account with a read-only API
+token to complete setup; a GitLab connection is optional and can be added later.
+
+1. Open http://localhost:8080. The wizard starts automatically when no teams exist yet.
+2. Click **Get started**.
+3. **Add a Jira connection.** Enter a display name (for example `My Jira`), your Jira base URL
+   (`https://your-org.atlassian.net` for Jira Cloud), your account email, and a read-only API
+   token. Click **Add connection**, then **Continue**. See [How to generate a Jira
+   token](http://localhost:8080/help/jira) (available once the app is running) for step-by-step
+   instructions.
+4. **Add a GitLab connection** (optional). Enter your GitLab URL and a `read_api` personal access
+   token, or click **Skip for now**.
+5. **Create a team.** Type a name for the team you manage (for example `Payments`) and click
+   **Create team**.
+6. **Attach sources.** Under **Task-board source**, choose your **Ticketing connection**, pick a
+   **Project** and **Board**, and click **Save board source**. Optionally choose a **Code source**
+   (a GitLab connection; this saves automatically on selection). Then click **Finish setup**.
+7. EM Radar syncs the selected sources and runs the first report automatically.
+8. On the Dashboard, click **Open report** to see the full findings.
+
 By default the container binds only to `127.0.0.1:8080`, so the app is not reachable from
 other machines on your network. To opt into LAN access, choose one of the options below -
 only do this on a trusted network, as EM Radar has no authentication in the current release.
