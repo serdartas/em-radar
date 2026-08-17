@@ -71,6 +71,10 @@ docker compose -f deploy/docker/docker-compose.yml up --build
 # then open http://localhost:8080
 ```
 
+The app binds to `127.0.0.1:8080` by default (local machine only). To expose it on your
+LAN (trusted networks only - no authentication in the current release), see the override
+instructions in the [Quick start section of the README](README.md#quick-start).
+
 ### Debugging and local development
 
 For running the stack **without Docker** (backend with `--reload`, frontend with HMR, a
