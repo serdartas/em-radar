@@ -237,9 +237,86 @@ def _jira_canned_handler(request: httpx.Request) -> httpx.Response:
     return httpx.Response(200, json={})
 
 
+# ---------------------------------------------------------------------------
+# Canned GitLab API payloads for P2-B
+# ---------------------------------------------------------------------------
+
+# One repository payload — _repository_from_payload requires id, name,
+# path_with_namespace, default_branch (str|None), archived (bool).
+_CANNED_GL_REPO: dict[str, object] = {
+    "id": 101,
+    "name": "canned-repo",
+    "path_with_namespace": "demo/canned-repo",
+    "default_branch": "main",
+    "archived": False,
+    "web_url": "https://gitlab.test.invalid/demo/canned-repo",
+}
+
+# One open MR payload for the list endpoint and the single-MR detail endpoint.
+# "opened" + created_at before window.end passes both _payload_in_window and _mr_in_window.
+_CANNED_GL_MR: dict[str, object] = {
+    "id": 1001,
+    "iid": 1,
+    "state": "opened",
+    "draft": False,
+    "work_in_progress": False,
+    "title": "Canned open MR",
+    "author": {"id": 42},
+    "target_branch": "main",
+    "source_branch": "feature/canned",
+    "created_at": "2026-06-01T00:00:00Z",
+    "updated_at": "2026-06-10T00:00:00Z",
+    "user_notes_count": 0,
+    "web_url": "https://gitlab.test.invalid/demo/canned-repo/-/merge_requests/1",
+}
+
+# Detail response extends the list shape with diff stats and project_id.
+# Used for both the project-scoped detail call (_resolve_diff_stats) and the
+# global MR endpoint call (fetch_reviews needs project_id + iid).
+_CANNED_GL_MR_DETAIL: dict[str, object] = {
+    **_CANNED_GL_MR,
+    "project_id": 101,
+    "changes_count": 3,
+    "additions": 10,
+    "deletions": 2,
+}
+
+
 def _gitlab_canned_handler(request: httpx.Request) -> httpx.Response:
-    """Return minimal valid GitLab API responses; empty list + empty X-Next-Page terminates."""
-    return httpx.Response(200, json=[], headers={"X-Next-Page": ""})
+    """Route canned GitLab API responses by path so every real connector endpoint is served.
+
+    Endpoints covered:
+    - GET /api/v4/projects                                       — list_repositories
+    - GET /api/v4/projects/{id}/merge_requests                   — fetch_mergerequests list
+    - GET /api/v4/projects/{id}/merge_requests/{iid}             — diff-stats detail
+    - GET /api/v4/projects/{id}/merge_requests/{iid}/approvals   — approval count
+    - GET /api/v4/merge_requests/{id}                            — global MR (fetch_reviews)
+    - GET /api/v4/projects/{id}/merge_requests/{iid}/notes       — review activity
+    - GET /api/v4/projects/{id}/merge_requests/{iid}/reviewers   — reviewer requests
+    """
+    path = request.url.path.rstrip("/")
+
+    if path == "/api/v4/projects":
+        return httpx.Response(200, json=[_CANNED_GL_REPO], headers={"X-Next-Page": ""})
+    # Sub-resource suffixes are checked before the bare /merge_requests suffix so that
+    # /merge_requests/1/notes etc. do not accidentally match the list-endpoint branch.
+    if path.endswith("/approvals"):
+        return httpx.Response(200, json={"approved_by": []})
+    if path.endswith("/notes"):
+        return httpx.Response(200, json=[], headers={"X-Next-Page": ""})
+    if path.endswith("/reviewers"):
+        return httpx.Response(200, json=[], headers={"X-Next-Page": ""})
+    if path.endswith("/merge_requests"):
+        return httpx.Response(200, json=[_CANNED_GL_MR], headers={"X-Next-Page": ""})
+    # Global (non-project-scoped) MR endpoint: /api/v4/merge_requests/{id}
+    # fetch_reviews calls this to resolve project_id and iid before fetching notes/reviewers.
+    if "/projects/" not in path and "/merge_requests/" in path:
+        return httpx.Response(200, json=_CANNED_GL_MR_DETAIL)
+    # Project-scoped MR detail: /api/v4/projects/{id}/merge_requests/{iid}
+    # _resolve_diff_stats calls this for additions/deletions.
+    if "/merge_requests/" in path:
+        return httpx.Response(200, json=_CANNED_GL_MR_DETAIL)
+    return httpx.Response(200, json={})
 
 
 # ---------------------------------------------------------------------------
@@ -522,12 +599,32 @@ def test_real_connectors_only_contact_their_source_host(
     # Canned response returns zero issues; the important thing is no AssertionError was raised.
     assert jira_items == []
 
-    # Exercise the real GitLabConnector: constructor + list_repositories.
-    async def _run_gitlab() -> list[object]:
+    # Exercise the real GitLabConnector: list_repositories, fetch_mergerequests, fetch_reviews.
+    # Mirrors the sequence in apps/api/src/em_radar_api/routers/reports.py (lines 730-739).
+    async def _run_gitlab() -> tuple[list[object], list[object], list[object]]:
         connector = GitLabConnector({"base_url": gitlab_base, "token": "fake-token-1234567890"})
         repos = await connector.list_repositories()
+        # Use the fetched repo external_ids so the scope matches the canned data.
+        mr_scope = MergeRequestScope(
+            repository_external_ids=[r.external_id for r in repos],
+        )
+        window = EvaluationWindow(
+            window_type=WindowType.DATE_RANGE,
+            start=datetime(2026, 6, 1, tzinfo=timezone.utc),
+            end=datetime(2026, 6, 17, tzinfo=timezone.utc),
+            team_profile_id=uuid4(),
+        )
+        mrs = [mr async for mr in connector.fetch_mergerequests(mr_scope, window)]
+        # fetch_reviews exercises: global MR endpoint, /notes, /reviewers.
+        reviews = [r async for r in connector.fetch_reviews([mr.external_id for mr in mrs])]
         await connector.close()
-        return repos
+        return repos, mrs, reviews
 
-    gitlab_repos = asyncio.run(_run_gitlab())
-    assert gitlab_repos == []
+    gitlab_repos, gitlab_mrs, gitlab_reviews = asyncio.run(_run_gitlab())
+    # Canned handler returns representative data; all three methods must have run without
+    # contacting any host other than gitlab.test.invalid (the allow-list would have raised).
+    assert len(gitlab_repos) == 1, f"expected 1 repo from canned handler, got {gitlab_repos!r}"
+    assert len(gitlab_mrs) == 1, f"expected 1 MR from canned handler, got {gitlab_mrs!r}"
+    # Notes and reviewers return [] so no Review objects are expected; what matters is that
+    # fetch_reviews executed (it called the notes + reviewers endpoints) without raising.
+    assert isinstance(gitlab_reviews, list)
