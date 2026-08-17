@@ -230,10 +230,101 @@ def _make_source_only_factory(
     return factory
 
 
+# ---------------------------------------------------------------------------
+# Canned Jira API payloads for P2-B
+# ---------------------------------------------------------------------------
+
+_CANNED_JI_PROJECT: dict[str, object] = {
+    "id": "10000",
+    "key": "TEST",
+    "name": "Canned Project",
+    "self": "https://jira.test.invalid/rest/api/2/project/10000",
+}
+
+_CANNED_JI_BOARD: dict[str, object] = {
+    "id": "1",
+    "name": "Canned Scrum Board",
+    "type": "scrum",
+    "location": {"projectId": "10000", "projectKey": "TEST"},
+}
+
+_CANNED_JI_SPRINT: dict[str, object] = {
+    "id": "101",
+    "name": "Sprint 1",
+    "state": "active",
+    "startDate": "2026-06-01T00:00:00Z",
+    "endDate": "2026-06-14T00:00:00Z",
+    "self": "https://jira.test.invalid/rest/agile/1.0/sprint/101",
+}
+
+# Work item (issue) payload for both the search endpoint and the issue-detail endpoint.
+# fields.updated = 2026-06-10 is before window.end = 2026-06-17, so _workitem_in_window passes.
+_CANNED_JI_ISSUE: dict[str, object] = {
+    "id": "10001",
+    "key": "TEST-1",
+    "self": "https://jira.test.invalid/rest/api/2/issue/10001",
+    "fields": {
+        "summary": "Canned work item",
+        "description": None,
+        "issuetype": {"name": "Story"},
+        "status": {
+            "name": "In Progress",
+            "statusCategory": {"key": "indeterminate", "id": "4", "name": "In Progress"},
+        },
+        "project": {"id": "10000"},
+        "assignee": None,
+        "reporter": None,
+        "labels": [],
+        "components": [],
+        "created": "2026-06-01T00:00:00Z",
+        "updated": "2026-06-10T00:00:00Z",
+        "resolutiondate": None,
+        "duedate": None,
+        "customfield_10020": None,
+        "customfield_10016": None,
+        "customfield_10014": None,
+    },
+}
+
+# Status object used by _status_categories (fetch_transitions → GET /rest/api/2/status).
+_CANNED_JI_STATUS: dict[str, object] = {
+    "id": "4",
+    "name": "In Progress",
+    "statusCategory": {"key": "indeterminate", "id": "4", "name": "In Progress"},
+}
+
+
 def _jira_canned_handler(request: httpx.Request) -> httpx.Response:
-    """Return minimal valid Jira API responses; empty issues list terminates pagination."""
-    if "search" in request.url.path:
-        return httpx.Response(200, json={"issues": [], "total": 0})
+    """Route canned Jira API responses by path so every real connector endpoint is served.
+
+    Endpoints covered:
+    - GET /rest/api/2/project                        — list_projects
+    - GET /rest/agile/1.0/board                      — list_boards
+    - GET /rest/agile/1.0/board/{id}/sprint          — list_sprints
+    - GET /rest/api/2/search/jql                     — fetch_workitems
+    - GET /rest/api/2/status                         — _status_categories (fetch_transitions)
+    - GET /rest/api/2/issue/{id}                     — fetch_transitions issue lookup
+    - GET /rest/api/2/issue/{id}/changelog           — fetch_transitions changelog pages
+    """
+    path = request.url.path.rstrip("/")
+
+    if path == "/rest/api/2/project":
+        return httpx.Response(200, json=[_CANNED_JI_PROJECT])
+    if path == "/rest/api/2/status":
+        return httpx.Response(200, json=[_CANNED_JI_STATUS])
+    if path == "/rest/agile/1.0/board":
+        return httpx.Response(200, json={"values": [_CANNED_JI_BOARD], "isLast": True})
+    if path.startswith("/rest/agile/1.0/board/") and path.endswith("/sprint"):
+        return httpx.Response(200, json={"values": [_CANNED_JI_SPRINT], "isLast": True})
+    if "search" in path:
+        return httpx.Response(200, json={"issues": [_CANNED_JI_ISSUE], "total": 1})
+    # Changelog endpoint must be checked before the generic issue-detail branch so that
+    # /rest/api/2/issue/{id}/changelog is not swallowed by the "/rest/api/2/issue/" check.
+    if path.endswith("/changelog"):
+        return httpx.Response(200, json={"values": [], "total": 0})
+    if "/rest/api/2/issue/" in path:
+        # Issue detail: needs at least "key" (for issue_key) and "changelog" (fallback histories).
+        return httpx.Response(200, json={**_CANNED_JI_ISSUE, "changelog": {"values": []}})
     return httpx.Response(200, json={})
 
 
@@ -581,23 +672,48 @@ def test_real_connectors_only_contact_their_source_host(
     with pytest.raises(AssertionError, match="unexpected host"):
         asyncio.run(_wrong_host_attempt())
 
-    # Exercise the real JiraConnector: constructor + fetch_workitems.
-    async def _run_jira() -> list[object]:
+    # Exercise the real JiraConnector: all five methods the report path drives.
+    # Mirrors reports.py order: list_projects → list_boards → list_sprints →
+    # fetch_workitems → fetch_transitions.
+    async def _run_jira() -> tuple[
+        list[object], list[object], list[object], list[object], list[object]
+    ]:
         connector = JiraConnector({"base_url": jira_base, "token": "fake-token-1234567890"})
+        projects = await connector.list_projects()
+        boards = await connector.list_boards(projects[0].external_id)
+        sprints = await connector.list_sprints(boards[0].external_id)
         window = EvaluationWindow(
             window_type=WindowType.DATE_RANGE,
             start=datetime(2026, 6, 1, tzinfo=timezone.utc),
             end=datetime(2026, 6, 17, tzinfo=timezone.utc),
             team_profile_id=uuid4(),
         )
-        scope = WorkItemScope(project_external_ids=["TEST"], board_external_ids=["1"])
-        items = [wi async for wi in connector.fetch_workitems(scope, window)]
+        scope = WorkItemScope(
+            project_external_ids=[projects[0].external_id],
+            board_external_ids=[boards[0].external_id],
+        )
+        workitems = [wi async for wi in connector.fetch_workitems(scope, window)]
+        transitions = [
+            t
+            async for t in connector.fetch_transitions(
+                "workitem", [wi.external_id for wi in workitems]
+            )
+        ]
         await connector.close()
-        return items
+        return projects, boards, sprints, workitems, transitions
 
-    jira_items = asyncio.run(_run_jira())
-    # Canned response returns zero issues; the important thing is no AssertionError was raised.
-    assert jira_items == []
+    jira_projects, jira_boards, jira_sprints, jira_items, jira_transitions = asyncio.run(
+        _run_jira()
+    )
+    # All five real Jira methods executed under the allow-list transport.
+    # Any request to a host other than jira.test.invalid would have raised AssertionError.
+    assert len(jira_projects) == 1, f"expected 1 project, got {jira_projects!r}"
+    assert len(jira_boards) == 1, f"expected 1 board, got {jira_boards!r}"
+    assert len(jira_sprints) == 1, f"expected 1 sprint, got {jira_sprints!r}"
+    assert len(jira_items) == 1, f"expected 1 work item, got {jira_items!r}"
+    # Canned changelog is empty so no Transition objects are expected; what matters is that
+    # fetch_transitions executed (it called /status and /issue/{id}/changelog) without raising.
+    assert isinstance(jira_transitions, list)
 
     # Exercise the real GitLabConnector: list_repositories, fetch_mergerequests, fetch_reviews.
     # Mirrors the sequence in apps/api/src/em_radar_api/routers/reports.py (lines 730-739).
