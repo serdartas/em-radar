@@ -65,6 +65,14 @@ no admin rights are needed.
 The connector checks this permission at connection time via `GET /rest/api/2/mypermissions`
 and shows the result in the connection test output.
 
+> **Least-privilege note:** A Jira Cloud API token inherits the full permissions of the
+> Atlassian account that created it. There is no per-token scope selector. If that account
+> can edit issues, comment, or administer projects, the token can too. To make the credential
+> genuinely read-only, use a dedicated account (or an existing one) whose Jira project roles
+> are limited to Browse Projects with no edit, comment, or admin rights. EM Radar itself only
+> issues GET requests and never writes to Jira, but a leaked token would carry whatever its
+> owner account can do.
+
 ### How to create the token
 
 1. Sign in to https://id.atlassian.com/manage-profile/security/api-tokens with the
@@ -105,6 +113,14 @@ The Jira account that owns the PAT must have **Browse Projects** permission in e
 you want to report on. No admin rights are needed. The Agile board and sprint endpoints are
 accessible to any account with Browse Projects on the relevant project.
 
+> **Least-privilege note:** A Jira Server/DC PAT inherits the full permissions of the user
+> account that created it. There is no per-token scope selector. If that account can edit
+> issues, comment, or administer projects, the PAT can too. To make the credential genuinely
+> read-only, use a dedicated account (or an existing one) whose Jira project roles are limited
+> to Browse Projects with no edit, comment, or admin rights. EM Radar itself only issues GET
+> requests and never writes to Jira, but a leaked PAT would carry whatever its owner account
+> can do.
+
 ### How to create the token
 
 1. Sign in to your Jira Server or Data Center instance.
@@ -128,5 +144,13 @@ All calls are read-only GET requests.
 
 EM Radar is designed to never write to Jira or GitLab (REQ-NF-011). The connectors issue
 only GET requests. No issues are created, updated, or deleted. No merge requests are
-commented on or modified. The minimum-scope tokens described above are aligned with this
-guarantee and provide no write capability.
+commented on or modified.
+
+This is a guarantee about EM Radar's behavior, not a property of every token type:
+
+- **GitLab** - the `read_api` scope is enforced by GitLab itself. A `read_api` token cannot
+  write regardless of what EM Radar or any other client does with it.
+- **Jira Cloud and Jira Server/DC** - API tokens and PATs inherit the owning account's full
+  permissions. EM Radar only issues GET requests, but the credential itself carries whatever
+  the account can do. To make the token genuinely read-only at the credential level, restrict
+  the owning account to Browse Projects only (see the least-privilege notes above).

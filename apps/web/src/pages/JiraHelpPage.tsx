@@ -101,13 +101,18 @@ export function JiraHelpPage() {
         <CardContent className="space-y-2 text-sm text-slate-600">
           <p>
             The account that owns the token needs only <strong>Browse Projects</strong>{" "}
-            permission in the Jira projects you report on. No admin rights are needed. Jira
-            API tokens carry no separate scope selector - the token inherits the account&apos;s
-            existing project permissions.
+            permission in the Jira projects you report on. No admin rights are needed.
           </p>
           <p>
             EM Radar never writes to Jira. No issues are created, updated, or deleted. The
             connector issues only read-only requests.
+          </p>
+          <p>
+            Jira tokens carry no per-token scope selector - they inherit the owning
+            account&apos;s full permissions. For least privilege, use a dedicated account
+            (or an existing one) limited to Browse Projects with no edit, comment, or admin
+            rights. A token from an account with broader permissions carries those permissions
+            too, even though EM Radar never uses them.
           </p>
         </CardContent>
       </Card>

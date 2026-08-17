@@ -34,7 +34,7 @@ describe("JiraHelpPage", () => {
       </MemoryRouter>,
     )
 
-    expect(screen.getByText(/Browse Projects/)).toBeInTheDocument()
+    expect(screen.getAllByText(/Browse Projects/).length).toBeGreaterThan(0)
     expect(screen.getByText(/EM Radar never writes to Jira/)).toBeInTheDocument()
   })
 })
