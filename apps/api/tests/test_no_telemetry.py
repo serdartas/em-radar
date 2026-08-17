@@ -647,6 +647,81 @@ def test_demo_report_run_makes_no_outbound_network_calls(
 
 
 # ---------------------------------------------------------------------------
+# Demo connector — network isolation proof
+# ---------------------------------------------------------------------------
+
+
+def test_real_demo_connector_makes_no_outbound_calls() -> None:
+    """The real DemoConnector must complete its full provider surface without any network call.
+
+    DemoConnector returns static in-memory data and uses no httpx, so the autouse socket
+    and httpx blockers installed by _block_outbound_network are active throughout this test.
+    Any accidental outbound call (e.g. from a future refactor) would immediately raise
+    AssertionError via the socket blocker, failing this test.
+
+    All provider methods are driven so that a phone-home added to any code path is caught:
+    test_connection, list_projects, list_boards, list_sprints, fetch_workitems,
+    fetch_transitions, list_repositories, fetch_mergerequests, close.
+    """
+    from em_radar_connector_demo.connector import DemoConnector
+
+    async def _run() -> tuple[
+        object,
+        list[object],
+        list[object],
+        list[object],
+        list[object],
+        list[object],
+        list[object],
+        list[object],
+    ]:
+        connector = DemoConnector({})
+        conn_result = await connector.test_connection()
+        projects = await connector.list_projects()
+        boards = await connector.list_boards(projects[0].external_id)
+        sprints = await connector.list_sprints(boards[0].external_id)
+        window = EvaluationWindow(
+            window_type=WindowType.DATE_RANGE,
+            start=datetime(2026, 6, 1, tzinfo=timezone.utc),
+            end=datetime(2026, 6, 17, tzinfo=timezone.utc),
+            team_profile_id=uuid4(),
+        )
+        workitems = [
+            wi
+            async for wi in connector.fetch_workitems(
+                WorkItemScope(project_external_ids=["DEMO"]), window
+            )
+        ]
+        transitions = [
+            t
+            async for t in connector.fetch_transitions(
+                "workitem", [wi.external_id for wi in workitems]
+            )
+        ]
+        repos = await connector.list_repositories()
+        mrs = [
+            mr
+            async for mr in connector.fetch_mergerequests(
+                MergeRequestScope(repository_external_ids=[r.external_id for r in repos]),
+                window,
+            )
+        ]
+        await connector.close()
+        return conn_result, projects, boards, sprints, workitems, transitions, repos, mrs
+
+    conn, projects, boards, sprints, workitems, transitions, repos, mrs = asyncio.run(_run())
+
+    assert conn.ok, f"DemoConnector test_connection failed: {conn!r}"
+    assert len(projects) == 1, f"expected 1 project, got {projects!r}"
+    assert len(boards) == 1, f"expected 1 board, got {boards!r}"
+    assert len(sprints) == 1, f"expected 1 sprint, got {sprints!r}"
+    assert len(workitems) == 2, f"expected 2 workitems, got {workitems!r}"
+    assert isinstance(transitions, list)  # DemoConnector yields no transitions
+    assert len(repos) == 1, f"expected 1 repo, got {repos!r}"
+    assert len(mrs) == 1, f"expected 1 MR, got {mrs!r}"
+
+
+# ---------------------------------------------------------------------------
 # P2-B: Real connectors under source-host allow-list transport
 # ---------------------------------------------------------------------------
 
