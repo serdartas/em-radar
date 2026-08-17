@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """Connector contract test infrastructure.
 
 Registers the em-radar-connector-contracts pytest plugin that auto-discovers

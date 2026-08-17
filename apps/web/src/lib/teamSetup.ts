@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 import { useQuery } from "@tanstack/react-query"
 
 import { getConnectors, type Connector } from "@/lib/connectors"

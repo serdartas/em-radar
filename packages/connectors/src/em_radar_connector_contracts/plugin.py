@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """pytest plugin: auto-discovers em_radar.connectors entry points and provides
 the ``connector_cls`` fixture so any connector package can run the shared
 contract suite without copying test code.

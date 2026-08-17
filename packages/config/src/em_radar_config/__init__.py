@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 from em_radar_config.jira_signal_templates import (
     JIRA_SIGNAL_TEMPLATES,
     JiraSignalTemplate,

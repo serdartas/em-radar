@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import asdict

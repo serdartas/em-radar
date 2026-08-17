@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import ClassVar, Literal, Protocol, runtime_checkable

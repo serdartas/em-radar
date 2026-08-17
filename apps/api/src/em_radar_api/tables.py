@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 from uuid import UUID, uuid4
 
 from sqlalchemy import UniqueConstraint

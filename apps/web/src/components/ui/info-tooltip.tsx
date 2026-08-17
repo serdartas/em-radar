@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 import { Info } from "lucide-react"
 import { type ReactNode, useEffect, useId, useRef, useState } from "react"
 

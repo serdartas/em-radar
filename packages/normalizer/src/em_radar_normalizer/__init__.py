@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 from em_radar_normalizer.identity import (
     REFERENCE_FIELDS,
     IdentityMap,

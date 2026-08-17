@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from uuid import UUID

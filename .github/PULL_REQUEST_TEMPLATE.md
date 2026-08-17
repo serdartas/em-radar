@@ -6,6 +6,13 @@
 
 <!-- List the checks you ran. -->
 
+## Checklist
+
+- [ ] Implementation matches the issue `Scope` exactly - nothing outside it was changed.
+- [ ] Nothing listed in the issue's `Out of scope` was implemented.
+- [ ] The issue's `Verification` block passes.
+- [ ] Lint and tests are green locally.
+
 ## Issue
 
 Fixes #

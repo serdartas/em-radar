@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 from datetime import datetime
 from enum import StrEnum
 from uuid import UUID, uuid4

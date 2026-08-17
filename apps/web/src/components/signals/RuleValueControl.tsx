@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 import { NO_VALUE_OPERATORS, isNumberType } from "@/components/signals/ruleValue"
 import { Input } from "@/components/ui/input"
 import { Select } from "@/components/ui/select"
