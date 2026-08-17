@@ -139,10 +139,18 @@ def patch_connection(
 @router.delete("/connections/{connection_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_connection(
     connection_id: UUID,
+    force: bool = False,
     session: Session = Depends(get_write_session),
 ) -> Response:
+    """Delete a connection and, when ``force=true``, cascade to its cached data and team refs.
+
+    Without ``force``, returns 409 with the list of dependent teams if any team still
+    references this connection — the client can surface this as a warning and re-submit
+    with ``force=true`` after the user confirms.  Outbound calls to source systems are
+    never made.
+    """
     try:
-        if not delete_source_connection(session, connection_id):
+        if not delete_source_connection(session, connection_id, force=force):
             raise _connection_not_found()
     except SourceConnectionInUse as error:
         raise _connection_conflict(error) from error
@@ -320,7 +328,16 @@ def _connection_not_found() -> HTTPException:
 
 
 def _connection_conflict(error: SourceConnectionInUse) -> HTTPException:
-    return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error))
+    if error.dependent_teams:
+        detail: object = {
+            "message": str(error),
+            "dependent_teams": [
+                {"id": str(team.id), "name": team.name} for team in error.dependent_teams
+            ],
+        }
+    else:
+        detail = str(error)
+    return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
 
 
 def _connection_duplicate_name(error: SourceConnectionDuplicateName) -> HTTPException:

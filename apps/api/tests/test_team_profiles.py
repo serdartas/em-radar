@@ -561,7 +561,10 @@ def test_code_only_connection_deletion_blocked_by_team_guard(
     response = api_client.delete(f"/api/connections/{gitlab_id}")
 
     assert response.status_code == 409
-    assert "referenced by a team" in response.json()["detail"]
+    detail = response.json()["detail"]
+    # The 409 detail is now a structured object with message + dependent_teams.
+    assert "referenced by one or more teams" in detail["message"]
+    assert any(t["name"] == "Platform" for t in detail["dependent_teams"])
 
 
 # ---------------------------------------------------------------------------

@@ -54,7 +54,7 @@ from em_radar_core.models import (
 )
 from em_radar_core.signals import SignalData
 from em_radar_normalizer import DEFAULT_WORKITEM_KEY_PATTERN, populate_merge_request_links
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, JsonValue, model_validator
 from sqlmodel import Session, select
 
@@ -66,6 +66,8 @@ from em_radar_api.repositories.canonical import persist_fetch
 from em_radar_api.repositories.reports import (
     add_findings,
     create_report,
+    delete_all_reports,
+    delete_reports_for_team,
     get_findings,
     get_report,
     list_reports,
@@ -793,6 +795,24 @@ async def list_reports_endpoint(
             )
         )
     return responses
+
+
+@router.delete("/reports", status_code=status.HTTP_204_NO_CONTENT)
+def delete_reports_endpoint(
+    team_id: UUID | None = None,
+    session: Session = Depends(get_write_session),
+) -> Response:
+    """Delete report history.
+
+    Without ``team_id``, removes every report, finding, and evaluation window.
+    With ``team_id``, removes only that team's history.  Outbound calls to source
+    systems are never made.
+    """
+    if team_id is not None:
+        delete_reports_for_team(session, team_id)
+    else:
+        delete_all_reports(session)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/reports/{report_id}", response_model=ReportDetailResponse)

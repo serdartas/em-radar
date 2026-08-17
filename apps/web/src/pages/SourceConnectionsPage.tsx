@@ -22,7 +22,7 @@ export function SourceConnectionsPage() {
   const [editing, setEditing] = useState<SourceConnection | null>(null)
 
   const deleteMutation = useMutation({
-    mutationFn: deleteConnection,
+    mutationFn: (id: string) => deleteConnection(id),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["connections"] }),
   })
 

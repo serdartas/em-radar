@@ -200,6 +200,23 @@ uv run alembic -c ../../alembic.ini upgrade head
 On the next API start, default signal configs are re-seeded from
 `packages/config/defaults/default-pack.yaml`.
 
+### 5.4 Full reset in Docker (volume wipe)
+
+The in-container database lives at `/data/em-radar.db`, persisted in the `emradar-data`
+named volume. The UI's Settings/Privacy page lets you delete individual connections (and
+their cached data) or clear report history without touching the source systems. For a
+complete wipe — all data, all connections, all reports — stop the container and remove the
+volume:
+
+```bash
+docker compose -f deploy/docker/docker-compose.yml down
+docker volume rm em-radar_emradar-data   # or the project-prefixed name shown by `docker volume ls`
+docker compose -f deploy/docker/docker-compose.yml up
+```
+
+The entrypoint re-applies migrations and re-seeds default signal configs on the next start,
+so the app is ready to use immediately after the container comes up.
+
 ---
 
 ## 6. Debugging

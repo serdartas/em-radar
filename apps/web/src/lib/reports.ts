@@ -161,3 +161,8 @@ export function reportMarkdownQuery(reportId: string) {
     queryFn: () => getReportMarkdown(reportId),
   }
 }
+
+export async function deleteReportHistory(teamId?: string): Promise<void> {
+  const query = teamId ? `?team_id=${encodeURIComponent(teamId)}` : ""
+  await apiFetch<void>(`/reports${query}`, { method: "DELETE" })
+}

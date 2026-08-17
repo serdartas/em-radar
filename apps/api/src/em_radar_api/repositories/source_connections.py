@@ -1,5 +1,6 @@
 from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
+from dataclasses import dataclass
 from typing import TypeVar, cast
 from uuid import UUID
 
@@ -7,9 +8,11 @@ from pydantic import SecretStr
 from sqlmodel import Session, select
 
 from em_radar_api.connector_registry import get_connector_capabilities
+from em_radar_api.repositories.canonical import delete_canonical_data_for_source
 from em_radar_api.scope_definitions import ScopeDefinitionTable
 from em_radar_api.security import mask_secret
 from em_radar_api.source_connections import (
+    ConnectorName,
     SourceConnectionCreate,
     SourceConnectionRead,
     SourceConnectionTable,
@@ -17,6 +20,7 @@ from em_radar_api.source_connections import (
 )
 from em_radar_api.tables import TeamProfileTable
 from em_radar_core.connectors import ConnectorBase
+from em_radar_core.models import Source
 
 ConnectorT = TypeVar("ConnectorT", bound=ConnectorBase)
 CREDENTIAL_FIELD_NAMES = frozenset(
@@ -34,9 +38,22 @@ CREDENTIAL_FIELD_NAMES = frozenset(
 )
 SECRET_MARKER = "__em_radar_secret__"
 
+_CONNECTOR_TO_SOURCE: dict[str, Source] = {
+    ConnectorName.JIRA: Source.JIRA,
+    ConnectorName.GITLAB: Source.GITLAB,
+}
+
+
+@dataclass(frozen=True)
+class DependentTeam:
+    id: UUID
+    name: str
+
 
 class SourceConnectionInUse(ValueError):
-    pass
+    def __init__(self, message: str, dependent_teams: list[DependentTeam] | None = None) -> None:
+        super().__init__(message)
+        self.dependent_teams: list[DependentTeam] = dependent_teams or []
 
 
 class SourceConnectionDuplicateName(ValueError):
@@ -108,14 +125,83 @@ def update_source_connection(
     return _masked_read(row)
 
 
-def delete_source_connection(session: Session, connection_id: UUID) -> bool:
+def delete_source_connection(
+    session: Session,
+    connection_id: UUID,
+    *,
+    force: bool = False,
+) -> bool:
+    """Delete a source connection and clean up associated data.
+
+    Without ``force``, raises :exc:`SourceConnectionInUse` (with ``dependent_teams``
+    populated) when any team's scope or code source still references this connection.
+
+    With ``force=True``, team references are scrubbed before deletion:
+    1. Scope definitions for this connection are deleted and removed from team scope_ids.
+    2. The connection is removed from every team's ``connection_ids`` list and
+       ``code_connection_id`` is cleared where it matches.
+
+    In all cases (with or without ``force``), cached canonical data for the connector
+    source type is deleted when this is the last remaining connection of that type —
+    preserving the cache when a sibling connection of the same type still exists (flows §8).
+
+    No outbound calls to source systems are made.
+    """
     row = session.get(SourceConnectionTable, connection_id)
     if row is None:
         return False
-    if _referencing_scopes(session, connection_id):
-        raise SourceConnectionInUse("source connection is referenced by a scope definition")
-    if _referencing_teams(session, connection_id):
-        raise SourceConnectionInUse("source connection is referenced by a team")
+
+    dependent_scopes = _referencing_scopes(session, connection_id)
+    all_dependent = _all_dependent_teams(session, connection_id)
+
+    if not force and (dependent_scopes or all_dependent):
+        team_info = [DependentTeam(id=t.id, name=t.name) for t in all_dependent]
+        raise SourceConnectionInUse(
+            "source connection is referenced by one or more teams;"
+            " pass force=true to cascade-delete",
+            dependent_teams=team_info,
+        )
+
+    if force:
+        # 1. Remove each scope for this connection from teams, then delete the scope.
+        scope_ids_to_remove = {scope.id for scope in dependent_scopes}
+        if scope_ids_to_remove:
+            for team in session.exec(select(TeamProfileTable)).all():
+                updated = [s for s in team.scope_ids if s not in scope_ids_to_remove]
+                if len(updated) != len(team.scope_ids):
+                    team.scope_ids = updated
+                    session.add(team)
+            for scope in dependent_scopes:
+                session.delete(scope)
+
+        # 2. Scrub this connection from team.connection_ids / code_connection_id.
+        for team in session.exec(select(TeamProfileTable)).all():
+            changed = False
+            if connection_id in team.connection_ids:
+                team.connection_ids = [c for c in team.connection_ids if c != connection_id]
+                changed = True
+            if team.code_connection_id == connection_id:
+                team.code_connection_id = None
+                changed = True
+            if changed:
+                session.add(team)
+
+    # 3. Delete cached canonical data when this is the last connection of this source type.
+    #    Sibling connections sharing the same connector type still need the shared cache.
+    source = _CONNECTOR_TO_SOURCE.get(str(row.connector_name))
+    if source is not None:
+        sibling_exists = (
+            session.exec(
+                select(SourceConnectionTable).where(
+                    SourceConnectionTable.connector_name == row.connector_name,
+                    SourceConnectionTable.id != connection_id,
+                )
+            ).first()
+            is not None
+        )
+        if not sibling_exists:
+            delete_canonical_data_for_source(session, source)
+
     session.delete(row)
     session.commit()
     return True
@@ -145,14 +231,6 @@ def _name_taken(session: Session, name: str, exclude_id: UUID | None = None) -> 
     return session.exec(query).first() is not None
 
 
-def _referencing_teams(session: Session, connection_id: UUID) -> list[TeamProfileTable]:
-    return [
-        team
-        for team in session.exec(select(TeamProfileTable)).all()
-        if connection_id in team.connection_ids
-    ]
-
-
 def _teams_using_as_code_source(session: Session, connection_id: UUID) -> list[TeamProfileTable]:
     return session.exec(
         select(TeamProfileTable).where(TeamProfileTable.code_connection_id == connection_id)
@@ -163,6 +241,25 @@ def _referencing_scopes(session: Session, connection_id: UUID) -> list[ScopeDefi
     return session.exec(
         select(ScopeDefinitionTable).where(ScopeDefinitionTable.connection_id == connection_id)
     ).all()
+
+
+def _all_dependent_teams(session: Session, connection_id: UUID) -> list[TeamProfileTable]:
+    """Return every team that depends on this connection via any reference path."""
+    scope_ids_for_conn = {
+        scope.id
+        for scope in session.exec(
+            select(ScopeDefinitionTable).where(ScopeDefinitionTable.connection_id == connection_id)
+        ).all()
+    }
+    return [
+        team
+        for team in session.exec(select(TeamProfileTable)).all()
+        if (
+            connection_id in team.connection_ids
+            or team.code_connection_id == connection_id
+            or bool(set(team.scope_ids) & scope_ids_for_conn)
+        )
+    ]
 
 
 def _masked_read(row: SourceConnectionTable) -> SourceConnectionRead:
