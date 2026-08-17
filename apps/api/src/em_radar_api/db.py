@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 import os
 from collections.abc import Iterator
 from pathlib import Path

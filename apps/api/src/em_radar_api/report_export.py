@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 from collections.abc import Sequence
 
 from em_radar_core.models import SignalFinding, WindowType

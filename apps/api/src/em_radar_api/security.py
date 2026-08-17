@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """Credential-masking helpers shared across the API package."""
 
 

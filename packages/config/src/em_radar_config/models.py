@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, StrictBool
 
 from em_radar_core.models import Severity, WorkItemType

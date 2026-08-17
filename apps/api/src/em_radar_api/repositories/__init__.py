@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 from em_radar_api.repositories.source_connections import (
     create_source_connection,
     delete_source_connection,

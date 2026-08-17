@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """Demo connector — returns static in-memory data; no credentials or network required."""
 
 from __future__ import annotations

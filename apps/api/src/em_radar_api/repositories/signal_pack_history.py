@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 from uuid import UUID
 
 from sqlmodel import Session, select

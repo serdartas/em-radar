@@ -146,7 +146,21 @@ Two project-specific rules that are easy to get wrong:
 
 ---
 
-## 9. Contributor rights and assignment
+## 9. Definition of Done
+
+A contribution is done when **all** of the following are true:
+
+- The implementation matches the issue `Scope` exactly - nothing added, nothing omitted.
+- Nothing listed in `Out of scope` was implemented.
+- The `Verification` block passes locally (and in CI once the PR is open).
+- All new behavior has a test (scaffolding and docs issues are exempt).
+- Lint (`ruff check`, `ruff format --check`, `npm run lint`) is clean.
+- The PR references the issue with `Fixes #<n>`.
+- The Contributor Assignment Agreement box in the PR template is checked.
+
+---
+
+## 10. Contributor rights and assignment
 
 EM Radar requires a copyright assignment so accepted original contributions have a single
 copyright owner who can maintain, license, and commercially develop the project. Before a

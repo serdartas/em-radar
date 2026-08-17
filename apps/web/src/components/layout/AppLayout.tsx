@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 import { NavLink, Outlet } from "react-router-dom"
 
 import { Logo } from "@/components/Logo"
