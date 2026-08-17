@@ -107,7 +107,7 @@ describe("SettingsPrivacyPage", () => {
   })
 
   it("clicking confirm delete calls the delete API", async () => {
-    const fetchSpy = mockFetch([], 204)
+    mockFetch([], 204)
     renderPage()
 
     fireEvent.click(screen.getByRole("button", { name: "Delete report history" }))

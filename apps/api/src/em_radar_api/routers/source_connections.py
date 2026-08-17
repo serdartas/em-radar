@@ -328,15 +328,12 @@ def _connection_not_found() -> HTTPException:
 
 
 def _connection_conflict(error: SourceConnectionInUse) -> HTTPException:
-    if error.dependent_teams:
-        detail: object = {
-            "message": str(error),
-            "dependent_teams": [
-                {"id": str(team.id), "name": team.name} for team in error.dependent_teams
-            ],
-        }
-    else:
-        detail = str(error)
+    detail: object = {
+        "message": str(error),
+        "dependent_teams": [
+            {"id": str(team.id), "name": team.name} for team in error.dependent_teams
+        ],
+    }
     return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
 
 

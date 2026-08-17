@@ -274,7 +274,7 @@ def test_connection_connector_name_cannot_change_when_scopes_reference_it(
     )
     assert response.status_code == 409
     assert (
-        response.json()["detail"]
+        response.json()["detail"]["message"]
         == "source connection connector_name cannot change while scopes reference it"
     )
 

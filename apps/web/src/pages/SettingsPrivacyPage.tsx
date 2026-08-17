@@ -200,15 +200,23 @@ function DeleteConnectionItem({ connection }: DeleteConnectionItemProps) {
         >
           {conflict ? (
             <>
-              <p className="font-medium">This connection is used by the following teams:</p>
-              <ul className="mt-1 list-disc pl-4">
-                {conflict.dependent_teams.map((t) => (
-                  <li key={t.id}>{t.name}</li>
-                ))}
-              </ul>
+              {conflict.dependent_teams.length > 0 ? (
+                <>
+                  <p className="font-medium">This connection is used by the following teams:</p>
+                  <ul className="mt-1 list-disc pl-4">
+                    {conflict.dependent_teams.map((t) => (
+                      <li key={t.id}>{t.name}</li>
+                    ))}
+                  </ul>
+                </>
+              ) : (
+                <p className="font-medium">
+                  This connection has scope definitions that will be removed.
+                </p>
+              )}
               <p className="mt-2">
-                Proceeding will remove the connection, its cached data, and all team references to
-                it. This cannot be undone.
+                Proceeding will remove the connection, its cached data, and all references to it.
+                This cannot be undone.
               </p>
             </>
           ) : (

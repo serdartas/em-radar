@@ -596,7 +596,7 @@ def test_changing_code_source_connector_to_non_mr_capable_is_rejected(
     )
 
     assert response.status_code == 409
-    assert "non-MR-capable" in response.json()["detail"]
+    assert "non-MR-capable" in response.json()["detail"]["message"]
 
 
 def test_changing_code_source_connector_to_another_mr_capable_is_allowed(

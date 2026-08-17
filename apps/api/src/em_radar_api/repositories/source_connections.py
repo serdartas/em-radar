@@ -156,11 +156,17 @@ def delete_source_connection(
 
     if not force and (dependent_scopes or all_dependent):
         team_info = [DependentTeam(id=t.id, name=t.name) for t in all_dependent]
-        raise SourceConnectionInUse(
-            "source connection is referenced by one or more teams;"
-            " pass force=true to cascade-delete",
-            dependent_teams=team_info,
-        )
+        if all_dependent:
+            message = (
+                "source connection is referenced by one or more teams;"
+                " pass force=true to cascade-delete"
+            )
+        else:
+            message = (
+                "source connection has scope definitions that will be removed;"
+                " pass force=true to proceed"
+            )
+        raise SourceConnectionInUse(message, dependent_teams=team_info)
 
     if force:
         # 1. Remove each scope for this connection from teams, then delete the scope.

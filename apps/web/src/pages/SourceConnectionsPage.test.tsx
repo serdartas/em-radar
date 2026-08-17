@@ -446,4 +446,132 @@ describe("SourceConnectionsPage", () => {
     expect(screen.queryByLabelText(/Project/i)).not.toBeInTheDocument()
     expect(screen.queryByRole("button", { name: /Run report/i })).not.toBeInTheDocument()
   })
+
+  // ---------------------------------------------------------------------------
+  // Delete connection flow
+  // ---------------------------------------------------------------------------
+
+  function mockApiWithConnection(
+    deleteHandler: (url: string) => Response = () => new Response(null, { status: 204 }),
+  ) {
+    const conn = {
+      id: "conn-1",
+      name: "Jira Prod",
+      connector_name: "jira",
+      config: {},
+      created_at: "2026-01-01T00:00:00Z",
+    }
+    return vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = typeof input === "string" ? input : input.toString()
+      if (url.endsWith("/api/connectors")) {
+        return Promise.resolve(jsonResponse([jiraConnector]))
+      }
+      if (url.endsWith("/api/connections") && (init?.method ?? "GET") === "GET") {
+        return Promise.resolve(jsonResponse([conn]))
+      }
+      if (url.includes("/api/connections/conn-1") && init?.method === "DELETE") {
+        return Promise.resolve(deleteHandler(url))
+      }
+      throw new Error(`unexpected fetch: ${init?.method ?? "GET"} ${url}`)
+    })
+  }
+
+  it("Delete button shows confirmation dialog before calling the API", async () => {
+    const fetchMock = mockApiWithConnection()
+    renderPage()
+
+    fireEvent.click(await screen.findByRole("button", { name: "Delete" }))
+
+    expect(
+      screen.getByRole("alertdialog", { name: "Confirm: Delete connection Jira Prod" }),
+    ).toBeInTheDocument()
+
+    const deleteCalls = fetchMock.mock.calls.filter(
+      ([, init]) => (init?.method ?? "GET").toUpperCase() === "DELETE",
+    )
+    expect(deleteCalls).toHaveLength(0)
+  })
+
+  it("Cancel dismisses the confirmation dialog without calling the API", async () => {
+    const fetchMock = mockApiWithConnection()
+    renderPage()
+
+    fireEvent.click(await screen.findByRole("button", { name: "Delete" }))
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }))
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument()
+
+    const deleteCalls = fetchMock.mock.calls.filter(
+      ([, init]) => (init?.method ?? "GET").toUpperCase() === "DELETE",
+    )
+    expect(deleteCalls).toHaveLength(0)
+  })
+
+  it("Confirm delete calls the delete API", async () => {
+    const fetchMock = mockApiWithConnection()
+    renderPage()
+
+    fireEvent.click(await screen.findByRole("button", { name: "Delete" }))
+    fireEvent.click(screen.getByRole("button", { name: "Confirm delete" }))
+
+    await waitFor(() => {
+      const deleteCalls = fetchMock.mock.calls.filter(
+        ([, init]) => (init?.method ?? "GET").toUpperCase() === "DELETE",
+      )
+      expect(deleteCalls.length).toBeGreaterThan(0)
+    })
+  })
+
+  it("shows dependent teams and force-confirm on 409 conflict", async () => {
+    mockApiWithConnection((url) => {
+      if (url.includes("force=true")) {
+        return new Response(null, { status: 204 })
+      }
+      return jsonResponse(
+        {
+          detail: {
+            message: "connection is in use",
+            dependent_teams: [{ id: "team-1", name: "Platform" }],
+          },
+        },
+        409,
+      )
+    })
+    renderPage()
+
+    fireEvent.click(await screen.findByRole("button", { name: "Delete" }))
+    fireEvent.click(screen.getByRole("button", { name: "Confirm delete" }))
+
+    await screen.findByText("Platform")
+    expect(screen.getByRole("button", { name: "Confirm force delete" })).toBeInTheDocument()
+  })
+
+  it("force-confirm retries with force=true and succeeds", async () => {
+    let forceUsed = false
+    mockApiWithConnection((url) => {
+      if (url.includes("force=true")) {
+        forceUsed = true
+        return new Response(null, { status: 204 })
+      }
+      return jsonResponse(
+        {
+          detail: {
+            message: "connection is in use",
+            dependent_teams: [{ id: "team-1", name: "Platform" }],
+          },
+        },
+        409,
+      )
+    })
+    renderPage()
+
+    fireEvent.click(await screen.findByRole("button", { name: "Delete" }))
+    fireEvent.click(screen.getByRole("button", { name: "Confirm delete" }))
+
+    await screen.findByRole("button", { name: "Confirm force delete" })
+    fireEvent.click(screen.getByRole("button", { name: "Confirm force delete" }))
+
+    await waitFor(() => expect(forceUsed).toBe(true))
+  })
 })
