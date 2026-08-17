@@ -1,9 +1,9 @@
 """M7-03 — Regression: export never leaks credentials; import rejects credential-bearing packs.
 
 Covers:
-- Exporting a signal group while a source connection with a real token is stored in the DB
-  produces YAML with zero credential-named keys and does not contain the token literal value,
-  in both private_backup and public_template modes.
+- Exporting a signal group while a source connection that stores many credential-shaped field names
+  and distinct sentinel values is in the DB produces YAML with zero credential-named keys and does
+  not contain any sentinel literal, in both private_backup and public_template modes.
 - An exported pack carries no connectors, scopes, or teams keys (§14, §15 of the signal spec).
 - The multi-group export path also produces credential-free, structurally-pure YAML.
 - Importing a pack that contains any credential-named field is rejected (preview and apply).
@@ -14,10 +14,13 @@ import pytest
 import yaml
 from fastapi.testclient import TestClient
 
+from em_radar_api.repositories.source_connections import is_credential_field_name
 
+
+# ── Field-name sets ───────────────────────────────────────────────────────────
+
+# The five field names forbidden by the signal-spec §14; used for import-rejection tests.
 _CREDENTIAL_FIELDS = ("token", "password", "api_key", "secret", "authorization")
-
-_REAL_TOKEN = "super-secret-jira-token-abcdef1234"
 
 # Keys in _EXECUTABLE_FIELDS inside validation._check_forbidden_content.
 _EXECUTABLE_KEY_FIELDS = ("command", "script", "code")
@@ -28,30 +31,54 @@ _EXECUTABLE_VALUE_PAYLOADS = (
     "exec('cmd')",
 )
 
+# Sentinel values stored in the connection fixture — one per recognized credential shape in
+# is_credential_field_name (covers exact CREDENTIAL_FIELD_NAMES entries, names ending in
+# "token", and names containing "secret").  Each sentinel is distinct so we can assert none
+# of them appear anywhere in the export response text.
+_CRED_SENTINELS: dict[str, str] = {
+    "token": "sentinel-token-abc1111",
+    "access_token": "sentinel-access-token-abc2222",
+    "private_token": "sentinel-private-token-abc3333",
+    "refresh_token": "sentinel-refresh-token-abc4444",
+    "client_secret": "sentinel-client-secret-abc5555",
+    "api_key": "sentinel-api-key-abc6666",
+    "password": "sentinel-password-abc7777",
+    "secret": "sentinel-secret-abc8888",
+    "authorization": "sentinel-authorization-abc9999",
+}
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
 
 def _credential_keys(value: object) -> set[str]:
-    """Recursively collect any credential-named keys present in a parsed YAML value."""
-    credential_names = set(_CREDENTIAL_FIELDS)
+    """Recursively collect credential-named keys from a parsed YAML value.
+
+    Uses is_credential_field_name from the storage layer so the scanner stays in lockstep
+    with what the storage layer treats as a credential (including names ending in "token" or
+    containing "secret", beyond the five names listed in the signal spec §14).
+    """
     if isinstance(value, dict):
-        keys = {str(key).casefold() for key in value}
-        return (keys & credential_names).union(
-            *(_credential_keys(child) for child in value.values())
-        )
+        cred = {str(k) for k in value if is_credential_field_name(str(k))}
+        return cred.union(*(_credential_keys(child) for child in value.values()))
     if isinstance(value, list):
         return set().union(*(_credential_keys(child) for child in value))
     return set()
 
 
-def _create_connection_with_token(api_client: TestClient) -> str:
+def _create_connection_with_sentinels(api_client: TestClient) -> str:
+    """Create a source connection whose config contains every recognized credential-field shape.
+
+    The connection API accepts arbitrary config dicts.  Storing all credential-named fields
+    with distinct sentinel values lets the export tests assert that none of those values leak
+    into the exported YAML text.
+    """
     response = api_client.post(
         "/api/connections",
         json={
-            "name": "Jira token-bearing connection",
+            "name": "Jira sentinel-creds connection",
             "connector_name": "jira",
-            "config": {
-                "base_url": "https://jira.example.invalid",
-                "token": _REAL_TOKEN,
-            },
+            "config": _CRED_SENTINELS,
         },
     )
     assert response.status_code == 201
@@ -83,6 +110,14 @@ def _create_group(api_client: TestClient, name: str, signal_ids: list[str]) -> s
         "/api/signal-config-groups",
         json={"name": name, "signal_ids": signal_ids},
     ).json()["id"]
+
+
+def _assert_no_sentinel_values(text: str) -> None:
+    """Fail if any sentinel credential value appears anywhere in the export text."""
+    for field, sentinel in _CRED_SENTINELS.items():
+        assert sentinel not in text, (
+            f"Sentinel value for {field!r} ({sentinel!r}) must not appear in the export"
+        )
 
 
 _SIGNAL_BLOCK = """\
@@ -147,10 +182,10 @@ def _executable_value_pack(payload: str) -> str:
 def test_export_with_token_connection_private_backup_has_no_credential_keys(
     api_client: TestClient,
 ) -> None:
-    """Exporting a signal group while a source connection with a real token exists in the DB
-    produces YAML with zero credential-named keys and does not contain the token literal —
-    private_backup mode (REQ-NF-003)."""
-    _create_connection_with_token(api_client)
+    """Exporting a signal group while a source connection with multiple credential-shaped
+    fields exists in the DB produces YAML with zero credential-named keys and no sentinel
+    values — private_backup mode (REQ-NF-003)."""
+    _create_connection_with_sentinels(api_client)
     signal_id = _create_signal(api_client, "Token-check private signal")
     group_id = _create_group(api_client, "token-check-private", [signal_id])
 
@@ -160,7 +195,7 @@ def test_export_with_token_connection_private_backup_has_no_credential_keys(
     )
 
     assert response.status_code == 200
-    assert _REAL_TOKEN not in response.text, "Token literal must not appear in export text"
+    _assert_no_sentinel_values(response.text)
     parsed = yaml.safe_load(response.text)
     assert not _credential_keys(parsed), (
         f"Export contains credential-named keys: {_credential_keys(parsed)}"
@@ -170,10 +205,10 @@ def test_export_with_token_connection_private_backup_has_no_credential_keys(
 def test_export_with_token_connection_public_template_has_no_credential_keys(
     api_client: TestClient,
 ) -> None:
-    """Exporting a signal group while a source connection with a real token exists in the DB
-    produces YAML with zero credential-named keys and does not contain the token literal —
-    public_template mode (REQ-NF-003)."""
-    _create_connection_with_token(api_client)
+    """Exporting a signal group while a source connection with multiple credential-shaped
+    fields exists in the DB produces YAML with zero credential-named keys and no sentinel
+    values — public_template mode (REQ-NF-003)."""
+    _create_connection_with_sentinels(api_client)
     signal_id = _create_signal(api_client, "Token-check public signal")
     group_id = _create_group(api_client, "token-check-public", [signal_id])
 
@@ -183,7 +218,7 @@ def test_export_with_token_connection_public_template_has_no_credential_keys(
     )
 
     assert response.status_code == 200
-    assert _REAL_TOKEN not in response.text, "Token literal must not appear in export text"
+    _assert_no_sentinel_values(response.text)
     parsed = yaml.safe_load(response.text)
     assert not _credential_keys(parsed), (
         f"Export contains credential-named keys: {_credential_keys(parsed)}"
@@ -195,7 +230,7 @@ def test_export_carries_no_connectors_scopes_or_teams(api_client: TestClient) ->
 
     A pack is signals-only; scope and connector config live on the team, never in the pack.
     """
-    _create_connection_with_token(api_client)
+    _create_connection_with_sentinels(api_client)
     signal_id = _create_signal(api_client, "Structural purity signal")
     group_id = _create_group(api_client, "structural-purity-group", [signal_id])
 
@@ -221,7 +256,7 @@ def test_multi_group_export_has_no_credential_keys_and_no_forbidden_structure(
 
     Exercises the multi-group branch in export_signal_groups_pack.
     """
-    _create_connection_with_token(api_client)
+    _create_connection_with_sentinels(api_client)
     signal_id_a = _create_signal(api_client, "Multi-group signal A")
     signal_id_b = _create_signal(api_client, "Multi-group signal B")
     group_id_a = _create_group(api_client, "multi-export-group-a", [signal_id_a])
@@ -233,7 +268,7 @@ def test_multi_group_export_has_no_credential_keys_and_no_forbidden_structure(
     )
 
     assert response.status_code == 200
-    assert _REAL_TOKEN not in response.text, "Token literal must not appear in multi-group export"
+    _assert_no_sentinel_values(response.text)
     parsed = yaml.safe_load(response.text)
     assert not _credential_keys(parsed), (
         f"Multi-group export contains credential-named keys: {_credential_keys(parsed)}"
