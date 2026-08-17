@@ -122,11 +122,13 @@ def update_source_connection(
                     " while referenced as a team's code source"
                 )
     row.sqlmodel_update(values)
-    _write(session, row)
+    session.add(row)
 
     # When the connector type changes to a different source, the old source's cached data
     # is no longer reachable via any connection after this update.  Clear it when this was
     # the last (or only) connection of the old type — same last-of-source guard as delete.
+    # Both the row update and the cache cleanup commit together so either both succeed or
+    # both roll back (atomicity).
     if new_connector_name != old_connector_name:
         old_source = _CONNECTOR_TO_SOURCE.get(str(old_connector_name))
         if old_source is not None:
@@ -141,8 +143,9 @@ def update_source_connection(
             )
             if not sibling_of_old_exists:
                 delete_canonical_data_for_source(session, old_source)
-                session.commit()
 
+    session.commit()
+    session.refresh(row)
     return _masked_read(row)
 
 

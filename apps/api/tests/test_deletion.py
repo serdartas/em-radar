@@ -465,6 +465,49 @@ def test_patch_connector_name_preserves_old_source_data_when_sibling_remains(
 
 
 # ---------------------------------------------------------------------------
+# Atomicity: connector_name change + cache cleanup commit together
+# ---------------------------------------------------------------------------
+
+
+def test_patch_connector_name_type_change_is_atomic(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+    monkeypatch,
+) -> None:
+    """If cache cleanup raises after the connector_name PATCH, the whole update rolls back."""
+    import em_radar_api.repositories.source_connections as sc_repo
+
+    _seed_jira_data(session_factory)
+    conn_id = _create_jira_connection(api_client)
+
+    def _boom(session, source) -> None:  # noqa: ANN001
+        raise RuntimeError("simulated cleanup failure")
+
+    monkeypatch.setattr(sc_repo, "delete_canonical_data_for_source", _boom)
+
+    # Disable exception re-raise so we can inspect the 500 response without the TestClient
+    # propagating the RuntimeError.
+    from fastapi.testclient import TestClient as _TC
+
+    non_raising_client = _TC(api_client.app, raise_server_exceptions=False)
+    resp = non_raising_client.patch(
+        f"/api/connections/{conn_id}", json={"connector_name": "gitlab"}
+    )
+    assert resp.status_code == 500
+
+    # connector_name must be rolled back — still "jira".
+    all_conns = api_client.get("/api/connections").json()
+    conn = next((c for c in all_conns if c["id"] == conn_id), None)
+    assert conn is not None, f"connection {conn_id} not found in {all_conns}"
+    assert conn["connector_name"] == "jira"
+
+    # Old-source cached rows must still be present.
+    with session_factory() as session:
+        assert session.exec(select(UserTable).where(UserTable.source == "jira")).first() is not None
+        assert session.exec(select(ProjectTable)).first() is not None
+
+
+# ---------------------------------------------------------------------------
 # Sprint label is preserved in report export after cache deletion
 # ---------------------------------------------------------------------------
 
