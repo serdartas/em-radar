@@ -298,6 +298,8 @@ def _jira_canned_handler(request: httpx.Request) -> httpx.Response:
     """Route canned Jira API responses by path so every real connector endpoint is served.
 
     Endpoints covered:
+    - GET /rest/api/2/myself                         — test_connection (current user)
+    - GET /rest/api/2/mypermissions                  — test_connection (permission check)
     - GET /rest/api/2/project                        — list_projects
     - GET /rest/agile/1.0/board                      — list_boards
     - GET /rest/agile/1.0/board/{id}/sprint          — list_sprints
@@ -308,6 +310,13 @@ def _jira_canned_handler(request: httpx.Request) -> httpx.Response:
     """
     path = request.url.path.rstrip("/")
 
+    if path == "/rest/api/2/myself":
+        return httpx.Response(200, json={"displayName": "Canned Jira User", "accountId": "u1"})
+    if path == "/rest/api/2/mypermissions":
+        return httpx.Response(
+            200,
+            json={"permissions": {"BROWSE_PROJECTS": {"havePermission": True}}},
+        )
     if path == "/rest/api/2/project":
         return httpx.Response(200, json=[_CANNED_JI_PROJECT])
     if path == "/rest/api/2/status":
@@ -377,6 +386,8 @@ def _gitlab_canned_handler(request: httpx.Request) -> httpx.Response:
     """Route canned GitLab API responses by path so every real connector endpoint is served.
 
     Endpoints covered:
+    - GET /api/v4/user                                           — test_connection (current user)
+    - GET /api/v4/personal_access_tokens/self                    — test_connection (token info)
     - GET /api/v4/projects                                       — list_repositories
     - GET /api/v4/projects/{id}/merge_requests                   — fetch_mergerequests list
     - GET /api/v4/projects/{id}/merge_requests/{iid}             — diff-stats detail
@@ -387,6 +398,10 @@ def _gitlab_canned_handler(request: httpx.Request) -> httpx.Response:
     """
     path = request.url.path.rstrip("/")
 
+    if path == "/api/v4/user":
+        return httpx.Response(200, json={"name": "Canned GitLab User", "username": "canned"})
+    if path == "/api/v4/personal_access_tokens/self":
+        return httpx.Response(200, json={"scopes": ["read_api", "read_repository"]})
     if path == "/api/v4/projects":
         return httpx.Response(200, json=[_CANNED_GL_REPO], headers={"X-Next-Page": ""})
     # Sub-resource suffixes are checked before the bare /merge_requests suffix so that
@@ -672,13 +687,14 @@ def test_real_connectors_only_contact_their_source_host(
     with pytest.raises(AssertionError, match="unexpected host"):
         asyncio.run(_wrong_host_attempt())
 
-    # Exercise the real JiraConnector: all five methods the report path drives.
+    # Exercise the real JiraConnector: test_connection + all five report-path methods.
     # Mirrors reports.py order: list_projects → list_boards → list_sprints →
     # fetch_workitems → fetch_transitions.
     async def _run_jira() -> tuple[
-        list[object], list[object], list[object], list[object], list[object]
+        object, list[object], list[object], list[object], list[object], list[object]
     ]:
         connector = JiraConnector({"base_url": jira_base, "token": "fake-token-1234567890"})
+        conn_result = await connector.test_connection()
         projects = await connector.list_projects()
         boards = await connector.list_boards(projects[0].external_id)
         sprints = await connector.list_sprints(boards[0].external_id)
@@ -700,13 +716,14 @@ def test_real_connectors_only_contact_their_source_host(
             )
         ]
         await connector.close()
-        return projects, boards, sprints, workitems, transitions
+        return conn_result, projects, boards, sprints, workitems, transitions
 
-    jira_projects, jira_boards, jira_sprints, jira_items, jira_transitions = asyncio.run(
+    jira_conn, jira_projects, jira_boards, jira_sprints, jira_items, jira_transitions = asyncio.run(
         _run_jira()
     )
-    # All five real Jira methods executed under the allow-list transport.
+    # test_connection + all five real Jira methods executed under the allow-list transport.
     # Any request to a host other than jira.test.invalid would have raised AssertionError.
+    assert jira_conn.ok, f"Jira test_connection failed: {jira_conn!r}"
     assert len(jira_projects) == 1, f"expected 1 project, got {jira_projects!r}"
     assert len(jira_boards) == 1, f"expected 1 board, got {jira_boards!r}"
     assert len(jira_sprints) == 1, f"expected 1 sprint, got {jira_sprints!r}"
@@ -715,10 +732,12 @@ def test_real_connectors_only_contact_their_source_host(
     # fetch_transitions executed (it called /status and /issue/{id}/changelog) without raising.
     assert isinstance(jira_transitions, list)
 
-    # Exercise the real GitLabConnector: list_repositories, fetch_mergerequests, fetch_reviews.
+    # Exercise the real GitLabConnector: test_connection + list_repositories,
+    # fetch_mergerequests, fetch_reviews.
     # Mirrors the sequence in apps/api/src/em_radar_api/routers/reports.py (lines 730-739).
-    async def _run_gitlab() -> tuple[list[object], list[object], list[object]]:
+    async def _run_gitlab() -> tuple[object, list[object], list[object], list[object]]:
         connector = GitLabConnector({"base_url": gitlab_base, "token": "fake-token-1234567890"})
+        conn_result = await connector.test_connection()
         repos = await connector.list_repositories()
         # Use the fetched repo external_ids so the scope matches the canned data.
         mr_scope = MergeRequestScope(
@@ -734,11 +753,12 @@ def test_real_connectors_only_contact_their_source_host(
         # fetch_reviews exercises: global MR endpoint, /notes, /reviewers.
         reviews = [r async for r in connector.fetch_reviews([mr.external_id for mr in mrs])]
         await connector.close()
-        return repos, mrs, reviews
+        return conn_result, repos, mrs, reviews
 
-    gitlab_repos, gitlab_mrs, gitlab_reviews = asyncio.run(_run_gitlab())
-    # Canned handler returns representative data; all three methods must have run without
-    # contacting any host other than gitlab.test.invalid (the allow-list would have raised).
+    gitlab_conn, gitlab_repos, gitlab_mrs, gitlab_reviews = asyncio.run(_run_gitlab())
+    # Canned handler returns representative data; test_connection + all three fetch methods
+    # must have run without contacting any host other than gitlab.test.invalid.
+    assert gitlab_conn.ok, f"GitLab test_connection failed: {gitlab_conn!r}"
     assert len(gitlab_repos) == 1, f"expected 1 repo from canned handler, got {gitlab_repos!r}"
     assert len(gitlab_mrs) == 1, f"expected 1 MR from canned handler, got {gitlab_mrs!r}"
     # Notes and reviewers return [] so no Review objects are expected; what matters is that
