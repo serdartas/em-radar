@@ -107,8 +107,9 @@ def update_source_connection(
             values["config"] = {**row.config, **stored_config}
         else:
             values["config"] = stored_config
+    old_connector_name = row.connector_name
     new_connector_name = values.get("connector_name", row.connector_name)
-    if new_connector_name != row.connector_name:
+    if new_connector_name != old_connector_name:
         if _referencing_scopes(session, connection_id):
             raise SourceConnectionInUse(
                 "source connection connector_name cannot change while scopes reference it"
@@ -122,6 +123,26 @@ def update_source_connection(
                 )
     row.sqlmodel_update(values)
     _write(session, row)
+
+    # When the connector type changes to a different source, the old source's cached data
+    # is no longer reachable via any connection after this update.  Clear it when this was
+    # the last (or only) connection of the old type — same last-of-source guard as delete.
+    if new_connector_name != old_connector_name:
+        old_source = _CONNECTOR_TO_SOURCE.get(str(old_connector_name))
+        if old_source is not None:
+            sibling_of_old_exists = (
+                session.exec(
+                    select(SourceConnectionTable).where(
+                        SourceConnectionTable.connector_name == old_connector_name,
+                        SourceConnectionTable.id != connection_id,
+                    )
+                ).first()
+                is not None
+            )
+            if not sibling_of_old_exists:
+                delete_canonical_data_for_source(session, old_source)
+                session.commit()
+
     return _masked_read(row)
 
 

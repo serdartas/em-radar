@@ -415,3 +415,50 @@ def test_delete_report_history_per_team(
 
 def test_delete_report_history_unknown_team_is_noop(api_client: TestClient) -> None:
     assert api_client.delete(f"/api/reports?team_id={uuid4()}").status_code == 204
+
+
+# ---------------------------------------------------------------------------
+# Connector type change clears old cached data
+# ---------------------------------------------------------------------------
+
+
+def test_patch_connector_name_clears_old_source_canonical_data(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+) -> None:
+    """Changing a connection's connector_name removes cached data for the old source type."""
+    _seed_jira_data(session_factory)
+    conn_id = _create_jira_connection(api_client)
+
+    with session_factory() as session:
+        assert session.exec(select(UserTable).where(UserTable.source == "jira")).first() is not None
+
+    resp = api_client.patch(
+        f"/api/connections/{conn_id}",
+        json={"connector_name": "gitlab"},
+    )
+    assert resp.status_code == 200
+
+    with session_factory() as session:
+        assert session.exec(select(UserTable).where(UserTable.source == "jira")).first() is None
+        assert session.exec(select(ProjectTable)).first() is None
+
+
+def test_patch_connector_name_preserves_old_source_data_when_sibling_remains(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+) -> None:
+    """Old-source cache is kept when a sibling Jira connection still exists after the type change."""
+    _seed_jira_data(session_factory)
+    conn_id_1 = _create_jira_connection(api_client, "Jira A")
+    _create_jira_connection(api_client, "Jira B")
+
+    resp = api_client.patch(
+        f"/api/connections/{conn_id_1}",
+        json={"connector_name": "gitlab"},
+    )
+    assert resp.status_code == 200
+
+    with session_factory() as session:
+        assert session.exec(select(UserTable).where(UserTable.source == "jira")).first() is not None
+        assert session.exec(select(ProjectTable)).first() is not None
