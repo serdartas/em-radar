@@ -60,6 +60,92 @@ token to complete setup; a GitLab connection is optional and can be added later.
 7. EM Radar syncs the selected sources and runs the first report automatically.
 8. On the Dashboard, click **Open report** to see the full findings.
 
+### Zero to a real report (Jira + GitLab, under 15 minutes)
+
+The quickstart above outlines the wizard flow. This section adds the token-creation steps and
+the Markdown export, so you can follow the full path from a fresh install to a shareable report.
+
+**Step 1 - Create a read-only Jira API token**
+
+1. Sign in to https://id.atlassian.com/manage-profile/security/api-tokens with the Atlassian
+   account that can browse the Jira projects and boards you want to report on.
+2. Click **Create API token**, give it a label (for example `EM Radar`), and copy the token.
+3. Keep the token ready - you will paste it into EM Radar in step 4.
+
+For annotated screenshots, see the in-app guide at http://localhost:8080/help/jira (available
+once the app is running). Minimum token scopes are documented in the permissions reference
+(added separately).
+
+**Step 2 - Create a read-only GitLab personal access token**
+
+1. In GitLab, open your user menu and go to **Preferences** - **Access Tokens** (or
+   **Edit profile** - **Access Tokens** on older releases).
+2. Click **Add new token**, give it a name (for example `EM Radar`), set an optional expiry,
+   and tick only the `read_api` scope. That is the only scope EM Radar needs.
+3. Click **Create personal access token** and copy the token.
+
+Minimum token scopes are documented in the permissions reference (added separately).
+
+**Step 3 - Start the app and open the wizard**
+
+```bash
+docker compose -f deploy/docker/docker-compose.yml up
+```
+
+Open http://localhost:8080. If no teams exist the setup wizard starts automatically. Click
+**Get started**.
+
+**Step 4 - Add the Jira connection**
+
+On the **Connect your ticketing source (Jira)** step:
+
+1. **Connection name** - a display label for this instance (for example `Acme Jira`).
+2. **Base Url** - `https://your-org.atlassian.net` for Jira Cloud, or your self-hosted address.
+3. **Auth Email** - the Atlassian account email that owns the token (Jira Cloud only; leave
+   blank for Jira Server / Data Center, which authenticates with the token alone).
+4. **Token** - paste your API token here.
+5. Click **Test connection**. On success click **Add connection**, then **Continue**.
+
+**Step 5 - Add the GitLab connection**
+
+On the **Connect your code source (GitLab)** step:
+
+1. **Connection name** - a display label for this instance (for example `Acme GitLab`).
+2. **Base Url** - `https://gitlab.com` for GitLab SaaS, or your self-hosted address.
+3. **Token** - paste your `read_api` personal access token.
+4. Click **Test connection**, then **Add connection**, then **Continue**.
+
+To add GitLab later, click **Skip for now**.
+
+**Step 6 - Create a team**
+
+Type the name of the team you manage (for example `Payments`) and click **Create team**.
+
+**Step 7 - Attach sources**
+
+Under **Task-board source**: choose a **Ticketing connection**, pick a **Project** and a
+**Board** from the searchable dropdowns, confirm or adjust the detected working mode and
+sprint length, and click **Save board source**.
+
+Under **Code source**: choose your GitLab connection from the dropdown. The selection saves
+automatically - no extra click needed.
+
+**Step 8 - Finish setup**
+
+Click **Finish setup**. EM Radar syncs the selected sources and runs the first report for
+each team that has at least one source attached. You land on the Dashboard automatically.
+
+**Step 9 - Open the report**
+
+On the Dashboard, each team card shows severity counts and the top three risks. Click **Open
+report** to see the full sectioned findings.
+
+**Step 10 - Export to Markdown**
+
+On the Report Results page, use the **Download .md** button (top-right area) to save the
+report as a Markdown file, or click **Copy to clipboard** to paste it into a document, Slack
+message, or sprint notes.
+
 By default the container binds only to `127.0.0.1:8080`, so the app is not reachable from
 other machines on your network. To opt into LAN access, choose one of the options below -
 only do this on a trusted network, as EM Radar has no authentication in the current release.
