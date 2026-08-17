@@ -450,7 +450,13 @@ async def _run_team_report(
         preserve_sprint_links=board_meta is not None and board_meta.sprints_unavailable,
     )
     persisted_window = _persisted_window(window, identity.identity_map)
-    session.add(EvaluationWindowTable(**persisted_window.model_dump()))
+    # Snapshot the sprint name so retained reports stay readable after the cache is cleared.
+    sprint_label: str | None = None
+    if window.sprint_id is not None and board_meta is not None:
+        sprint_obj = next((s for s in board_meta.sprints if s.id == window.sprint_id), None)
+        if sprint_obj is not None:
+            sprint_label = sprint_obj.name
+    session.add(EvaluationWindowTable(**persisted_window.model_dump(), sprint_label=sprint_label))
     session.commit()
 
     ctx = EvaluationContext(now=started_at, window=window, team=team)
@@ -844,18 +850,22 @@ async def export_report_markdown_endpoint(
 
     window = session.get(EvaluationWindowTable, report.evaluation_window_id)
     team = session.get(TeamProfileTable, window.team_profile_id) if window is not None else None
-    sprint = (
-        session.get(SprintTable, window.sprint_id)
-        if window is not None and window.sprint_id is not None
-        else None
-    )
+    # Prefer the stored sprint_label snapshot (survives cache deletion); fall back to a live
+    # DB lookup for older rows written before the sprint_label column existed.
+    sprint_label: str | None = None
+    if window is not None:
+        if window.sprint_label is not None:
+            sprint_label = window.sprint_label
+        elif window.sprint_id is not None:
+            sprint_row = session.get(SprintTable, window.sprint_id)
+            sprint_label = sprint_row.name if sprint_row is not None else None
 
     markdown = build_report_markdown(
         report,
         get_findings(session, report_id),
         window,
         team,
-        sprint.name if sprint is not None else None,
+        sprint_label,
     )
     return Response(
         content=markdown,

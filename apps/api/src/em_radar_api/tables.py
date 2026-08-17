@@ -135,6 +135,7 @@ class EvaluationWindowTable(EvaluationWindow, table=True):
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     sprint_id: UUID | None = Field(default=None, foreign_key="sprint.id")
+    sprint_label: str | None = Field(default=None)
     team_profile_id: UUID = Field(foreign_key="team_profile.id")
 
 

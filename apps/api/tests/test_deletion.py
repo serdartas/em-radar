@@ -462,3 +462,87 @@ def test_patch_connector_name_preserves_old_source_data_when_sibling_remains(
     with session_factory() as session:
         assert session.exec(select(UserTable).where(UserTable.source == "jira")).first() is not None
         assert session.exec(select(ProjectTable)).first() is not None
+
+
+# ---------------------------------------------------------------------------
+# Sprint label is preserved in report export after cache deletion
+# ---------------------------------------------------------------------------
+
+
+def _create_sprint_report(
+    session_factory: sessionmaker[Session],
+    team_id: UUID,
+    sprint_id: UUID,
+    sprint_label: str,
+) -> UUID:
+    """Insert a minimal sprint-window report with a stored sprint_label snapshot."""
+    from em_radar_core.models import ReportStatus, WindowType
+
+    window = EvaluationWindowTable(
+        id=uuid4(),
+        window_type=WindowType.SPRINT,
+        team_profile_id=team_id,
+        sprint_id=sprint_id,
+        sprint_label=sprint_label,
+    )
+    report = ReportTable(
+        id=uuid4(),
+        evaluation_window_id=window.id,
+        status=ReportStatus.SUCCEEDED,
+        started_at=datetime(2026, 7, 1, tzinfo=UTC).replace(tzinfo=None),
+        findings_count_by_severity={},
+        signal_pack_snapshot={},
+    )
+    with session_factory() as session:
+        session.add(window)
+        session.add(report)
+        session.commit()
+    return report.id
+
+
+def test_sprint_label_preserved_in_export_after_cache_deletion(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+) -> None:
+    """Cached-data deletion must not degrade retained sprint reports (flows §8).
+
+    The EvaluationWindowTable.sprint_label snapshot keeps the sprint name readable even
+    after sprint_id is nulled (FK integrity) when the last Jira connection is deleted.
+    """
+    _seed_jira_data(session_factory)
+    conn_id = _create_jira_connection(api_client)
+    scope_id = _create_scope(api_client, conn_id)
+    team_id = UUID(_create_team(api_client, conn_id, scope_id))
+
+    # Find the persisted sprint so we can reference it in the window row.
+    with session_factory() as session:
+        sprint_row = session.exec(select(SprintTable)).first()
+        assert sprint_row is not None
+        sprint_db_id = sprint_row.id
+        sprint_name = sprint_row.name
+
+    report_id = _create_sprint_report(session_factory, team_id, sprint_db_id, sprint_name)
+
+    # Baseline: export works before deletion and contains the sprint label.
+    pre_resp = api_client.get(f"/api/reports/{report_id}/export.md")
+    assert pre_resp.status_code == 200
+    assert sprint_name in pre_resp.text
+
+    # Delete the last Jira connection (force=true because a team references it).
+    # Clears the sprint cache and nulls sprint_id on the evaluation window.
+    assert api_client.delete(f"/api/connections/{conn_id}?force=true").status_code == 204
+
+    with session_factory() as session:
+        assert session.exec(select(SprintTable)).first() is None
+        window_row = session.exec(
+            select(EvaluationWindowTable).where(EvaluationWindowTable.team_profile_id == team_id)
+        ).first()
+        assert window_row is not None
+        assert window_row.sprint_id is None  # FK nulled
+        assert window_row.sprint_label == sprint_name  # snapshot preserved
+
+    # Export must still show the sprint label — NOT "Sprint unknown".
+    post_resp = api_client.get(f"/api/reports/{report_id}/export.md")
+    assert post_resp.status_code == 200
+    assert sprint_name in post_resp.text
+    assert "Sprint unknown" not in post_resp.text
