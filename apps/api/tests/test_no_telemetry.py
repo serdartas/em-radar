@@ -209,19 +209,22 @@ class _SourceOnlyTransport(httpx.AsyncBaseTransport):
 
 
 def _make_source_only_factory(
+    allowed_host: str,
     handler: Callable[[httpx.Request], httpx.Response],
 ) -> Callable[..., httpx.AsyncClient]:
-    """Return a create_redacting_async_client replacement that only allows the source host.
+    """Return a create_redacting_async_client replacement pinned to a single allowed host.
 
-    The allowed host is derived from the base_url kwarg the connector passes through, so
-    the factory adapts automatically to whichever URL the connector was configured with.
+    The allowed host is supplied explicitly (derived from the connector's configured
+    base_url at call-site), not from the per-invocation base_url kwarg.  This means a
+    connector that opens a second httpx client to any other host (e.g. a telemetry
+    endpoint) is rejected — the allow-list cannot be side-stepped by passing a different
+    base_url to create_redacting_async_client.
     """
 
     def factory(**kwargs: object) -> httpx.AsyncClient:
         kwargs.pop("client_factory", None)
         kwargs.pop("sensitive_values", None)
         kwargs.pop("transport", None)
-        allowed_host = urlparse(str(kwargs.get("base_url", ""))).hostname or ""
         return httpx.AsyncClient(
             transport=_SourceOnlyTransport(allowed_host, handler),
             **kwargs,  # type: ignore[arg-type]
@@ -804,18 +807,20 @@ def test_real_connectors_only_contact_their_source_host(
     The wrong-host rejection is explicitly verified so the allow-list itself is proven
     active (making the fetch-method assertions non-vacuous).
     """
-    # Override the autouse blocker with allow-list factories for each real connector.
+    jira_base = "https://jira.test.invalid"
+    gitlab_base = "https://gitlab.test.invalid"
+
+    # Override the autouse blocker with allow-list factories pinned to each connector's
+    # configured source host.  The host is derived here (not inside the factory) so that
+    # a connector opening a second client to any other URL is rejected.
     monkeypatch.setattr(
         "em_radar_connector_jira.connector.create_redacting_async_client",
-        _make_source_only_factory(_jira_canned_handler),
+        _make_source_only_factory(urlparse(jira_base).hostname or "", _jira_canned_handler),
     )
     monkeypatch.setattr(
         "em_radar_connector_gitlab.connector.create_redacting_async_client",
-        _make_source_only_factory(_gitlab_canned_handler),
+        _make_source_only_factory(urlparse(gitlab_base).hostname or "", _gitlab_canned_handler),
     )
-
-    jira_base = "https://jira.test.invalid"
-    gitlab_base = "https://gitlab.test.invalid"
 
     # Prove the wrong-host rejection is active before exercising the connectors.
     async def _wrong_host_attempt() -> None:
