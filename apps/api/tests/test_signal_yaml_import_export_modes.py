@@ -19,7 +19,6 @@ def _create_signal(api_client: TestClient, name: str) -> str:
                 ],
             },
             "report_settings": {"severity": "warning", "category": "flow"},
-            "enabled": True,
             "origin": "user_created",
         },
     ).json()["id"]
@@ -148,11 +147,13 @@ def test_public_template_export_scrubs_org_specific_condition_values(
     assert _ORG_SPECIFIC_LABEL not in public_text
     # The field/operator structure is preserved so the template stays usable.
     assert "labels" in public_text
-    assert "enabled: false" in public_text
+    assert "enabled" not in public_text
 
     apply = api_client.post(
         "/api/signal-pack/import/apply",
         json={"raw_yaml": public_text, "mode": "additive", "conflict": "keep_both"},
     )
 
-    assert apply.status_code == 200
+    # Public template imports with scrubbed values are rejected — fill in values before importing.
+    assert apply.status_code == 422
+    assert "missing values" in apply.json()["detail"]["message"]

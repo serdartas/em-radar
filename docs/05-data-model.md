@@ -314,14 +314,12 @@ A persisted runnable signal or template-derived signal. It is structured data, n
 | `entity_type` | string | no | Canonical entity type. In MVP, `issue` is work tracking and `merge_request` is code repository. |
 | `expression` | JSON | no | Rule expression tree from the signal YAML spec. |
 | `report_settings` | JSON | no | Severity, category, and optional message template. |
-| `enabled` | boolean | no | Disabled signals are stored but not evaluated. |
 | `origin` | enum | no | `system_template`, `user_created`, or `imported`. |
 | `template_key` | string | yes | Built-in or imported template key when applicable. |
-| `version` | integer | no | Incremented on edit for audit/debugging. |
 | `created_at` | timestamp | no | |
 | `updated_at` | timestamp | no | |
 
-A `SignalDefinition` carries the rule and its configuration (params, severity, enabled state), but
+A `SignalDefinition` carries the rule and its configuration (params, severity), but
 never a connection, project, board, or repository selection. In MVP it evaluates exactly one
 signal entity type in either the work-tracking or code-repository domain. The team supplies the
 compatible source data at report time — see §5.12D and

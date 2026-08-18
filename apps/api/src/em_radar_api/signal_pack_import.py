@@ -41,11 +41,6 @@ from em_radar_config import (
 ConflictMode = Literal["skip", "overwrite", "keep_both", "cancel"]
 
 
-class BoolChange(BaseModel):
-    before: bool
-    after: bool
-
-
 class SeverityChange(BaseModel):
     before: str
     after: str
@@ -58,7 +53,6 @@ class ParamsChange(BaseModel):
 
 class SignalImportDiff(BaseModel):
     signal_id: str
-    enabled: BoolChange | None = None
     severity: SeverityChange | None = None
     params: ParamsChange | None = None
 
@@ -112,6 +106,7 @@ def apply_signal_pack_import(
             "Pack contains duplicate names within a single pack: "
             + ", ".join(f"{n!r}" for n in duplicate_names)
         )
+    _reject_incomplete_signals(result.pack)
     try:
         _import_definition_pack(session, result.pack, conflict)
         session.add(SignalPackHistory(pack_name=result.pack.metadata.name, raw_yaml=raw_yaml))
@@ -236,10 +231,31 @@ def _definition_from_signal(signal: SignalEntry) -> SignalDefinitionCreate:
         entity_type=signal.entity_type or "issue",
         expression=signal.expression or {"type": "group", "operator": "all", "conditions": []},
         report_settings=signal.report_settings or {"severity": "warning", "category": "imported"},
-        enabled=signal.enabled,
         origin=signal.origin or "imported",
         template_key=signal.template_key,
     )
+
+
+def _reject_incomplete_signals(pack: SignalPack) -> None:
+    for signal in pack.spec.signals:
+        if signal.expression and _expression_has_missing_values(signal.expression):
+            name = _signal_source_name(signal)
+            raise PackValidationError(
+                f"Signal {name!r} has conditions with missing values. "
+                "Fill in all condition values before importing."
+            )
+
+
+def _expression_has_missing_values(expression: object) -> bool:
+    if not isinstance(expression, dict):
+        return False
+    if expression.get("type") == "group":
+        return any(_expression_has_missing_values(c) for c in expression.get("conditions") or [])
+    operator = expression.get("operator", "")
+    if operator in {"is_empty", "is_not_empty"}:
+        return False
+    value = expression.get("value")
+    return "value" not in expression or value is None or value == ""
 
 
 def _find_duplicates(names: list[str]) -> list[str]:

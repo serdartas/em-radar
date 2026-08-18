@@ -216,7 +216,7 @@ def _validate_pack(pack: SignalPack, context: PackValidationContext) -> None:
             signal.entity_type or "issue",
             context.signal_schemas,
             path=f"spec.signals.{index}.expression",
-            allow_missing_values=not signal.enabled,
+            allow_missing_values=pack.spec.export_type == "public_template",
         )
 
     signal_names = {signal.name for signal in pack.spec.signals if signal.name is not None}

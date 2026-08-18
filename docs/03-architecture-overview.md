@@ -513,7 +513,7 @@ It is the core of EM Radar.
 
 The signal engine is responsible for:
 
-* loading a team's enabled signals (the union across its attached signal config groups)
+* loading a team's signals (the union across its attached signal config groups)
 * evaluating them against the team's board scope
 * evaluating structured rule expressions
 * validating field/operator availability against connector capability schemas

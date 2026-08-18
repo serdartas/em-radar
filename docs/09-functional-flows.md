@@ -284,7 +284,7 @@ further clicks.
 3. **Normalize, persist, resolve identity.** Normalized entities are upserted by
    `(source, external_id)` to stable internal IDs, and cross-entity links (assignee, parent,
    sprint, MR↔WorkItem) are resolved ([data model §2, §7](./05-data-model.md#2-design-principles)).
-4. **Evaluate the team's signals** — the union of enabled signals across the team's attached signal
+4. **Evaluate the team's signals** — the union of signals across the team's attached signal
    config groups, against the team's sources (its board scope and/or its code connection) — and
    persist a `Report` per team with `findings_count_by_severity`. Signals whose source is not attached
    are **skipped with a note** (window-/capability-gating, §10).
@@ -319,7 +319,7 @@ sequenceDiagram
         J-->>N: WorkItems
         G-->>N: MergeRequests
         N->>DB: upsert by (source, external_id), resolve FKs
-        R->>E: evaluate enabled signals (window)
+        R->>E: evaluate signals (window)
         E->>DB: persist Report + findings
     end
     R-->>D: show latest report per team

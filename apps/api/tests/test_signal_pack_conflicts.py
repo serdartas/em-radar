@@ -13,7 +13,6 @@ def _create_signal(api_client: TestClient, name: str, label: str) -> str:
                 "conditions": [{"field": "labels", "operator": "contains", "value": label}],
             },
             "report_settings": {"severity": "warning", "category": "flow"},
-            "enabled": True,
             "origin": "user_created",
         },
     ).json()["id"]

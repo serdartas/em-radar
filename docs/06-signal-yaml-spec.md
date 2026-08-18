@@ -36,7 +36,7 @@ connectors provide access, teams own the board scope, and a pack is just the rul
 - **Signal Config Group.** The in-app entity a pack maps to: a reusable bundle of signals, attached to any number of teams. See [data model §5.12C](./05-data-model.md#512c-signalconfiggroup).
 - **Template.** A pre-authored signal definition shipped with the application (the default pack). A template seeds a signal in a group; it is configuration, not executable code, and carries no privileged behavior — a user can recreate the same signal from scratch. Templates are catalogued in §12.
 - **Signal.** A named, structured rule expression over one signal entity type, carrying its own
-  configuration (params, severity, enabled state). In MVP, `issue` belongs to the work-tracking
+  configuration (params, severity). In MVP, `issue` belongs to the work-tracking
   domain — the **task-board source** — and `merge_request` belongs to the code-repository domain —
   the **code source**. These entity types line up 1:1 with the two team sources of the same names
   ([data model §5.12](./05-data-model.md#512-teamprofile)). A signal selects neither a connection nor
@@ -84,7 +84,6 @@ spec:
       report_settings:
         severity: warning
         category: flow
-      enabled: true
       origin: system_template
       template_key: stale-in-progress-work-item
 ```
@@ -195,7 +194,7 @@ The default pack's signals ship as **templates**: pre-written signal definitions
 template is configuration, not executable code, and has no privileged evaluation path — the engine
 runs it exactly as it runs a user-authored signal, so any template can be recreated from scratch in
 the builder. Users may add a template to a group as-is, duplicate it into an editable signal
-(`origin: user_created`), disable it, or restore the shipped default. A template carries no scope —
+(`origin: user_created`), or restore the shipped default. A template carries no scope —
 it is added to a group, and scope is resolved from the team later.
 
 ## 9. Signal Definitions
@@ -222,7 +221,6 @@ to which a group is attached.
   report_settings:
     severity: warning
     category: flow
-  enabled: true
   origin: system_template
   template_key: stale-in-progress-work-item
 ```
@@ -237,7 +235,6 @@ to which a group is attached.
 | `entity_type` | string | yes | Exactly one signal entity type in MVP: `issue` (work tracking) or `merge_request` (code repository). |
 | `expression` | object | yes | Rule expression. See §10. |
 | `report_settings` | object | yes | Severity, category, and optional message template. |
-| `enabled` | boolean | yes | Disabled signals are persisted but not evaluated. |
 | `origin` | enum | yes | `system_template`, `user_created`, or `imported`. |
 | `template_key` | string | no | Source template key when instantiated from a template. |
 
@@ -485,7 +482,6 @@ spec:
       report_settings:
         severity: warning
         category: flow
-      enabled: true
       origin: system_template
       template_key: mergerequest-waiting-too-long
 ```
@@ -515,7 +511,6 @@ spec:
       report_settings:
         severity: critical
         category: flow
-      enabled: true
       origin: user_created
     - id: sig-platform-stale
       name: Platform stale in-progress work
@@ -533,42 +528,12 @@ spec:
       report_settings:
         severity: warning
         category: flow
-      enabled: true
       origin: user_created
 ```
 
 On import this becomes a group `platform-team-pack` with two signals, ready to attach to any team.
 
-### 17.3 Disabled imported signal
-
-```yaml
-apiVersion: emradar.dev/v1
-kind: SignalPack
-metadata:
-  name: partial-import
-  version: 0.1.0
-  description: Example of a signal imported disabled (kept off until reviewed).
-spec:
-  export_type: private_backup
-  signals:
-    - id: sig-disabled
-      name: Imported stale work signal
-      entity_type: issue
-      expression:
-        type: group
-        operator: all
-        conditions:
-          - field: status_category
-            operator: is
-            value: In Progress
-      report_settings:
-        severity: warning
-        category: flow
-      enabled: false
-      origin: imported
-```
-
-### 17.4 Multiple groups sharing a signal
+### 17.3 Multiple groups sharing a signal
 
 ```yaml
 apiVersion: emradar.dev/v1
@@ -595,7 +560,6 @@ spec:
       report_settings:
         severity: warning
         category: flow
-      enabled: true
       origin: user_created
   groups:
     - name: scrum-health

@@ -98,7 +98,6 @@ def _create_sprint_field_group(api_client: TestClient) -> str:
                 "conditions": [{"field": "sprint_day", "operator": "is_after", "value": 1}],
             },
             "report_settings": {"severity": "warning", "category": "flow"},
-            "enabled": True,
             "origin": "user_created",
         },
     ).json()

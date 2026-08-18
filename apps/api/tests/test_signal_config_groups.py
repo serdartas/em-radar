@@ -31,7 +31,6 @@ def _signal_payload(name: str = "Stale issue") -> dict[str, object]:
             "conditions": [{"field": "status_category", "operator": "is", "value": "in_progress"}],
         },
         "report_settings": {"severity": "warning", "category": "flow"},
-        "enabled": True,
         "origin": "user_created",
     }
 

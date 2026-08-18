@@ -173,7 +173,7 @@ def evaluate_signal_definition(
     schema: SignalCapabilitySchema,
     scopes: list[ScopeDescriptor],
 ) -> list[SignalFinding]:
-    if not definition.enabled or not scopes:
+    if not scopes:
         return []
 
     if check_window_gate(definition, ctx) is not None:
@@ -443,7 +443,7 @@ def _evaluate_without_window_gate(
     scopes: list[ScopeDescriptor],
 ) -> list[SignalFinding]:
     """Like evaluate_signal_definition but skips check_window_gate — used by preview."""
-    if not definition.enabled or not scopes:
+    if not scopes:
         return []
 
     for scope in scopes:

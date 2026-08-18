@@ -34,9 +34,7 @@ class SignalDefinition(SQLModel):
     entity_type: str
     expression: JsonValue = Field(sa_type=JSON)
     report_settings: ReportSettings = Field(sa_type=JSON)
-    enabled: bool = True
     origin: SignalOrigin
     template_key: str | None = None
-    version: int = 1
     created_at: datetime
     updated_at: datetime
