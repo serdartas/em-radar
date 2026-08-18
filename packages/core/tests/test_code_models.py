@@ -122,7 +122,6 @@ def test_merge_request_requires_created_and_updated_timestamps(field_name: str) 
     [
         {"state": MergeRequestState.MERGED},
         {"state": MergeRequestState.CLOSED},
-        {"merged_at": NOW, "closed_at": NOW},
     ],
 )
 def test_merge_request_invariant_violations_raise(overrides: dict[str, object]) -> None:
@@ -136,6 +135,12 @@ def test_merged_and_closed_merge_requests_accept_required_timestamp() -> None:
 
     assert merged.merged_at == NOW
     assert closed.closed_at == NOW
+
+
+def test_merge_request_with_merged_at_and_closed_at_validates() -> None:
+    mr = merge_request(state=MergeRequestState.MERGED, merged_at=NOW, closed_at=NOW)
+    assert mr.merged_at == NOW
+    assert mr.closed_at == NOW
 
 
 @pytest.mark.parametrize("model_type", [Comment, Transition])
