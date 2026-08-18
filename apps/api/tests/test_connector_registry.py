@@ -47,7 +47,7 @@ class ConfiguredConnector:
         return SignalCapabilitySchema(
             connector_type="configured",
             entity_types=("issue",),
-            scope_types=("project",),
+            scope_types=(),
             fields=(),
         )
 
