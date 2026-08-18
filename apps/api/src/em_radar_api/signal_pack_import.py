@@ -254,7 +254,8 @@ def _expression_has_missing_values(expression: object) -> bool:
     operator = expression.get("operator", "")
     if operator in {"is_empty", "is_not_empty"}:
         return False
-    return "value" not in expression
+    value = expression.get("value")
+    return "value" not in expression or value is None or value == ""
 
 
 def _find_duplicates(names: list[str]) -> list[str]:
