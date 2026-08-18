@@ -356,24 +356,49 @@ def is_credential_field_name(field_name: str) -> bool:
     )
 
 
+def _is_mask_sentinel(key: str, incoming: object, stored: object) -> bool:
+    """Return True when incoming is a mask sentinel for an existing stored secret.
+
+    Covers two cases:
+    - A credential-named key (e.g. "token") whose incoming value starts with "****".
+    - Any key whose stored value is a SECRET_MARKER dict (created via SecretStr) and the
+      incoming value is a mask sentinel — the key name may not be credential-shaped.
+    """
+    if not (isinstance(incoming, str) and incoming.startswith("****")):
+        return False
+    if is_credential_field_name(key):
+        return True
+    return isinstance(stored, dict) and set(stored) == {SECRET_MARKER}
+
+
 def _deep_merge_config(
     incoming: Mapping[str, object], stored: dict[str, object]
 ) -> dict[str, object]:
     """Recursively merge an incoming PATCH config with the stored config.
 
-    For each key in incoming:
-    - If both values are dicts: recurse so nested stored secrets are preserved.
-    - If the key is a credential field and the value is a mask sentinel: keep the stored value.
-    - Otherwise: the incoming value wins (genuinely updated field).
-
-    Keys present only in stored are retained.
+    - Dicts are merged recursively.
+    - Lists are merged positionally (element-level for dict items, verbatim otherwise).
+    - Mask sentinels for credential or SecretStr-marked fields are dropped.
+    - Keys only in stored are retained; incoming non-sentinel values win.
     """
     result: dict[str, object] = dict(stored)
     for key, value in incoming.items():
         stored_value = stored.get(key)
         if isinstance(value, dict) and isinstance(stored_value, dict):
             result[key] = _deep_merge_config(value, cast(dict[str, object], stored_value))
-        elif is_credential_field_name(key) and isinstance(value, str) and value.startswith("****"):
+        elif (
+            isinstance(value, list)
+            and isinstance(stored_value, list)
+            and len(value) == len(stored_value)
+        ):
+            merged: list[object] = []
+            for item, sv in zip(value, stored_value):
+                if isinstance(item, dict) and isinstance(sv, dict):
+                    merged.append(_deep_merge_config(item, cast(dict[str, object], sv)))
+                else:
+                    merged.append(item)
+            result[key] = merged
+        elif _is_mask_sentinel(key, value, stored_value):
             pass  # mask sentinel — preserve existing stored secret
         else:
             result[key] = value
@@ -390,6 +415,13 @@ def _drop_masked_credentials(config: Mapping[str, object]) -> dict[str, object]:
     for key, value in config.items():
         if isinstance(value, dict):
             result[key] = _drop_masked_credentials(value)
+        elif isinstance(value, list):
+            result[key] = [
+                _drop_masked_credentials(cast(Mapping[str, object], item))
+                if isinstance(item, dict)
+                else item
+                for item in value
+            ]
         elif is_credential_field_name(key) and isinstance(value, str) and value.startswith("****"):
             pass  # mask sentinel — omit from the replacement config
         else:

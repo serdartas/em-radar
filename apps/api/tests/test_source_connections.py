@@ -182,6 +182,96 @@ def test_nested_masked_credential_is_preserved_on_patch() -> None:
         )
 
 
+def test_secret_str_masked_under_non_credential_key_name_is_preserved_on_patch() -> None:
+    """AUDIT-4: SecretStr-originated values masked via SECRET_MARKER must be preserved on patch.
+
+    When a key is not credential-shaped (e.g. 'credential_from_type'), but the stored value
+    is a SECRET_MARKER-wrapped secret, a round-tripped mask sentinel must not overwrite it.
+    """
+    from pydantic import SecretStr
+
+    engine = create_db_engine(":memory:")
+    SQLModel.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        created = create_source_connection(
+            session,
+            SourceConnectionCreate(
+                name="SecretStr test",
+                connector_name=ConnectorName.JIRA,
+                config={
+                    "base_url": "https://jira.example.com",
+                    "credential_from_type": SecretStr("real-secret-xyz"),
+                },
+            ),
+        )
+        read_back = get_source_connection(session, created.id)
+        assert read_back is not None
+        masked_val = read_back.config["credential_from_type"]
+        assert isinstance(masked_val, str) and masked_val.startswith("****")
+
+        updated = update_source_connection(
+            session,
+            created.id,
+            SourceConnectionUpdate(
+                config={"base_url": "https://new.example.com", "credential_from_type": masked_val}
+            ),
+        )
+        assert updated is not None
+        assert updated.config["base_url"] == "https://new.example.com"
+
+        stored = session.exec(select(SourceConnectionTable)).one()
+        from em_radar_api.repositories.source_connections import SECRET_MARKER
+
+        assert stored.config["credential_from_type"] == {SECRET_MARKER: "real-secret-xyz"}, (
+            "SecretStr-originated secret must not be overwritten by the round-tripped mask"
+        )
+
+
+def test_list_nested_masked_credential_is_preserved_on_patch() -> None:
+    """AUDIT-4: credentials inside a list of objects are preserved when round-tripped masked."""
+    engine = create_db_engine(":memory:")
+    SQLModel.metadata.create_all(engine)
+
+    real_token = "list-item-real-token-wxyz"
+
+    with Session(engine) as session:
+        created = create_source_connection(
+            session,
+            SourceConnectionCreate(
+                name="List cred test",
+                connector_name=ConnectorName.JIRA,
+                config={
+                    "base_url": "https://jira.example.com",
+                    "accounts": [{"name": "main", "token": real_token}],
+                },
+            ),
+        )
+        read_back = get_source_connection(session, created.id)
+        assert read_back is not None
+        accounts_read = read_back.config["accounts"]
+        assert isinstance(accounts_read, list)
+        masked_token = accounts_read[0]["token"]  # type: ignore[index]
+        assert isinstance(masked_token, str) and masked_token.startswith("****")
+
+        updated = update_source_connection(
+            session,
+            created.id,
+            SourceConnectionUpdate(
+                config={
+                    "base_url": "https://new.example.com",
+                    "accounts": [{"name": "main", "token": masked_token}],
+                }
+            ),
+        )
+        assert updated is not None
+
+        stored = session.exec(select(SourceConnectionTable)).one()
+        assert stored.config["accounts"][0]["token"] == real_token, (  # type: ignore[index]
+            "list-nested masked sentinel must not overwrite real stored secret"
+        )
+
+
 def test_source_connection_referenced_by_team_cannot_be_deleted() -> None:
     engine = create_db_engine(":memory:")
     SQLModel.metadata.create_all(engine)
