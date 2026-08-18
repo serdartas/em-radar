@@ -218,12 +218,12 @@ def upgrade() -> None:
         sa.Column("to_status", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
         sa.Column(
             "from_status_category",
-            sa.Enum("TODO", "IN_PROGRESS", "DONE", "BLOCKED", name="statuscategory"),
+            sa.Enum("TODO", "IN_PROGRESS", "DONE", name="statuscategory"),
             nullable=True,
         ),
         sa.Column(
             "to_status_category",
-            sa.Enum("TODO", "IN_PROGRESS", "DONE", "BLOCKED", name="statuscategory"),
+            sa.Enum("TODO", "IN_PROGRESS", "DONE", name="statuscategory"),
             nullable=False,
         ),
         sa.Column("actor_id", sa.Uuid(), nullable=True),
@@ -340,7 +340,7 @@ def upgrade() -> None:
         sa.Column("status", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
         sa.Column(
             "status_category",
-            sa.Enum("TODO", "IN_PROGRESS", "DONE", "BLOCKED", name="statuscategory"),
+            sa.Enum("TODO", "IN_PROGRESS", "DONE", name="statuscategory"),
             nullable=False,
         ),
         sa.Column("assignee_id", sa.Uuid(), nullable=True),
@@ -350,7 +350,6 @@ def upgrade() -> None:
         sa.Column("parent_id", sa.Uuid(), nullable=True),
         sa.Column("story_points", sa.Float(), nullable=True),
         sa.Column("acceptance_criteria", sqlmodel.sql.sqltypes.AutoString(), nullable=True),
-        sa.Column("is_blocked", sa.Boolean(), nullable=False),
         sa.Column("resolved_at", sa.DateTime(), nullable=True),
         sa.Column("due_date", sa.DateTime(), nullable=True),
         sa.Column("sprint_ids", sa.JSON(), nullable=False),

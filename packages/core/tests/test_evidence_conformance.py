@@ -251,19 +251,6 @@ def _stale_fixture():
     )
 
 
-def _blocked_fixture():
-    item = _workitem(
-        status_category=StatusCategory.BLOCKED, status="Blocked", updated_at=NOW - timedelta(days=5)
-    )
-    return (
-        SignalData(report_id=uuid4(), projects=(_project(),), workitems=(item,)),
-        _ctx(),
-        JiraConnector.describe_signal_schema(),
-        [_wi_scope()],
-        {"status_category", "age_since_updated"},
-    )
-
-
 def _no_ac_fixture():
     item = _workitem(item_type=WorkItemType.STORY, acceptance_criteria=None)
     return (
@@ -446,7 +433,6 @@ def _merged_no_approval_fixture():
 
 SIGNAL_FIXTURES = [
     ("stale-in-progress-work-item", _stale_fixture),
-    ("blocked-without-update", _blocked_fixture),
     ("story-without-acceptance-criteria", _no_ac_fixture),
     ("story-without-parent-epic", _no_epic_fixture),
     ("epic-too-broad", _epic_too_broad_fixture),

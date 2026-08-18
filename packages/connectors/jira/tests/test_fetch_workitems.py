@@ -119,9 +119,8 @@ def test_fetch_workitems_normalizes_fixture_issues(monkeypatch: pytest.MonkeyPat
         assert story.reporter_id is not None
 
         assert bug.type is WorkItemType.BUG
-        assert bug.status_category is StatusCategory.BLOCKED
-        assert bug.is_blocked is True
-        assert bug.resolved_at is None
+        assert bug.status_category is StatusCategory.DONE
+        assert bug.resolved_at is not None
         assert bug.parent_id == epic.id
         assert all(isinstance(workitem, WorkItem) for workitem in workitems)
 

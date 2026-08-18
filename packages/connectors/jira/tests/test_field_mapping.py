@@ -44,7 +44,6 @@ def test_fetch_workitems_applies_field_mapping(monkeypatch: pytest.MonkeyPatch) 
                 "token": "jira-token-1234",
                 "field_mapping": {
                     "story_points": "customfield_20000",
-                    "blocked_label": "impediment",
                 },
             }
         )
@@ -58,8 +57,7 @@ def test_fetch_workitems_applies_field_mapping(monkeypatch: pytest.MonkeyPatch) 
         workitem = workitems[0]
         assert workitem.story_points == 8
         assert workitem.acceptance_criteria == "- API returns 200\n- Audit event is recorded"
-        assert workitem.status_category is StatusCategory.BLOCKED
-        assert workitem.is_blocked is True
+        assert workitem.status_category is StatusCategory.IN_PROGRESS
 
     asyncio.run(run())
 
@@ -115,6 +113,15 @@ def test_fetch_workitems_reads_acceptance_criteria_custom_field(
     ]
 
 
+def test_field_mapping_config_has_no_blocked_fields() -> None:
+    from em_radar_connector_jira.connector import JiraFieldMappingConfig
+
+    schema = JiraFieldMappingConfig.model_json_schema()
+    properties = schema.get("properties", {})
+    assert "blocked_label" not in properties
+    assert "blocked_status" not in properties
+
+
 def test_field_mapping_config_has_no_epic_link_field() -> None:
     from em_radar_connector_jira.connector import JiraFieldMappingConfig
 
@@ -128,6 +135,58 @@ def test_field_mapping_config_rejects_unknown_keys() -> None:
 
     with pytest.raises(ValidationError):
         JiraFieldMappingConfig(story_pointz="customfield_10016")
+
+
+def test_blocked_label_yields_real_jira_status_category(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def run() -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={
+                    "startAt": 0,
+                    "maxResults": 50,
+                    "total": 1,
+                    "issues": [
+                        {
+                            "id": "10001",
+                            "key": "ENG-1",
+                            "self": "https://jira.example.com/rest/api/2/issue/10001",
+                            "fields": {
+                                "summary": "A blocked story",
+                                "description": None,
+                                "issuetype": {"name": "Story"},
+                                "status": {
+                                    "name": "In Progress",
+                                    "statusCategory": {"key": "indeterminate"},
+                                },
+                                "project": {"id": "10000", "key": "ENG"},
+                                "labels": ["blocked"],
+                                "components": [],
+                                "created": "2026-06-01T09:00:00.000+0200",
+                                "updated": "2026-06-02T09:00:00.000+0200",
+                                "resolutiondate": None,
+                                "duedate": None,
+                                "customfield_10020": [],
+                                "customfield_10016": None,
+                            },
+                        }
+                    ],
+                },
+            )
+
+        monkeypatch.setattr(jira_connector_module, "CLIENT_FACTORY", _client_factory_for(handler))
+        connector = JiraConnector(
+            {"base_url": "https://jira.example.com", "token": "jira-token-1234"}
+        )
+        workitems = await _collect(
+            connector.fetch_workitems(WorkItemScope(project_external_ids=["10000"]), _date_window())
+        )
+        await connector.close()
+
+        assert len(workitems) == 1
+        assert workitems[0].status_category is StatusCategory.IN_PROGRESS
+
+    asyncio.run(run())
 
 
 async def _collect(iterator: object) -> list[WorkItem]:

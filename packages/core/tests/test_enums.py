@@ -27,7 +27,7 @@ def values(enum_type: type) -> set[str]:
 def test_enum_member_sets_match_the_canonical_data_model() -> None:
     assert values(Source) == {"jira", "gitlab", "github", "linear", "demo"}
     assert values(WorkItemType) == {"epic", "story", "task", "bug", "subtask", "spike", "other"}
-    assert values(StatusCategory) == {"todo", "in_progress", "done", "blocked"}
+    assert values(StatusCategory) == {"todo", "in_progress", "done"}
     assert values(MergeRequestState) == {"open", "draft", "merged", "closed"}
     assert values(PipelineStatus) == {"success", "failed", "running", "canceled", "skipped", "none"}
     assert values(Severity) == {"info", "warning", "critical"}
