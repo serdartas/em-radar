@@ -171,7 +171,7 @@ class JiraConnector:
                     "Status Category",
                     "enum",
                     ("is", "is_not", "is_any_of", "is_none_of"),
-                    values=("todo", "in_progress", "done", "blocked"),
+                    values=("todo", "in_progress", "done"),
                 ),
                 SignalField(
                     "labels",
