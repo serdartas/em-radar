@@ -56,7 +56,6 @@ def update_signal_definition(
 
     values = update.model_dump(mode="json", exclude_unset=True)
     row.sqlmodel_update(values)
-    row.version += 1
     row.updated_at = datetime.now(UTC)
     _write(session, row, commit=commit)
     return SignalDefinitionRead.model_validate(row)

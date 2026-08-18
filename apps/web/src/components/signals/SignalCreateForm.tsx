@@ -107,7 +107,6 @@ export function SignalCreateForm({
         category,
         message_template: message.trim() || null,
       },
-      enabled: true,
       origin: "user_created",
       template_key: null,
     })

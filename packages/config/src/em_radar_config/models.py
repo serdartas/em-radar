@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, StrictBool
+from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 from em_radar_core.models import Severity, WorkItemType
 
@@ -30,7 +30,6 @@ class SignalEntry(PackModel):
     entity_type: str | None = None
     expression: dict[str, JsonValue] | None = None
     report_settings: dict[str, JsonValue] | None = None
-    enabled: StrictBool = True
     origin: str | None = None
     template_key: str | None = None
     severity: Severity | None = None

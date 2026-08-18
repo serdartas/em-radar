@@ -1039,11 +1039,9 @@ def _team_signal_pack_snapshot(
                 "name": definition.name,
                 "entity_type": definition.entity_type,
                 "category": definition.report_settings.category,
-                "enabled": definition.enabled,
                 "origin": definition.origin.value,
                 "template_key": definition.template_key,
                 "is_source_linking": is_source_linking_signal(definition),
-                "version": definition.version,
             }
             for definition in definitions
         ],
@@ -1094,7 +1092,7 @@ def _signal_definitions_for_team(
     return [
         _definition_from_row(rows_by_id[signal_id])
         for signal_id in ordered_ids
-        if signal_id in rows_by_id and rows_by_id[signal_id].enabled
+        if signal_id in rows_by_id
     ]
 
 
@@ -1106,10 +1104,8 @@ def _definition_from_row(row: SignalDefinitionTable) -> SignalDefinition:
         entity_type=row.entity_type,
         expression=row.expression,
         report_settings=row.report_settings,
-        enabled=row.enabled,
         origin=SignalOrigin(row.origin),
         template_key=row.template_key,
-        version=row.version,
         created_at=row.created_at,
         updated_at=row.updated_at,
     )

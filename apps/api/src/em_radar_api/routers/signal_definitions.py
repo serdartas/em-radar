@@ -121,7 +121,6 @@ def preview_signal_definition_route(
         entity_type=definition.entity_type,
         expression=definition.expression,
         report_settings=ReportSettings.model_validate(definition.report_settings),
-        enabled=definition.enabled,
         origin=SignalOrigin(definition.origin),
         template_key=definition.template_key,
         created_at=datetime.now(UTC),

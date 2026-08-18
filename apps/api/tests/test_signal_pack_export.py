@@ -25,7 +25,6 @@ def test_export_signal_group_produces_valid_declarative_pack(
                 ],
             },
             "report_settings": {"severity": "warning", "category": "flow"},
-            "enabled": True,
             "origin": "user_created",
         },
     ).json()["id"]
@@ -81,7 +80,6 @@ def test_export_has_no_credential_named_keys(
                 ],
             },
             "report_settings": {"severity": "info", "category": "flow"},
-            "enabled": True,
             "origin": "user_created",
         },
     ).json()["id"]

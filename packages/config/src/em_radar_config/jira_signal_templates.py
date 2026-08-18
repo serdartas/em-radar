@@ -189,10 +189,8 @@ def instantiate_jira_signal_template(
         entity_type=template.entity_type,
         expression=deepcopy(template.expression),
         report_settings=template.report_settings.model_copy(),
-        enabled=template.enabled_by_default,
         origin=SignalOrigin.SYSTEM_TEMPLATE,
         template_key=template.key,
-        version=1,
         created_at=datetime.now(UTC),
         updated_at=datetime.now(UTC),
     )

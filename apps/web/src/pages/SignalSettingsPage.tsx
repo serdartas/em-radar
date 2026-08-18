@@ -7,14 +7,12 @@ import { Link } from "react-router-dom"
 import { SignalCreateForm } from "@/components/signals/SignalCreateForm"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
-import { Switch } from "@/components/ui/switch"
 import { apiErrorMessage } from "@/lib/api"
 import { getConnectors, type SignalField } from "@/lib/connectors"
 import {
   createSignalDefinition,
   deleteSignalDefinition,
   listSignalDefinitions,
-  updateSignalDefinition,
   type SignalDefinition,
 } from "@/lib/signalDefinitions"
 
@@ -115,11 +113,6 @@ export function SignalSettingsPage() {
 
 function SignalList({ definitions }: { definitions: SignalDefinition[] }) {
   const queryClient = useQueryClient()
-  const toggleMutation = useMutation({
-    mutationFn: (definition: SignalDefinition) =>
-      updateSignalDefinition(definition.id, { enabled: !definition.enabled }),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["signal-definitions"] }),
-  })
   const deleteMutation = useMutation({
     mutationFn: deleteSignalDefinition,
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["signal-definitions"] }),
@@ -145,21 +138,8 @@ function SignalList({ definitions }: { definitions: SignalDefinition[] }) {
               <CardContent className="flex flex-wrap items-center justify-between gap-4 p-4">
                 <div>
                   <h3 className="font-semibold">{definition.name}</h3>
-                  <p className="mt-1 text-sm text-slate-600">version {definition.version}</p>
                 </div>
                 <div className="flex items-center gap-3">
-                  <Switch
-                    aria-label={`Enable ${definition.name}`}
-                    checked={definition.enabled}
-                    onCheckedChange={() => toggleMutation.mutate(definition)}
-                  />
-                  <Button
-                    onClick={() => toggleMutation.mutate(definition)}
-                    size="sm"
-                    variant="outline"
-                  >
-                    {definition.enabled ? "Disable" : "Enable"}
-                  </Button>
                   <Button
                     onClick={() => deleteMutation.mutate(definition.id)}
                     size="sm"

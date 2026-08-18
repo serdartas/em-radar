@@ -121,7 +121,6 @@ def _create_wi_signal(api_client: TestClient, name: str) -> str:
                 ],
             },
             "report_settings": {"severity": "warning", "category": "flow"},
-            "enabled": True,
             "origin": "user_created",
         },
     ).json()["id"]
@@ -139,7 +138,6 @@ def _create_mr_signal(api_client: TestClient, name: str) -> str:
                 "conditions": [{"field": "state", "operator": "is", "value": "open"}],
             },
             "report_settings": {"severity": "info", "category": "code"},
-            "enabled": True,
             "origin": "user_created",
         },
     ).json()["id"]
@@ -305,7 +303,6 @@ def test_kanban_run_adds_window_gate_skip_for_sprint_only_signal(
                 "conditions": [{"field": "sprint_count", "operator": "greater_than", "value": 1}],
             },
             "report_settings": {"severity": "warning", "category": "delivery"},
-            "enabled": True,
             "origin": "system_template",
         },
     ).json()["id"]

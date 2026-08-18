@@ -101,7 +101,6 @@ def _group_signal_entries(
                 entity_type=definition.entity_type,
                 expression=expression,
                 report_settings=definition.report_settings,
-                enabled=definition.enabled and not scrubbed,
                 origin=definition.origin.value,
                 template_key=definition.template_key,
             )

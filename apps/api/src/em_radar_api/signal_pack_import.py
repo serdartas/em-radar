@@ -41,11 +41,6 @@ from em_radar_config import (
 ConflictMode = Literal["skip", "overwrite", "keep_both", "cancel"]
 
 
-class BoolChange(BaseModel):
-    before: bool
-    after: bool
-
-
 class SeverityChange(BaseModel):
     before: str
     after: str
@@ -58,7 +53,6 @@ class ParamsChange(BaseModel):
 
 class SignalImportDiff(BaseModel):
     signal_id: str
-    enabled: BoolChange | None = None
     severity: SeverityChange | None = None
     params: ParamsChange | None = None
 
@@ -236,7 +230,6 @@ def _definition_from_signal(signal: SignalEntry) -> SignalDefinitionCreate:
         entity_type=signal.entity_type or "issue",
         expression=signal.expression or {"type": "group", "operator": "all", "conditions": []},
         report_settings=signal.report_settings or {"severity": "warning", "category": "imported"},
-        enabled=signal.enabled,
         origin=signal.origin or "imported",
         template_key=signal.template_key,
     )

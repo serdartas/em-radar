@@ -87,11 +87,10 @@ def test_default_group_references_all_signals() -> None:
         assert name in signal_names, f"Group references unknown signal name: {name!r}"
 
 
-def test_all_signals_are_enabled_and_system_template() -> None:
+def test_all_signals_are_system_template() -> None:
     pack = load_signal_pack(DEFAULT_PACK_PATH.read_text(encoding="utf-8")).pack
 
     for signal in pack.spec.signals:
-        assert signal.enabled is True, f"Signal {signal.name!r} must be enabled by default"
         assert signal.origin == "system_template", (
             f"Signal {signal.name!r} must have origin system_template"
         )

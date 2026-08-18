@@ -45,7 +45,6 @@ def test_templates_seed_once() -> None:
 def test_template_duplicates_into_runnable_definition() -> None:
     definition = instantiate_jira_signal_template("stale-in-progress-work-item")
 
-    assert definition.enabled is True
     assert definition.origin is SignalOrigin.SYSTEM_TEMPLATE
     assert definition.template_key == "stale-in-progress-work-item"
 

@@ -17,7 +17,7 @@ def _use_jira_connector(monkeypatch) -> None:
     )
 
 
-def _create_signal(api_client: TestClient, name: str, enabled: bool = True) -> str:
+def _create_signal(api_client: TestClient, name: str) -> str:
     return api_client.post(
         "/api/signal-definitions",
         json={
@@ -31,7 +31,6 @@ def _create_signal(api_client: TestClient, name: str, enabled: bool = True) -> s
                 ],
             },
             "report_settings": {"severity": "warning", "category": "flow"},
-            "enabled": enabled,
             "origin": "user_created",
         },
     ).json()["id"]
@@ -92,13 +91,13 @@ def test_signal_in_no_attached_group_does_not_run(api_client: TestClient, monkey
     assert ungrouped not in signal_ids
 
 
-def test_disabled_signal_in_group_is_not_evaluated(api_client: TestClient, monkeypatch) -> None:
+def test_all_group_attached_signals_are_evaluated(api_client: TestClient, monkeypatch) -> None:
     _use_jira_connector(monkeypatch)
     connection_id = _create_jira_connection(api_client)
     scope_id = _create_board_scope(api_client, connection_id, _BOARD_CAPABILITIES)
-    enabled = _create_signal(api_client, "Enabled")
-    disabled = _create_signal(api_client, "Disabled", enabled=False)
-    group = _create_group(api_client, "Group", [enabled, disabled])
+    signal_a = _create_signal(api_client, "Signal X")
+    signal_b = _create_signal(api_client, "Signal Y")
+    group = _create_group(api_client, "Group XY", [signal_a, signal_b])
     team_id = _create_jira_team(
         api_client, connection_id, scope_id, "scrum", sprint_length_days=14, group_ids=[group]
     )
@@ -108,8 +107,8 @@ def test_disabled_signal_in_group_is_not_evaluated(api_client: TestClient, monke
     )
 
     signal_ids = {finding["signal_id"] for finding in response.json()["findings"]}
-    assert enabled in signal_ids
-    assert disabled not in signal_ids
+    assert signal_a in signal_ids
+    assert signal_b in signal_ids
 
 
 def test_two_teams_sharing_a_group_both_evaluate_it(api_client: TestClient, monkeypatch) -> None:
