@@ -307,10 +307,8 @@ erDiagram
         string entity_type "issue|merge_request in MVP"
         json expression
         json report_settings
-        bool enabled
         enum origin "system_template|user_created|imported"
         string template_key
-        int version
         datetime created_at
         datetime updated_at
     }

@@ -527,7 +527,7 @@ Acceptance criteria:
 
 The default signal pack shall include the following task-board (work-item) signal definitions. These
 are declarative definitions seeded on first run, not engine-hardcoded checks; each can be edited,
-disabled, deleted, or recreated in the UI:
+deleted, or recreated in the UI:
 
 1. stale in-progress work item
 2. blocked item without recent update
@@ -551,7 +551,7 @@ Acceptance criteria:
 
 The default signal pack shall include the following code-source (merge-request) signal definitions.
 As with the task-board signals, these are declarative definitions seeded on first run, not
-engine-hardcoded checks; each can be edited, disabled, deleted, or recreated in the UI:
+engine-hardcoded checks; each can be edited, deleted, or recreated in the UI:
 
 1. merge request waiting too long
 2. merge request without linked work item
