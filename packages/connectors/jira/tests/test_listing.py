@@ -272,3 +272,80 @@ def test_list_sprints_maps_states_dates_goal_and_pages(
         assert all(sprint.board_id == sprints[0].board_id for sprint in sprints)
 
     asyncio.run(run())
+
+
+def test_get_board_resolves_directly_without_enumerating_projects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AUDIT-15: get_board must call rest/agile/1.0/board/{id} directly, not list all boards."""
+    seen_paths: list[str] = []
+
+    async def run() -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen_paths.append(request.url.path)
+            if request.url.path == "/rest/agile/1.0/board/42":
+                return httpx.Response(
+                    200,
+                    json={
+                        "id": "42",
+                        "name": "Platform Scrum",
+                        "type": "scrum",
+                        "location": {
+                            "projectId": "10000",
+                            "projectKey": "PLAT",
+                            "projectName": "Platform",
+                        },
+                    },
+                )
+            if request.url.path == "/rest/api/2/project/PLAT":
+                return httpx.Response(
+                    200,
+                    json={
+                        "id": "10000",
+                        "key": "PLAT",
+                        "name": "Platform",
+                        "self": "https://jira.example.com/rest/api/2/project/10000",
+                    },
+                )
+            raise AssertionError(f"unexpected path: {request.url.path}")
+
+        monkeypatch.setattr(jira_connector_module, "CLIENT_FACTORY", _client_factory_for(handler))
+        connector = JiraConnector({"base_url": "https://jira.example.com", "token": "tok"})
+        project, board = await connector.get_board("42")
+        await connector.close()
+
+        assert project is not None
+        assert project.external_id == "10000"
+        assert board is not None
+        assert board.external_id == "42"
+        assert board.name == "Platform Scrum"
+        assert board.type is BoardType.SCRUM
+
+    asyncio.run(run())
+
+    assert "/rest/agile/1.0/board/42" in seen_paths
+    assert "/rest/api/2/project/PLAT" in seen_paths
+    assert "/rest/api/2/project" not in seen_paths
+    assert "/rest/agile/1.0/board" not in seen_paths
+
+
+def test_get_board_returns_none_when_board_not_found(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AUDIT-15: get_board returns (None, None) gracefully on a 404 from the board endpoint."""
+
+    async def run() -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/rest/agile/1.0/board/999":
+                return httpx.Response(404)
+            raise AssertionError(f"unexpected path: {request.url.path}")
+
+        monkeypatch.setattr(jira_connector_module, "CLIENT_FACTORY", _client_factory_for(handler))
+        connector = JiraConnector({"base_url": "https://jira.example.com", "token": "tok"})
+        project, board = await connector.get_board("999")
+        await connector.close()
+
+        assert project is None
+        assert board is None
+
+    asyncio.run(run())

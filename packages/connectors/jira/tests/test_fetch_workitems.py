@@ -129,7 +129,7 @@ def test_fetch_workitems_normalizes_fixture_issues(monkeypatch: pytest.MonkeyPat
 
     assert seen_jql == [
         'project in ("10000") AND issuetype in ("Epic", "Story", "Bug") '
-        'AND updated < "2026-06-15 00:00"'
+        'AND updated >= "2026-06-01 00:00+0000" AND updated < "2026-06-15 00:00+0000"'
     ]
 
 
@@ -289,14 +289,13 @@ def test_fetch_workitems_falls_back_to_classic_search_when_jql_missing(
     assert seen_paths == ["/rest/api/2/search/jql", "/rest/api/2/search"]
 
 
-def test_fetch_workitems_date_range_jql_uses_exclusive_upper_bound(
+def test_fetch_workitems_date_range_jql_uses_half_open_window(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """DATE_RANGE windows must emit updated < end in the JQL (exclusive end, half-open [start, end)).
+    """DATE_RANGE windows must emit updated >= start AND updated < end (half-open [start, end)).
 
-    No lower bound is added — stale in-progress issues (e.g. updated 20+ days ago)
-    must not be excluded because signals like StaleInProgressSignal target them
-    intentionally.
+    Both bounds are emitted with an explicit +0000 UTC offset (AUDIT-6) so non-UTC
+    Jira accounts apply the correct window server-side.
     """
     seen_jql: list[str] = []
 
@@ -324,9 +323,9 @@ def test_fetch_workitems_date_range_jql_uses_exclusive_upper_bound(
     asyncio.run(run())
 
     assert len(seen_jql) == 1
-    assert "updated >= " not in seen_jql[0]
-    assert 'updated < "2026-06-15 00:00"' in seen_jql[0]
-    assert 'updated <= "2026-06-15 00:00"' not in seen_jql[0]
+    assert 'updated >= "2026-06-01 00:00+0000"' in seen_jql[0]
+    assert 'updated < "2026-06-15 00:00+0000"' in seen_jql[0]
+    assert 'updated <= "2026-06-15 00:00+0000"' not in seen_jql[0]
 
 
 def test_fetch_workitems_non_midnight_end_ceil_and_exact_postfilter(
@@ -397,9 +396,9 @@ def test_fetch_workitems_non_midnight_end_ceil_and_exact_postfilter(
 
     assert len(seen_jql) == 1
     # Ceiled boundary: 14:30:45 → 14:31
-    assert 'updated < "2026-06-15 14:31"' in seen_jql[0], f"unexpected JQL: {seen_jql[0]}"
+    assert 'updated < "2026-06-15 14:31+0000"' in seen_jql[0], f"unexpected JQL: {seen_jql[0]}"
     # Must NOT use the truncated (floor) boundary
-    assert 'updated < "2026-06-15 14:30"' not in seen_jql[0]
+    assert 'updated < "2026-06-15 14:30+0000"' not in seen_jql[0]
 
 
 def test_fetch_workitems_mid_stream_404_raises_without_restarting(
@@ -538,6 +537,149 @@ def test_fetch_workitems_wraps_http_errors(monkeypatch: pytest.MonkeyPatch) -> N
             )
 
         await connector.close()
+
+    asyncio.run(run())
+
+
+def test_date_range_jql_includes_explicit_utc_offset_and_start_predicate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AUDIT-6/13: date-range JQL must include +0000 offsets and an updated >= <start> clause."""
+    seen_jql: list[str] = []
+
+    async def run() -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen_jql.append(request.url.params["jql"])
+            return httpx.Response(200, json={"issues": []})
+
+        monkeypatch.setattr(jira_connector_module, "CLIENT_FACTORY", _client_factory_for(handler))
+        connector = JiraConnector({"base_url": "https://jira.example.com", "token": "tok"})
+        await _collect(
+            connector.fetch_workitems(
+                WorkItemScope(project_external_ids=["10000"]),
+                EvaluationWindow(
+                    window_type=WindowType.DATE_RANGE,
+                    start=datetime(2026, 6, 1, tzinfo=timezone.utc),
+                    end=datetime(2026, 6, 15, tzinfo=timezone.utc),
+                    team_profile_id=uuid4(),
+                ),
+            )
+        )
+        await connector.close()
+
+    asyncio.run(run())
+
+    assert len(seen_jql) == 1
+    assert 'updated >= "2026-06-01 00:00+0000"' in seen_jql[0]
+    assert 'updated < "2026-06-15 00:00+0000"' in seen_jql[0]
+
+
+def test_sprint_jql_includes_sprint_external_id_predicate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AUDIT-13: sprint window JQL must include sprint = <externalId> when scope provides it."""
+    seen_jql: list[str] = []
+    sprint_uuid = jira_connector_module._stable_id("sprint", "402")
+
+    async def run() -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen_jql.append(request.url.params["jql"])
+            return httpx.Response(
+                200,
+                json={
+                    "issues": [
+                        _issue(
+                            issue_id="10001",
+                            key="ENG-1",
+                            sprints=[{"id": 402, "state": "active", "name": "Sprint 24"}],
+                        )
+                    ]
+                },
+            )
+
+        monkeypatch.setattr(jira_connector_module, "CLIENT_FACTORY", _client_factory_for(handler))
+        connector = JiraConnector({"base_url": "https://jira.example.com", "token": "tok"})
+        workitems = await _collect(
+            connector.fetch_workitems(
+                WorkItemScope(
+                    project_external_ids=["10000"],
+                    sprint_external_id="402",
+                ),
+                _sprint_window(sprint_uuid),
+            )
+        )
+        await connector.close()
+        assert [w.key for w in workitems] == ["ENG-1"]
+
+    asyncio.run(run())
+
+    assert len(seen_jql) == 1
+    assert "sprint = 402" in seen_jql[0]
+
+
+def test_fetch_workitems_caches_inline_changelog_for_transitions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AUDIT-14: fetch_workitems must cache inline changelog so fetch_transitions needs no per-item GET."""
+    from em_radar_core.models import EntityType
+
+    seen_paths: list[str] = []
+
+    async def run() -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen_paths.append(request.url.path)
+            if request.url.path == "/rest/api/2/search/jql":
+                return httpx.Response(
+                    200,
+                    json={
+                        "issues": [
+                            {
+                                **_issue(issue_id="10001", key="ENG-1"),
+                                "changelog": {
+                                    "histories": [
+                                        {
+                                            "id": "101",
+                                            "created": "2026-06-01T09:00:00.000Z",
+                                            "author": {"accountId": "u1"},
+                                            "items": [
+                                                {
+                                                    "field": "status",
+                                                    "fieldtype": "jira",
+                                                    "from": None,
+                                                    "fromString": None,
+                                                    "to": "1",
+                                                    "toString": "To Do",
+                                                }
+                                            ],
+                                        }
+                                    ]
+                                },
+                            }
+                        ]
+                    },
+                )
+            if request.url.path == "/rest/api/2/status":
+                return httpx.Response(
+                    200, json=[{"id": "1", "name": "To Do", "statusCategory": {"key": "new"}}]
+                )
+            raise AssertionError(f"unexpected path: {request.url.path}")
+
+        monkeypatch.setattr(jira_connector_module, "CLIENT_FACTORY", _client_factory_for(handler))
+        connector = JiraConnector({"base_url": "https://jira.example.com", "token": "tok"})
+        workitems = await _collect(
+            connector.fetch_workitems(WorkItemScope(project_external_ids=["10000"]), _date_window())
+        )
+        transitions = []
+        async for t in connector.fetch_transitions(
+            EntityType.WORKITEM, [w.external_id for w in workitems]
+        ):
+            transitions.append(t)
+        await connector.close()
+
+        assert len(workitems) == 1
+        assert len(transitions) == 1
+        # search + status — no per-item issue GET or /changelog GET
+        assert not any("/issue/" in p for p in seen_paths)
 
     asyncio.run(run())
 

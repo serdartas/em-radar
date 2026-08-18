@@ -97,6 +97,7 @@ class WorkItemScope:
     project_external_ids: list[str]
     board_external_ids: list[str] = field(default_factory=list)
     workitem_types: list[WorkItemType] | None = None
+    sprint_external_id: str | None = None
 
 
 @dataclass
