@@ -154,4 +154,6 @@ def test_public_template_export_scrubs_org_specific_condition_values(
         json={"raw_yaml": public_text, "mode": "additive", "conflict": "keep_both"},
     )
 
-    assert apply.status_code == 200
+    # Public template imports with scrubbed values are rejected — fill in values before importing.
+    assert apply.status_code == 422
+    assert "missing values" in apply.json()["detail"]["message"]
