@@ -104,11 +104,12 @@ def update_source_connection(
     if "name" in values and _name_taken(session, values["name"], exclude_id=connection_id):
         raise SourceConnectionDuplicateName(f"a connection named '{values['name']}' already exists")
     if "config" in values:
-        stored_config = _stored_config(cast(Mapping[str, object], values["config"]))
+        incoming = cast(Mapping[str, object], values["config"])
+        processed = _stored_config(incoming)
         if values.get("connector_name", row.connector_name) == row.connector_name:
-            values["config"] = {**row.config, **stored_config}
+            values["config"] = _deep_merge_config(processed, dict(row.config))
         else:
-            values["config"] = stored_config
+            values["config"] = _drop_masked_credentials(processed)
     old_connector_name = row.connector_name
     new_connector_name = values.get("connector_name", row.connector_name)
     if new_connector_name != old_connector_name:
@@ -353,3 +354,58 @@ def is_credential_field_name(field_name: str) -> bool:
         or normalized.endswith("token")
         or "secret" in normalized
     )
+
+
+def _is_mask_sentinel(key: str, incoming: object, stored: object) -> bool:
+    """Return True when incoming is a mask sentinel for an existing stored secret.
+
+    Covers two cases:
+    - A credential-named key (e.g. "token") whose incoming value starts with "****".
+    - Any key whose stored value is a SECRET_MARKER dict (SecretStr-originated) and the
+      incoming value is a mask sentinel — key name may not be credential-shaped.
+    """
+    if not (isinstance(incoming, str) and incoming.startswith("****")):
+        return False
+    if is_credential_field_name(key):
+        return True
+    return isinstance(stored, dict) and set(stored) == {SECRET_MARKER}
+
+
+def _deep_merge_config(
+    incoming: Mapping[str, object], stored: dict[str, object]
+) -> dict[str, object]:
+    """Recursively merge an incoming PATCH config with the stored config.
+
+    - Dicts are merged recursively so nested stored secrets are preserved.
+    - Mask sentinels for credential or SecretStr-marked fields are dropped.
+    - Lists are NOT merged (passed through as-is) — no real connector config uses
+      credential-bearing lists, and positional matching is unreliable for reordered lists.
+    - Keys only in stored are retained; incoming non-sentinel values win.
+    """
+    result: dict[str, object] = dict(stored)
+    for key, value in incoming.items():
+        stored_value = stored.get(key)
+        if isinstance(value, dict) and isinstance(stored_value, dict):
+            result[key] = _deep_merge_config(value, cast(dict[str, object], stored_value))
+        elif _is_mask_sentinel(key, value, stored_value):
+            pass  # mask sentinel — preserve existing stored secret
+        else:
+            result[key] = value
+    return result
+
+
+def _drop_masked_credentials(config: Mapping[str, object]) -> dict[str, object]:
+    """Remove credential keys whose value is a mask sentinel (used on full-replacement writes).
+
+    Called when the connector type changes and the config is replaced wholesale. Non-credential
+    keys and genuine new values pass through unchanged. Lists are passed through as-is.
+    """
+    result: dict[str, object] = {}
+    for key, value in config.items():
+        if isinstance(value, dict):
+            result[key] = _drop_masked_credentials(value)
+        elif is_credential_field_name(key) and isinstance(value, str) and value.startswith("****"):
+            pass  # mask sentinel — omit from the replacement config
+        else:
+            result[key] = value
+    return result
