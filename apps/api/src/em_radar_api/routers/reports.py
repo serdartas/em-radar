@@ -682,12 +682,18 @@ async def _fetch_workitems_and_transitions(
     """Fetch workitems and transitions for an already-initialized board connector."""
     board_external_id = meta.board.external_id
     connector = meta.connector
+    sprint_external_id: str | None = None
+    if window.window_type is WindowType.SPRINT and window.sprint_id is not None:
+        matching_sprint = next((s for s in meta.sprints if s.id == window.sprint_id), None)
+        if matching_sprint is not None:
+            sprint_external_id = matching_sprint.external_id
     try:
         workitems = await _collect(
             connector.fetch_workitems(
                 WorkItemScope(
                     project_external_ids=[meta.project.external_id],
                     board_external_ids=[board_external_id],
+                    sprint_external_id=sprint_external_id,
                 ),
                 window,
             )
@@ -1056,6 +1062,8 @@ def _team_board_scope(session: Session, team_row: TeamProfileTable) -> ScopeDefi
 async def _find_jira_board(
     connector: WorkItemProvider, board_external_id: str
 ) -> tuple[Project, Board] | tuple[None, None]:
+    if isinstance(connector, JiraConnector):
+        return await connector.get_board(board_external_id)
     for project in await connector.list_projects():
         for board in await connector.list_boards(project.external_id):
             if board.external_id == board_external_id:
