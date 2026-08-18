@@ -104,12 +104,12 @@ def update_source_connection(
     if "name" in values and _name_taken(session, values["name"], exclude_id=connection_id):
         raise SourceConnectionDuplicateName(f"a connection named '{values['name']}' already exists")
     if "config" in values:
-        stored_config = _stored_config(cast(Mapping[str, object], values["config"]))
-        stored_config = _drop_masked_credentials(stored_config)
+        incoming = cast(Mapping[str, object], values["config"])
+        processed = _stored_config(incoming)
         if values.get("connector_name", row.connector_name) == row.connector_name:
-            values["config"] = {**row.config, **stored_config}
+            values["config"] = _deep_merge_config(processed, dict(row.config))
         else:
-            values["config"] = stored_config
+            values["config"] = _drop_masked_credentials(processed)
     old_connector_name = row.connector_name
     new_connector_name = values.get("connector_name", row.connector_name)
     if new_connector_name != old_connector_name:
@@ -356,19 +356,42 @@ def is_credential_field_name(field_name: str) -> bool:
     )
 
 
-def _drop_masked_credentials(config: dict[str, object]) -> dict[str, object]:
-    """Remove credential keys whose value is a mask sentinel so stored secrets are preserved.
+def _deep_merge_config(
+    incoming: Mapping[str, object], stored: dict[str, object]
+) -> dict[str, object]:
+    """Recursively merge an incoming PATCH config with the stored config.
 
-    When the UI round-trips a GET response, masked values (starting with "****") must not
-    overwrite the real secrets that are already stored. Non-credential keys and genuine new
-    values pass through unchanged.
+    For each key in incoming:
+    - If both values are dicts: recurse so nested stored secrets are preserved.
+    - If the key is a credential field and the value is a mask sentinel: keep the stored value.
+    - Otherwise: the incoming value wins (genuinely updated field).
+
+    Keys present only in stored are retained.
+    """
+    result: dict[str, object] = dict(stored)
+    for key, value in incoming.items():
+        stored_value = stored.get(key)
+        if isinstance(value, dict) and isinstance(stored_value, dict):
+            result[key] = _deep_merge_config(value, cast(dict[str, object], stored_value))
+        elif is_credential_field_name(key) and isinstance(value, str) and value.startswith("****"):
+            pass  # mask sentinel — preserve existing stored secret
+        else:
+            result[key] = value
+    return result
+
+
+def _drop_masked_credentials(config: Mapping[str, object]) -> dict[str, object]:
+    """Remove credential keys whose value is a mask sentinel (used on full-replacement writes).
+
+    Called when the connector type changes and the config is replaced wholesale. Non-credential
+    keys and genuine new values pass through unchanged.
     """
     result: dict[str, object] = {}
     for key, value in config.items():
         if isinstance(value, dict):
             result[key] = _drop_masked_credentials(value)
         elif is_credential_field_name(key) and isinstance(value, str) and value.startswith("****"):
-            pass  # mask sentinel — preserve existing stored secret
+            pass  # mask sentinel — omit from the replacement config
         else:
             result[key] = value
     return result

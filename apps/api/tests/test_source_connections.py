@@ -136,6 +136,52 @@ def test_masked_credential_is_not_written_back_on_patch() -> None:
         assert stored.config["token"] == new_token
 
 
+def test_nested_masked_credential_is_preserved_on_patch() -> None:
+    """AUDIT-4: deep-nested masked tokens must not lose the real stored secret on merge."""
+    engine = create_db_engine(":memory:")
+    SQLModel.metadata.create_all(engine)
+
+    real_nested_token = "nested-real-token-efgh"
+
+    with Session(engine) as session:
+        created = create_source_connection(
+            session,
+            SourceConnectionCreate(
+                name="Jira nested",
+                connector_name=ConnectorName.JIRA,
+                config={
+                    "base_url": "https://jira.example.com",
+                    "auth": {"token": real_nested_token, "user": "admin"},
+                },
+            ),
+        )
+        read_back = get_source_connection(session, created.id)
+        assert read_back is not None
+        masked_nested = read_back.config["auth"]
+        assert isinstance(masked_nested, dict)
+        masked_token_val = masked_nested["token"]
+        assert isinstance(masked_token_val, str) and masked_token_val.startswith("****")
+
+        # Round-trip the full config including the masked nested token
+        updated = update_source_connection(
+            session,
+            created.id,
+            SourceConnectionUpdate(
+                config={
+                    "base_url": "https://jira-updated.example.com",
+                    "auth": {"token": masked_token_val, "user": "admin"},
+                }
+            ),
+        )
+        assert updated is not None
+        assert updated.config["base_url"] == "https://jira-updated.example.com"
+
+        stored = session.exec(select(SourceConnectionTable)).one()
+        assert stored.config["auth"]["token"] == real_nested_token, (  # type: ignore[index]
+            "nested masked sentinel must not overwrite real stored nested secret"
+        )
+
+
 def test_source_connection_referenced_by_team_cannot_be_deleted() -> None:
     engine = create_db_engine(":memory:")
     SQLModel.metadata.create_all(engine)
