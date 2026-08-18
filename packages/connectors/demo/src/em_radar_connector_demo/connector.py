@@ -14,6 +14,7 @@ from em_radar_core.connectors import (
     ConnectionTestResult,
     ConnectorConfigError,
     MergeRequestScope,
+    SignalCapabilitySchema,
     WorkItemScope,
 )
 from em_radar_core.models import (
@@ -72,6 +73,16 @@ class DemoConnector:
             provides_mergerequests=True,
             provides_repositories=True,
             provides_transitions=True,
+        )
+
+    @classmethod
+    def describe_signal_schema(cls) -> SignalCapabilitySchema:
+        del cls
+        return SignalCapabilitySchema(
+            connector_type="demo",
+            entity_types=(),
+            scope_types=(),
+            fields=(),
         )
 
     async def close(self) -> None:

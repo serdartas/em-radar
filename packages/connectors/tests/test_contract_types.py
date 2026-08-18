@@ -18,6 +18,7 @@ from em_radar_core.connectors import (
     MergeRequestProvider,
     MergeRequestScope,
     ReviewProvider,
+    SignalCapabilitySchema,
     TransitionProvider,
     WorkItemProvider,
     WorkItemScope,
@@ -40,6 +41,16 @@ class StubConnector:
     def describe_capabilities(cls) -> Capabilities:
         del cls
         return Capabilities()
+
+    @classmethod
+    def describe_signal_schema(cls) -> SignalCapabilitySchema:
+        del cls
+        return SignalCapabilitySchema(
+            connector_type="stub",
+            entity_types=(),
+            scope_types=(),
+            fields=(),
+        )
 
     async def close(self) -> None:
         pass
