@@ -9,15 +9,7 @@ from typing import ClassVar, Literal, cast
 from uuid import UUID, uuid5
 
 import httpx
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    Field,
-    HttpUrl,
-    SecretStr,
-    ValidationError,
-    model_validator,
-)
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, SecretStr, ValidationError
 
 from em_radar_core.connectors import (
     Capabilities,
@@ -89,16 +81,6 @@ class JiraFieldMappingConfig(BaseModel):
     acceptance_criteria_heading: str | None = _ACCEPTANCE_CRITERIA_HEADING
     blocked_label: str | None = _BLOCKED_LABEL
     blocked_status: str | None = _BLOCKED_STATUS
-
-    @model_validator(mode="before")
-    @classmethod
-    def _strip_removed_keys(cls, data: object) -> object:
-        # Persisted configs may still carry the removed epic_link key. Strip it here
-        # so those configs load without error while retaining extra="forbid" for all
-        # other unknown keys.
-        if isinstance(data, dict):
-            data = {k: v for k, v in data.items() if k != "epic_link"}
-        return data
 
 
 class JiraConnectorConfig(BaseModel):

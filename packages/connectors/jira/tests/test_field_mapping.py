@@ -122,15 +122,7 @@ def test_field_mapping_config_has_no_epic_link_field() -> None:
     assert "epic_link" not in schema.get("properties", {})
 
 
-def test_field_mapping_config_accepts_legacy_epic_link_key() -> None:
-    from em_radar_connector_jira.connector import JiraFieldMappingConfig
-
-    cfg = JiraFieldMappingConfig(story_points="customfield_10016", epic_link="customfield_10014")
-    assert cfg.story_points == "customfield_10016"
-
-
-def test_field_mapping_config_rejects_other_unknown_keys() -> None:
-    import pytest
+def test_field_mapping_config_rejects_unknown_keys() -> None:
     from pydantic import ValidationError
     from em_radar_connector_jira.connector import JiraFieldMappingConfig
 

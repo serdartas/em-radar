@@ -85,11 +85,11 @@ JIRA_SIGNAL_TEMPLATES: tuple[JiraSignalTemplate, ...] = (
             "operator": "all",
             "conditions": [
                 {"field": "issue_type", "operator": "is", "value": "story"},
-                {"field": "parent_id", "operator": "is_empty", "value": None},
+                {"field": "has_epic_parent", "operator": "is", "value": False},
             ],
         },
         report_settings=ReportSettings(severity="info", category="planning"),
-        evidence_shape=("issue_type", "parent_id"),
+        evidence_shape=("issue_type", "has_epic_parent"),
     ),
     JiraSignalTemplate(
         key="epic-too-broad",
