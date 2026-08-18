@@ -90,16 +90,13 @@ def _group_signal_entries(
     scrub = export_type == "public_template"
     entries: list[SignalEntry] = []
     for definition in definitions:
-        expression = definition.expression
-        scrubbed = False
-        if scrub:
-            expression, scrubbed = _scrub_expression(definition.expression)
+        rules = _expression_to_rules(definition.expression, scrub=scrub)
         entries.append(
             SignalEntry(
                 name=definition.name,
                 description=definition.description,
                 entity_type=definition.entity_type,
-                expression=expression,
+                rules=rules,
                 report_settings=definition.report_settings,
                 origin=definition.origin.value,
                 template_key=definition.template_key,
@@ -108,29 +105,54 @@ def _group_signal_entries(
     return entries
 
 
-def _scrub_expression(expression: dict[str, object]) -> tuple[dict[str, object], bool]:
-    """Strip org-specific condition values, keeping the field/operator structure so a
-    public template documents what to configure without leaking tuned thresholds."""
-    if expression.get("type") == "group":
-        conditions = expression.get("conditions")
-        scrubbed_conditions = (
-            [
-                _scrub_expression(condition)
-                for condition in conditions
-                if isinstance(condition, dict)
-            ]
-            if isinstance(conditions, list)
-            else []
-        )
-        return {
-            **expression,
-            "conditions": [condition for condition, _ in scrubbed_conditions]
-            if isinstance(conditions, list)
-            else conditions,
-        }, any(scrubbed for _, scrubbed in scrubbed_conditions)
-    return {
-        key: value for key, value in expression.items() if key != "value"
-    }, "value" in expression
+def _expression_to_rules(
+    expression: dict[str, object],
+    *,
+    scrub: bool,
+) -> list[dict[str, object]]:
+    """Convert a grouped expression to a flat rules list with per-rule join values.
+
+    Raises ValueError for nested group conditions, which cannot be represented in the
+    flat rules format. The export is rejected rather than producing a broken backup.
+    """
+    if expression.get("type") != "group":
+        return [_condition_to_rule(expression, join=None, scrub=scrub)]
+    conditions = expression.get("conditions")
+    if not isinstance(conditions, list) or not conditions:
+        return []
+    group_operator = expression.get("operator", "all")
+    join = "or" if group_operator == "any" else "and"
+    for condition in conditions:
+        if isinstance(condition, dict) and condition.get("type") == "group":
+            raise ValueError(
+                "Signal expressions with nested groups cannot be exported in the flat rules "
+                "format. Recreate the signal using the rule builder before exporting."
+            )
+    rules: list[dict[str, object]] = []
+    for i, condition in enumerate(conditions):
+        if not isinstance(condition, dict):
+            continue
+        rule_join = join if i < len(conditions) - 1 and len(conditions) > 1 else None
+        rules.append(_condition_to_rule(condition, join=rule_join, scrub=scrub))
+    return rules
+
+
+def _condition_to_rule(
+    condition: dict[str, object],
+    *,
+    join: str | None,
+    scrub: bool,
+) -> dict[str, object]:
+    rule: dict[str, object] = {
+        "field": condition.get("field"),
+        "operator": condition.get("operator"),
+    }
+    if condition.get("operator") not in ("is_empty", "is_not_empty"):
+        if not scrub:
+            rule["value"] = condition.get("value")
+    if join is not None:
+        rule["join"] = join
+    return rule
 
 
 def _slugify(text: str) -> str | None:

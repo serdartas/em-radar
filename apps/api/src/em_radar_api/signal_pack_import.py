@@ -229,21 +229,53 @@ def _definition_from_signal(signal: SignalEntry) -> SignalDefinitionCreate:
         name=_signal_source_name(signal),
         description=signal.description,
         entity_type=signal.entity_type or "issue",
-        expression=signal.expression or {"type": "group", "operator": "all", "conditions": []},
+        expression=_rules_to_expression(signal.rules)
+        if signal.rules is not None
+        else (signal.expression or {"type": "group", "operator": "all", "conditions": []}),
         report_settings=signal.report_settings or {"severity": "warning", "category": "imported"},
         origin=signal.origin or "imported",
         template_key=signal.template_key,
     )
 
 
+def _rules_to_expression(rules: list[dict[str, object]]) -> dict[str, object]:
+    """Convert a flat rules list back to a grouped expression."""
+    if not rules:
+        return {"type": "group", "operator": "all", "conditions": []}
+    first_join = rules[0].get("join") if len(rules) > 1 else None
+    group_operator = "any" if first_join == "or" else "all"
+    conditions: list[dict[str, object]] = [
+        {k: v for k, v in rule.items() if k != "join"} for rule in rules
+    ]
+    return {"type": "group", "operator": group_operator, "conditions": conditions}
+
+
 def _reject_incomplete_signals(pack: SignalPack) -> None:
     for signal in pack.spec.signals:
-        if signal.expression and _expression_has_missing_values(signal.expression):
+        has_missing = (
+            _rules_have_missing_values(signal.rules)
+            if signal.rules is not None
+            else (
+                signal.expression is not None and _expression_has_missing_values(signal.expression)
+            )
+        )
+        if has_missing:
             name = _signal_source_name(signal)
             raise PackValidationError(
                 f"Signal {name!r} has conditions with missing values. "
                 "Fill in all condition values before importing."
             )
+
+
+def _rules_have_missing_values(rules: list[dict[str, object]]) -> bool:
+    for rule in rules:
+        operator = rule.get("operator", "")
+        if operator in {"is_empty", "is_not_empty"}:
+            continue
+        value = rule.get("value")
+        if "value" not in rule or value is None or value == "":
+            return True
+    return False
 
 
 def _expression_has_missing_values(expression: object) -> bool:

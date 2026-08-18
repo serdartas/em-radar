@@ -18,9 +18,20 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import SQLModel, select
 
-from em_radar_config import load_signal_pack
+from em_radar_config import SignalEntry, load_signal_pack
 
 DEFAULT_PACK_PATH = Path(__file__).parents[1] / "defaults" / "default-pack.yaml"
+
+
+def _resolve_expression(signal: SignalEntry) -> dict | None:
+    """Convert flat rules list to grouped expression, or return expression directly."""
+    if signal.rules is not None:
+        first_join = signal.rules[0].get("join") if len(signal.rules) > 1 else None
+        group_operator = "any" if first_join == "or" else "all"
+        conditions = [{k: v for k, v in rule.items() if k != "join"} for rule in signal.rules]
+        return {"type": "group", "operator": group_operator, "conditions": conditions}
+    return signal.expression
+
 
 EXPECTED_TEMPLATE_KEYS = {
     "stale-in-progress-work-item",
@@ -199,12 +210,13 @@ def test_seeded_definitions_export_to_valid_pack(_api_harness) -> None:
     exported_keys = {s.template_key for s in exported.pack.spec.signals}
     assert EXPECTED_TEMPLATE_KEYS.issubset(exported_keys)  # 8 WI keys must be present
 
-    # Verify expressions and report_settings survive the round-trip.
     source = load_signal_pack(DEFAULT_PACK_PATH.read_text(encoding="utf-8")).pack
     source_by_key = {s.template_key: s for s in source.spec.signals}
     for exported_signal in exported.pack.spec.signals:
         key = exported_signal.template_key
-        assert exported_signal.expression == source_by_key[key].expression, (
+        exported_expression = _resolve_expression(exported_signal)
+        source_expression = source_by_key[key].expression
+        assert exported_expression == source_expression, (
             f"Expression mismatch for {key!r} after round-trip"
         )
         assert exported_signal.report_settings == source_by_key[key].report_settings, (
