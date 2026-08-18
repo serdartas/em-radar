@@ -228,50 +228,6 @@ def test_secret_str_masked_under_non_credential_key_name_is_preserved_on_patch()
         )
 
 
-def test_list_nested_masked_credential_is_preserved_on_patch() -> None:
-    """AUDIT-4: credentials inside a list of objects are preserved when round-tripped masked."""
-    engine = create_db_engine(":memory:")
-    SQLModel.metadata.create_all(engine)
-
-    real_token = "list-item-real-token-wxyz"
-
-    with Session(engine) as session:
-        created = create_source_connection(
-            session,
-            SourceConnectionCreate(
-                name="List cred test",
-                connector_name=ConnectorName.JIRA,
-                config={
-                    "base_url": "https://jira.example.com",
-                    "accounts": [{"name": "main", "token": real_token}],
-                },
-            ),
-        )
-        read_back = get_source_connection(session, created.id)
-        assert read_back is not None
-        accounts_read = read_back.config["accounts"]
-        assert isinstance(accounts_read, list)
-        masked_token = accounts_read[0]["token"]  # type: ignore[index]
-        assert isinstance(masked_token, str) and masked_token.startswith("****")
-
-        updated = update_source_connection(
-            session,
-            created.id,
-            SourceConnectionUpdate(
-                config={
-                    "base_url": "https://new.example.com",
-                    "accounts": [{"name": "main", "token": masked_token}],
-                }
-            ),
-        )
-        assert updated is not None
-
-        stored = session.exec(select(SourceConnectionTable)).one()
-        assert stored.config["accounts"][0]["token"] == real_token, (  # type: ignore[index]
-            "list-nested masked sentinel must not overwrite real stored secret"
-        )
-
-
 def test_source_connection_referenced_by_team_cannot_be_deleted() -> None:
     engine = create_db_engine(":memory:")
     SQLModel.metadata.create_all(engine)
