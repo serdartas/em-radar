@@ -63,6 +63,19 @@ def test_export_then_import_reproduces_equivalent_group(api_client: TestClient) 
         f"/api/signal-pack/export?export_type=private_backup&group_ids={group_id}"
     ).text
 
+    # The exported YAML uses a flat rules list, not a nested expression.
+    pack = yaml.safe_load(exported)
+    signal_entry = pack["spec"]["signals"][0]
+    assert "rules" in signal_entry, "Export should emit flat rules list"
+    assert "expression" not in signal_entry, "Export must not emit nested expression"
+    rules = signal_entry["rules"]
+    assert isinstance(rules, list) and len(rules) == 1
+    rule = rules[0]
+    assert rule["field"] == "labels"
+    assert rule["operator"] == "contains"
+    assert rule["value"] == _ORG_SPECIFIC_LABEL
+    assert "join" not in rule, "Single-rule signals have no join"
+
     apply = api_client.post(
         "/api/signal-pack/import/apply",
         json={"raw_yaml": exported, "mode": "additive", "conflict": "keep_both"},
@@ -76,6 +89,7 @@ def test_export_then_import_reproduces_equivalent_group(api_client: TestClient) 
     definitions = {d["id"]: d for d in api_client.get("/api/signal-definitions").json()}
     imported_signal = definitions[imported_group["signal_ids"][0]]
     original_signal = definitions[signal_id]
+    # Re-import reconstructs the same grouped expression.
     assert imported_signal["expression"] == original_signal["expression"]
     assert imported_signal["report_settings"] == original_signal["report_settings"]
 

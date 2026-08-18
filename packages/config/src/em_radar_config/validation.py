@@ -207,12 +207,13 @@ def _validate_pack(pack: SignalPack, context: PackValidationContext) -> None:
     if pack.spec.export_type not in {"private_backup", "public_template"}:
         raise PackValidationError("spec.export_type must be private_backup or public_template")
     for index, signal in enumerate(pack.spec.signals):
-        if signal.expression is None:
+        expression = _resolve_signal_expression(signal)
+        if expression is None:
             raise PackValidationError(
                 f"spec.signals.{index} ({signal.name!r}) is missing an expression"
             )
         _validate_signal_expression(
-            signal.expression,
+            expression,
             signal.entity_type or "issue",
             context.signal_schemas,
             path=f"spec.signals.{index}.expression",
@@ -226,6 +227,16 @@ def _validate_pack(pack: SignalPack, context: PackValidationContext) -> None:
                 raise PackValidationError(
                     f"spec.groups.{group_index} references unknown signal {signal_name!r}"
                 )
+
+
+def _resolve_signal_expression(signal: SignalEntry) -> dict[str, object] | None:
+    """Convert rules list to expression dict, or return expression directly."""
+    if signal.rules is not None:
+        first_join = signal.rules[0].get("join") if len(signal.rules) > 1 else None
+        group_operator = "any" if first_join == "or" else "all"
+        conditions = [{k: v for k, v in rule.items() if k != "join"} for rule in signal.rules]
+        return {"type": "group", "operator": group_operator, "conditions": conditions}
+    return signal.expression
 
 
 def _validate_signal_expression(

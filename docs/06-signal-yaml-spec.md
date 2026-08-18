@@ -240,29 +240,34 @@ to which a group is attached.
 
 ## 10. Rule Expressions
 
-The MVP expression grammar is intentionally small:
+Signal YAML files (exported packs) use a flat `rules:` list. Each rule carries `field`, `operator`,
+and `value` (omitted for `is_empty` / `is_not_empty`). Every rule except the last carries a `join`
+key (`and` or `or`) that determines how the rules are combined; a single-rule signal has no `join`.
+The `join` is uniform across a signal (the engine does not support mixing AND and OR).
 
 ```yaml
-type: group
-operator: all # all | any
-conditions:
+# Single rule — no join
+rules:
   - field: status_category
     operator: is
-    value: In Progress
-  - type: group
-    operator: any
-    conditions:
-      - field: priority
-        operator: is
-        value: High
-      - field: labels
-        operator: contains
-        value: customer-impact
+    value: in_progress
+
+# Multiple rules — join on every rule except the last
+rules:
+  - field: status_category
+    operator: is
+    value: in_progress
+    join: and
+  - field: age_in_current_status
+    operator: greater_than
+    value:
+      amount: 7
+      unit: days
 ```
 
-Groups support `all` and `any`, with one level of nested grouping in MVP. Conditions use
-field/operator/value triples. Fields, operators, and values are validated against the selected
-connector capability schema.
+The importer derives the group operator from the uniform `join`: `and` → `all`, `or` → `any`.
+A single rule with no `join` defaults to `all`. Fields, operators, and values are validated against
+the selected connector capability schema.
 
 Time-based fields include created/updated/resolved dates, age since created/updated, and age in
 current status. Sprint-aware fields are evaluated only when the team's scope supplies sprint data

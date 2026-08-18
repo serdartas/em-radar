@@ -28,6 +28,7 @@ class SignalEntry(PackModel):
     name: str | None = None
     description: str | None = None
     entity_type: str | None = None
+    rules: list[dict[str, JsonValue]] | None = None
     expression: dict[str, JsonValue] | None = None
     report_settings: dict[str, JsonValue] | None = None
     origin: str | None = None
