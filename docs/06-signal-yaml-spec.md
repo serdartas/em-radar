@@ -272,6 +272,17 @@ current status. Sprint-aware fields are evaluated only when the team's scope sup
 (scrum boards); on date-range/kanban runs, sprint-only signals are skipped at report time
 ([data model §6.7](./05-data-model.md#67-workingmode)).
 
+The Jira connector exposes the following additional work-item fields in its capability schema:
+
+| Field | Type | Operators |
+|---|---|---|
+| `components` | `string_list` | `contains`, `does_not_contain`, `contains_any`, `does_not_contain_any` |
+| `story_points` | `number` | `gt`, `lt`, `gte`, `lte`, `eq`, `neq`, `is_empty`, `is_not_empty` |
+| `labels` | `string_list` | `contains`, `does_not_contain`, `contains_any`, `does_not_contain_any` |
+
+Negative label filtering (formerly `exclude_labels`) is expressed using `labels does_not_contain`
+or `labels does_not_contain_any`.
+
 ## 11. Field Mapping Block (Optional)
 
 Field mappings are technically separate from signals (they belong to connectors), but a pack may bundle a recommended mapping. The mapping block is **advisory**: the UI prompts the user to apply it; it is never silently merged.
@@ -304,8 +315,8 @@ way.
 - **Default severity:** `warning`
 - **Template defaults:**
   - `days_threshold` (integer, default `7`)
-  - `exclude_labels` (string[], default `[]`)
 - **Evidence:** `{ days_idle, last_updated_at, threshold }`
+- **Tip:** To exclude items by label, add a `labels does_not_contain` rule (e.g. `labels does_not_contain "wont-fix"`). To exclude by component, use `components does_not_contain`.
 
 ### 12.2 `blocked-without-update`
 - **Default severity:** `critical`

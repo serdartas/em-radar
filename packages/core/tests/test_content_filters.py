@@ -1,4 +1,4 @@
-"""Tests for content filter fields: workitem_types, labels, exclude_labels, branches."""
+"""Tests for content filter fields: workitem_types, labels, components, story_points, branches."""
 
 from uuid import uuid4
 
@@ -184,18 +184,18 @@ def test_labels_absent_evaluates_all() -> None:
 
 
 # ---------------------------------------------------------------------------
-# exclude_labels filter
+# labels negative filter (formerly exclude_labels)
 # ---------------------------------------------------------------------------
 
 
-def test_exclude_labels_removes_matching_items() -> None:
+def test_labels_does_not_contain_removes_matching_items() -> None:
     keep = workitem(key="RAD-1", labels=[])
     skip = workitem(key="RAD-2", labels=["wont-fix"])
     expression = {
         "type": "group",
         "operator": "all",
         "conditions": [
-            {"field": "exclude_labels", "operator": "does_not_contain", "value": "wont-fix"},
+            {"field": "labels", "operator": "does_not_contain", "value": "wont-fix"},
         ],
     }
 
@@ -210,7 +210,7 @@ def test_exclude_labels_removes_matching_items() -> None:
     assert [f.title for f in findings] == ["RAD-1 - RAD-1 title"]
 
 
-def test_exclude_labels_does_not_contain_any_removes_any_match() -> None:
+def test_labels_does_not_contain_any_removes_any_match() -> None:
     clean = workitem(key="RAD-1", labels=["active"])
     archived = workitem(key="RAD-2", labels=["archived"])
     excluded = workitem(key="RAD-3", labels=["wont-fix"])
@@ -219,7 +219,7 @@ def test_exclude_labels_does_not_contain_any_removes_any_match() -> None:
         "operator": "all",
         "conditions": [
             {
-                "field": "exclude_labels",
+                "field": "labels",
                 "operator": "does_not_contain_any",
                 "value": ["wont-fix", "archived"],
             },
@@ -399,8 +399,8 @@ def test_workitem_types_filter_composes_with_domain_condition() -> None:
     assert [f.title for f in findings] == ["RAD-1 - RAD-1 title"]
 
 
-def test_exclude_labels_composes_with_domain_condition() -> None:
-    """exclude_labels filter combined with a status condition narrows both simultaneously."""
+def test_labels_does_not_contain_composes_with_domain_condition() -> None:
+    """labels does_not_contain combined with a status condition narrows both simultaneously."""
     keep = workitem(key="RAD-1", labels=[])
     skip_label = workitem(key="RAD-2", labels=["wont-fix"])
     expression = {
@@ -408,7 +408,7 @@ def test_exclude_labels_composes_with_domain_condition() -> None:
         "operator": "all",
         "conditions": [
             {"field": "status_category", "operator": "is", "value": "in_progress"},
-            {"field": "exclude_labels", "operator": "does_not_contain", "value": "wont-fix"},
+            {"field": "labels", "operator": "does_not_contain", "value": "wont-fix"},
         ],
     }
 

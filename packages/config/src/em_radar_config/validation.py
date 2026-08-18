@@ -308,8 +308,11 @@ def _validate_condition_value(
     value: object, field_schema: SignalField, operator: str, path: str
 ) -> None:
     if operator in {"is_any_of", "is_none_of", "contains_any", "does_not_contain_any"}:
+        # A single non-empty string is accepted; _list() in the evaluator normalises it at runtime.
+        if isinstance(value, str) and value:
+            return
         if not isinstance(value, list) or not value:
-            raise PackValidationError(f"{path}.value must be a non-empty list")
+            raise PackValidationError(f"{path}.value must be a non-empty list or string")
         return
     if operator == "between":
         if isinstance(value, list):

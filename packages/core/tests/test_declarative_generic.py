@@ -14,9 +14,16 @@ from pathlib import Path
 from uuid import uuid4
 
 
-from em_radar_core.evaluation import ScopeDescriptor, evaluate_signal_definition
+from em_radar_core.evaluation import (
+    ExpressionValidationError,
+    ScopeDescriptor,
+    evaluate_signal_definition,
+)
 from em_radar_core.models import (
     EntityType,
+    ReportSettings,
+    SignalDefinition,
+    SignalOrigin,
     StatusCategory,
     WorkItemType,
 )
@@ -414,3 +421,192 @@ def test_declarative_py_has_no_template_key_equality_branches() -> None:
     # Matches 'template_key ==' or '== "template-name"' patterns (evaluation/evidence branching)
     matches = re.findall(r"template_key\s*==", source)
     assert matches == [], f"declarative.py still contains template_key == branches: {matches}"
+
+
+# ---------------------------------------------------------------------------
+# M8.2-01: components / story_points signal fields; exclude_labels removed
+# ---------------------------------------------------------------------------
+
+
+def _definition(expression: dict[str, object]) -> SignalDefinition:
+    return SignalDefinition(
+        name="Test signal",
+        entity_type="issue",
+        expression=expression,
+        report_settings=ReportSettings(severity="warning", category="flow"),
+        enabled=True,
+        origin=SignalOrigin.USER_CREATED,
+        created_at=NOW,
+        updated_at=NOW,
+    )
+
+
+def _project_scope() -> ScopeDescriptor:
+    return ScopeDescriptor(
+        connector_id="jira-1",
+        scope_id="scope-1",
+        scope_type="project",
+        name="Radar",
+        external_ref={"id": "PROJECT", "key": "RAD"},
+        capabilities=("statuses", "labels"),
+    )
+
+
+def _data(*items: object) -> SignalData:
+    from uuid import uuid4
+
+    return SignalData(
+        report_id=uuid4(),
+        projects=(project(),),
+        workitems=tuple(items),  # type: ignore[arg-type]
+        transitions=(),
+    )
+
+
+def test_components_contains_fires_when_component_present() -> None:
+    item = workitem(components=["blocked", "backend"])
+    definition = _definition(
+        {
+            "type": "group",
+            "operator": "all",
+            "conditions": [
+                {"field": "components", "operator": "contains", "value": "blocked"},
+            ],
+        }
+    )
+    findings = evaluate_signal_definition(
+        definition,
+        _data(item),
+        context(),
+        JiraConnector.describe_signal_schema(),
+        [_project_scope()],
+    )
+    assert len(findings) == 1
+
+
+def test_components_contains_does_not_fire_when_component_absent() -> None:
+    item = workitem(components=["backend"])
+    definition = _definition(
+        {
+            "type": "group",
+            "operator": "all",
+            "conditions": [
+                {"field": "components", "operator": "contains", "value": "blocked"},
+            ],
+        }
+    )
+    findings = evaluate_signal_definition(
+        definition,
+        _data(item),
+        context(),
+        JiraConnector.describe_signal_schema(),
+        [_project_scope()],
+    )
+    assert findings == []
+
+
+def test_story_points_is_empty_fires_when_null() -> None:
+    item = workitem(story_points=None)
+    definition = _definition(
+        {
+            "type": "group",
+            "operator": "all",
+            "conditions": [
+                {"field": "story_points", "operator": "is_empty", "value": None},
+            ],
+        }
+    )
+    findings = evaluate_signal_definition(
+        definition,
+        _data(item),
+        context(),
+        JiraConnector.describe_signal_schema(),
+        [_project_scope()],
+    )
+    assert len(findings) == 1
+
+
+def test_story_points_is_empty_does_not_fire_when_set() -> None:
+    item = workitem(story_points=5.0)
+    definition = _definition(
+        {
+            "type": "group",
+            "operator": "all",
+            "conditions": [
+                {"field": "story_points", "operator": "is_empty", "value": None},
+            ],
+        }
+    )
+    findings = evaluate_signal_definition(
+        definition,
+        _data(item),
+        context(),
+        JiraConnector.describe_signal_schema(),
+        [_project_scope()],
+    )
+    assert findings == []
+
+
+def test_story_points_numeric_threshold_fires() -> None:
+    item = workitem(story_points=13.0)
+    definition = _definition(
+        {
+            "type": "group",
+            "operator": "all",
+            "conditions": [
+                {"field": "story_points", "operator": "gt", "value": 8},
+            ],
+        }
+    )
+    findings = evaluate_signal_definition(
+        definition,
+        _data(item),
+        context(),
+        JiraConnector.describe_signal_schema(),
+        [_project_scope()],
+    )
+    assert len(findings) == 1
+
+
+def test_story_points_numeric_threshold_does_not_fire_below() -> None:
+    item = workitem(story_points=3.0)
+    definition = _definition(
+        {
+            "type": "group",
+            "operator": "all",
+            "conditions": [
+                {"field": "story_points", "operator": "gt", "value": 8},
+            ],
+        }
+    )
+    findings = evaluate_signal_definition(
+        definition,
+        _data(item),
+        context(),
+        JiraConnector.describe_signal_schema(),
+        [_project_scope()],
+    )
+    assert findings == []
+
+
+def test_exclude_labels_is_not_a_resolvable_field() -> None:
+    item = workitem(labels=["blocked"])
+    definition = _definition(
+        {
+            "type": "group",
+            "operator": "all",
+            "conditions": [
+                {"field": "exclude_labels", "operator": "does_not_contain", "value": "blocked"},
+            ],
+        }
+    )
+    import pytest
+
+    with pytest.raises(ExpressionValidationError):
+        evaluate_signal_definition(
+            definition,
+            _data(item),
+            context(),
+            JiraConnector.describe_signal_schema(),
+            [_project_scope()],
+        )

@@ -22,6 +22,31 @@ def test_signal_schema_contains_expected_jira_issue_fields_and_operators() -> No
     assert "priority" not in {field["key"] for field in schema["fields"]}
 
 
+def test_components_field_present_with_string_list_operators() -> None:
+    field = _field("components")
+    assert field["type"] == "string_list"
+    assert set(field["operators"]) == {
+        "contains",
+        "does_not_contain",
+        "contains_any",
+        "does_not_contain_any",
+    }
+
+
+def test_story_points_field_present_with_numeric_operators() -> None:
+    field = _field("story_points")
+    assert field["type"] == "number"
+    assert {"gt", "lt", "gte", "lte", "eq", "neq", "is_empty", "is_not_empty"}.issubset(
+        set(field["operators"])
+    )
+
+
+def test_exclude_labels_field_removed() -> None:
+    schema = asdict(JiraConnector.describe_signal_schema())
+    field_keys = {f["key"] for f in schema["fields"]}
+    assert "exclude_labels" not in field_keys
+
+
 def test_sprint_fields_require_sprint_capability() -> None:
     assert _field("sprint_day")["availability"]["requires_scope_capability"] == ("sprint",)
     assert _field("sprint_phase")["availability"]["requires_scope_capability"] == ("sprint",)
