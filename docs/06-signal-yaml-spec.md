@@ -208,16 +208,14 @@ to which a group is attached.
   name: Stale in-progress Scrum work
   description: Finds issues that stayed in progress longer than expected.
   entity_type: issue
-  expression:
-    type: group
-    operator: all
-    conditions:
-      - field: status_category
-        operator: is
-        value: In Progress
-      - field: age_in_current_status
-        operator: greater_than
-        value: {amount: 3, unit: days}
+  rules:
+    - field: status_category
+      operator: is
+      value: In Progress
+      join: and
+    - field: age_in_current_status
+      operator: greater_than
+      value: {amount: 3, unit: days}
   report_settings:
     severity: warning
     category: flow
@@ -233,7 +231,7 @@ to which a group is attached.
 | `name` | string | yes | Human-readable name, unique in the local workspace. |
 | `description` | string | no | Shown in the builder and reports. |
 | `entity_type` | string | yes | Exactly one signal entity type in MVP: `issue` (work tracking) or `merge_request` (code repository). |
-| `expression` | object | yes | Rule expression. See §10. |
+| `rules` | list | yes | Flat list of rule conditions. See §10. |
 | `report_settings` | object | yes | Severity, category, and optional message template. |
 | `origin` | enum | yes | `system_template`, `user_created`, or `imported`. |
 | `template_key` | string | no | Source template key when instantiated from a template. |

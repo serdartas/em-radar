@@ -112,21 +112,27 @@ def _expression_to_rules(
 ) -> list[dict[str, object]]:
     """Convert a grouped expression to a flat rules list with per-rule join values.
 
-    Top-level leaf conditions (non-group expressions) are wrapped as a single rule.
-    Nested group conditions are skipped — the builder never creates them.
+    Raises ValueError for nested group conditions, which cannot be represented in the
+    flat rules format. The export is rejected rather than producing a broken backup.
     """
     if expression.get("type") != "group":
-        # Top-level leaf: wrap as a single-rule list.
         return [_condition_to_rule(expression, join=None, scrub=scrub)]
     conditions = expression.get("conditions")
     if not isinstance(conditions, list) or not conditions:
         return []
     group_operator = expression.get("operator", "all")
     join = "or" if group_operator == "any" else "and"
-    leaf_conditions = [c for c in conditions if isinstance(c, dict) and c.get("type") != "group"]
+    for condition in conditions:
+        if isinstance(condition, dict) and condition.get("type") == "group":
+            raise ValueError(
+                "Signal expressions with nested groups cannot be exported in the flat rules "
+                "format. Recreate the signal using the rule builder before exporting."
+            )
     rules: list[dict[str, object]] = []
-    for i, condition in enumerate(leaf_conditions):
-        rule_join = join if i < len(leaf_conditions) - 1 and len(leaf_conditions) > 1 else None
+    for i, condition in enumerate(conditions):
+        if not isinstance(condition, dict):
+            continue
+        rule_join = join if i < len(conditions) - 1 and len(conditions) > 1 else None
         rules.append(_condition_to_rule(condition, join=rule_join, scrub=scrub))
     return rules
 
