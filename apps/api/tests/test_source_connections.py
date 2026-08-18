@@ -84,6 +84,58 @@ def test_source_connection_crud_masks_credentials_but_instantiates_with_raw_conf
         assert instantiate_connector(session, created.id, RecordingConnector) is None
 
 
+def test_masked_credential_is_not_written_back_on_patch() -> None:
+    """AUDIT-4 regression: PATCH with a round-tripped masked token must not overwrite the real secret."""
+    engine = create_db_engine(":memory:")
+    SQLModel.metadata.create_all(engine)
+
+    real_token = "jira-real-secret-token-abcd"
+
+    with Session(engine) as session:
+        created = create_source_connection(
+            session,
+            SourceConnectionCreate(
+                name="Jira test",
+                connector_name=ConnectorName.JIRA,
+                config={"base_url": "https://jira.example.com", "token": real_token},
+            ),
+        )
+        # GET returns masked token
+        read_back = get_source_connection(session, created.id)
+        assert read_back is not None
+        masked_token = read_back.config["token"]
+        assert isinstance(masked_token, str) and masked_token.startswith("****")
+
+        # PATCH with masked token + a non-secret change — real token must be preserved
+        updated = update_source_connection(
+            session,
+            created.id,
+            SourceConnectionUpdate(
+                config={"base_url": "https://jira-new.example.com", "token": masked_token}
+            ),
+        )
+        assert updated is not None
+        assert updated.config["base_url"] == "https://jira-new.example.com"
+
+        stored = session.exec(select(SourceConnectionTable)).one()
+        assert stored.config["token"] == real_token, (
+            "masked sentinel must not overwrite real secret"
+        )
+
+        # PATCH with a genuinely new token — must be stored as the new value
+        new_token = "brand-new-token-wxyz"
+        updated2 = update_source_connection(
+            session,
+            created.id,
+            SourceConnectionUpdate(config={"token": new_token}),
+        )
+        assert updated2 is not None
+        assert updated2.config["token"].startswith("****")
+
+        session.refresh(stored)
+        assert stored.config["token"] == new_token
+
+
 def test_source_connection_referenced_by_team_cannot_be_deleted() -> None:
     engine = create_db_engine(":memory:")
     SQLModel.metadata.create_all(engine)

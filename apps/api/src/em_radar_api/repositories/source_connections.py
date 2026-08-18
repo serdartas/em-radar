@@ -105,6 +105,7 @@ def update_source_connection(
         raise SourceConnectionDuplicateName(f"a connection named '{values['name']}' already exists")
     if "config" in values:
         stored_config = _stored_config(cast(Mapping[str, object], values["config"]))
+        stored_config = _drop_masked_credentials(stored_config)
         if values.get("connector_name", row.connector_name) == row.connector_name:
             values["config"] = {**row.config, **stored_config}
         else:
@@ -353,3 +354,21 @@ def is_credential_field_name(field_name: str) -> bool:
         or normalized.endswith("token")
         or "secret" in normalized
     )
+
+
+def _drop_masked_credentials(config: dict[str, object]) -> dict[str, object]:
+    """Remove credential keys whose value is a mask sentinel so stored secrets are preserved.
+
+    When the UI round-trips a GET response, masked values (starting with "****") must not
+    overwrite the real secrets that are already stored. Non-credential keys and genuine new
+    values pass through unchanged.
+    """
+    result: dict[str, object] = {}
+    for key, value in config.items():
+        if isinstance(value, dict):
+            result[key] = _drop_masked_credentials(value)
+        elif is_credential_field_name(key) and isinstance(value, str) and value.startswith("****"):
+            pass  # mask sentinel — preserve existing stored secret
+        else:
+            result[key] = value
+    return result
