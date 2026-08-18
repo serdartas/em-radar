@@ -14,7 +14,7 @@ def test_default_pack_parses_correctly() -> None:
 
     assert pack.api_version == "emradar.dev/v1"
     assert pack.kind == "SignalPack"
-    assert len(pack.spec.signals) == 13
+    assert len(pack.spec.signals) == 12
     assert all(signal.expression is not None for signal in pack.spec.signals)
 
 

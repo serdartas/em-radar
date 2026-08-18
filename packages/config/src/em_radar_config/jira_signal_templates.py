@@ -43,25 +43,6 @@ JIRA_SIGNAL_TEMPLATES: tuple[JiraSignalTemplate, ...] = (
         evidence_shape=("status_category", "age_in_current_status"),
     ),
     JiraSignalTemplate(
-        key="blocked-without-update",
-        name="Blocked without update",
-        description="Finds blocked issues that have not changed recently.",
-        expression={
-            "type": "group",
-            "operator": "all",
-            "conditions": [
-                {"field": "status_category", "operator": "is", "value": "blocked"},
-                {
-                    "field": "age_since_updated",
-                    "operator": "greater_than",
-                    "value": {"amount": 3, "unit": "days"},
-                },
-            ],
-        },
-        report_settings=ReportSettings(severity="critical", category="flow"),
-        evidence_shape=("status_category", "age_since_updated"),
-    ),
-    JiraSignalTemplate(
         key="story-without-acceptance-criteria",
         name="Story without acceptance criteria",
         description="Finds stories missing acceptance criteria.",

@@ -39,7 +39,7 @@ def test_templates_seed_once() -> None:
     second = seed_jira_signal_templates()
 
     assert first == second
-    assert len(first) == 8
+    assert len(first) == 7
 
 
 def test_template_duplicates_into_runnable_definition() -> None:
@@ -51,13 +51,13 @@ def test_template_duplicates_into_runnable_definition() -> None:
 
 def test_restore_built_in_defaults_without_deleting_user_copies() -> None:
     copied = instantiate_jira_signal_template(
-        "blocked-without-update",
-        name="Team-specific blocked work",
+        "stale-in-progress-work-item",
+        name="Team-specific stale work",
     )
-    restored = restore_jira_signal_template("blocked-without-update")
+    restored = restore_jira_signal_template("stale-in-progress-work-item")
 
-    assert copied.name == "Team-specific blocked work"
-    assert restored.name == "Blocked without update"
+    assert copied.name == "Team-specific stale work"
+    assert restored.name == "Stale in-progress work item"
 
 
 def test_m2_m3_parameter_overrides_have_equivalent_expression_values() -> None:
@@ -68,10 +68,9 @@ def test_m2_m3_parameter_overrides_have_equivalent_expression_values() -> None:
     assert age_condition["value"] == {"amount": 7, "unit": "days"}
 
 
-def test_all_eight_jira_templates_preserve_evidence_contracts() -> None:
+def test_all_seven_jira_templates_preserve_evidence_contracts() -> None:
     expected = {
         "stale-in-progress-work-item": ("status_category", "age_in_current_status"),
-        "blocked-without-update": ("status_category", "age_since_updated"),
         "story-without-acceptance-criteria": ("issue_type", "acceptance_criteria"),
         "story-without-parent-epic": ("issue_type", "has_epic_parent"),
         "epic-too-broad": ("issue_type", "child_count"),

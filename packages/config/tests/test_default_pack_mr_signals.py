@@ -343,7 +343,7 @@ def test_seeded_group_contains_13_signals(_api_harness) -> None:
         ).first()
 
     assert group is not None
-    assert len(group.signal_ids) == 13
+    assert len(group.signal_ids) == 12
 
 
 def test_mr_signals_export_round_trip(_api_harness) -> None:

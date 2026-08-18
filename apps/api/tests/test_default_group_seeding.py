@@ -10,7 +10,7 @@ from em_radar_api.signal_config_groups import SignalConfigGroupTable
 from em_radar_api.signal_definitions import SignalDefinitionTable
 
 DEFAULT_GROUP_NAME = "Default signals"
-EXPECTED_SIGNAL_COUNT = 13  # 8 work-item + 5 merge-request
+EXPECTED_SIGNAL_COUNT = 12  # 7 work-item + 5 merge-request
 
 
 def test_first_startup_seeds_one_default_group_with_default_signals(tmp_path: Path) -> None:

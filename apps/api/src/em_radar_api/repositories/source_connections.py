@@ -395,16 +395,17 @@ def _deep_merge_config(
 
 
 def _drop_masked_credentials(config: Mapping[str, object]) -> dict[str, object]:
-    """Remove credential keys whose value is a mask sentinel (used on full-replacement writes).
+    """Remove any key whose value is a mask sentinel (used on full-replacement writes).
 
-    Called when the connector type changes and the config is replaced wholesale. Non-credential
-    keys and genuine new values pass through unchanged. Lists are passed through as-is.
+    Called when the connector type changes and the config is replaced wholesale. Any "****"-
+    prefixed value is a sentinel regardless of key name — it represents a secret that cannot
+    be echoed back and must not be stored verbatim. Lists are passed through as-is.
     """
     result: dict[str, object] = {}
     for key, value in config.items():
         if isinstance(value, dict):
             result[key] = _drop_masked_credentials(value)
-        elif is_credential_field_name(key) and isinstance(value, str) and value.startswith("****"):
+        elif isinstance(value, str) and value.startswith("****"):
             pass  # mask sentinel — omit from the replacement config
         else:
             result[key] = value
