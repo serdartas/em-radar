@@ -10,9 +10,6 @@ export interface TeamProfile {
   description: string | null
   connection_ids: string[]
   scope_ids: string[]
-  project_ids: string[]
-  board_ids: string[]
-  repository_ids: string[]
   signal_config_group_ids: string[]
   code_connection_id: string | null
   working_mode: WorkingMode

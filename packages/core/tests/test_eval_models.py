@@ -26,8 +26,6 @@ NOW = datetime(2026, 6, 10, tzinfo=timezone.utc)
 def team_profile(**overrides: object) -> TeamProfile:
     values: dict[str, object] = {
         "name": "Platform",
-        "project_ids": [uuid4()],
-        "repository_ids": [uuid4()],
         "created_at": NOW,
         "updated_at": NOW,
     }
@@ -147,9 +145,6 @@ def test_evaluation_context_now_is_required() -> None:
 def test_json_fields_use_json_storage_type() -> None:
     for field_name in (
         "connection_ids",
-        "project_ids",
-        "board_ids",
-        "repository_ids",
         "member_user_keys",
     ):
         assert TeamProfile.model_fields[field_name].metadata[0].sa_type is JSON
