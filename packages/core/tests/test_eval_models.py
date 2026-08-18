@@ -26,8 +26,6 @@ NOW = datetime(2026, 6, 10, tzinfo=timezone.utc)
 def team_profile(**overrides: object) -> TeamProfile:
     values: dict[str, object] = {
         "name": "Platform",
-        "project_ids": [uuid4()],
-        "repository_ids": [uuid4()],
         "created_at": NOW,
         "updated_at": NOW,
     }
