@@ -322,3 +322,58 @@ def test_date_range_window_passes_through_unchanged_to_mr_fetch(
     assert mr_window.window_type == WindowType.DATE_RANGE
     assert mr_window.start == _REPORT_STARTED_AT - timedelta(days=14)
     assert mr_window.end == _REPORT_STARTED_AT
+
+
+def test_findings_carry_scope_name(api_client: TestClient, monkeypatch) -> None:
+    """Each finding produced by a board signal includes scope_name matching the scope it was evaluated against."""
+    monkeypatch.setattr(
+        "em_radar_api.connector_registry._connector_types",
+        lambda: [JiraTestConnector],
+    )
+    monkeypatch.setattr("em_radar_api.routers.reports.datetime", FrozenReportDateTime)
+
+    jira_id = _create_jira_connection(api_client)
+    scope_id = _create_board_scope(api_client, jira_id, _BOARD_CAPABILITIES)
+
+    signal_id = api_client.post(
+        "/api/signal-definitions",
+        json={
+            "name": "In Progress",
+            "entity_type": "issue",
+            "expression": {
+                "type": "group",
+                "operator": "all",
+                "conditions": [
+                    {"field": "status_category", "operator": "is", "value": "in_progress"}
+                ],
+            },
+            "report_settings": {"severity": "warning", "category": "flow"},
+            "origin": "user_created",
+        },
+    ).json()["id"]
+    group_id = api_client.post(
+        "/api/signal-config-groups",
+        json={"name": "Test group", "signal_ids": [signal_id]},
+    ).json()["id"]
+
+    team_id = api_client.post(
+        "/api/teams",
+        json={
+            "name": "Scope name test team",
+            "connection_ids": [jira_id],
+            "scope_ids": [scope_id],
+            "signal_config_group_ids": [group_id],
+            "working_mode": "scrum",
+            "sprint_length_days": 14,
+        },
+    ).json()["id"]
+
+    response = api_client.post(
+        "/api/reports/run", json={"connector": "jira", "team_profile_id": team_id}
+    )
+    assert response.status_code == 200
+    data = response.json()
+    findings = data["findings"]
+    assert len(findings) > 0, "expected at least one finding from the in-progress work item"
+    for finding in findings:
+        assert finding["scope_name"] == "Platform Scrum"

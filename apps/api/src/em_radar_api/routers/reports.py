@@ -152,6 +152,7 @@ class FindingResponse(BaseModel):
     title: str
     reason: str
     recommendation: str | None
+    scope_name: str | None
     evidence: JsonValue
     source_link: str | None
 
