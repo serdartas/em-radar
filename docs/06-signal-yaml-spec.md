@@ -71,16 +71,12 @@ spec:
   signals:
     - name: Stale in-progress work item
       entity_type: issue
-      expression:
-        type: group
-        operator: all
-        conditions:
-          - field: status_category
-            operator: is
-            value: In Progress
-          - field: age_in_current_status
-            operator: greater_than
-            value: {amount: 7, unit: days}
+      rules:
+        - field: status_category
+          operator: is
+          join: and
+        - field: age_in_current_status
+          operator: greater_than
       report_settings:
         severity: warning
         category: flow
@@ -472,16 +468,12 @@ spec:
   signals:
     - name: Merge request waiting longer than 1 day
       entity_type: merge_request
-      expression:
-        type: group
-        operator: all
-        conditions:
-          - field: state
-            operator: is
-            value: opened
-          - field: age_since_last_review_activity
-            operator: greater_than
-            value: {amount: 1, unit: days}
+      rules:
+        - field: state
+          operator: is
+          join: and
+        - field: age_since_last_review_activity
+          operator: greater_than
       report_settings:
         severity: warning
         category: flow
@@ -504,13 +496,10 @@ spec:
     - id: sig-platform-review
       name: Platform MR waiting too long
       entity_type: merge_request
-      expression:
-        type: group
-        operator: all
-        conditions:
-          - field: age_since_last_review_activity
-            operator: greater_than
-            value: {amount: 1, unit: days}
+      rules:
+        - field: age_since_last_review_activity
+          operator: greater_than
+          value: {amount: 1, unit: days}
       report_settings:
         severity: critical
         category: flow
@@ -518,16 +507,14 @@ spec:
     - id: sig-platform-stale
       name: Platform stale in-progress work
       entity_type: issue
-      expression:
-        type: group
-        operator: all
-        conditions:
-          - field: status_category
-            operator: is
-            value: In Progress
-          - field: age_in_current_status
-            operator: greater_than
-            value: {amount: 5, unit: days}
+      rules:
+        - field: status_category
+          operator: is
+          value: In Progress
+          join: and
+        - field: age_in_current_status
+          operator: greater_than
+          value: {amount: 5, unit: days}
       report_settings:
         severity: warning
         category: flow
@@ -550,16 +537,14 @@ spec:
   signals:
     - name: Stale in-progress work
       entity_type: issue
-      expression:
-        type: group
-        operator: all
-        conditions:
-          - field: status_category
-            operator: is
-            value: in_progress
-          - field: age_in_current_status
-            operator: greater_than
-            value: {amount: 5, unit: days}
+      rules:
+        - field: status_category
+          operator: is
+          value: in_progress
+          join: and
+        - field: age_in_current_status
+          operator: greater_than
+          value: {amount: 5, unit: days}
       report_settings:
         severity: warning
         category: flow
