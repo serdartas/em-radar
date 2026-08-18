@@ -210,8 +210,6 @@ def test_seeded_definitions_export_to_valid_pack(_api_harness) -> None:
     exported_keys = {s.template_key for s in exported.pack.spec.signals}
     assert EXPECTED_TEMPLATE_KEYS.issubset(exported_keys)  # 8 WI keys must be present
 
-    # Verify expressions and report_settings survive the round-trip.
-    # Exported signals use the flat rules format; resolve back to grouped expression for comparison.
     source = load_signal_pack(DEFAULT_PACK_PATH.read_text(encoding="utf-8")).pack
     source_by_key = {s.template_key: s for s in source.spec.signals}
     for exported_signal in exported.pack.spec.signals:
