@@ -66,7 +66,7 @@ def test_fetch_workitems_applies_field_mapping(monkeypatch: pytest.MonkeyPatch) 
     assert seen_fields == [
         "summary,description,issuetype,status,assignee,reporter,project,parent,labels,"
         "components,created,updated,resolutiondate,duedate,customfield_10020,"
-        "customfield_20000,customfield_10014"
+        "customfield_20000"
     ]
 
 
@@ -111,8 +111,23 @@ def test_fetch_workitems_reads_acceptance_criteria_custom_field(
     assert seen_fields == [
         "summary,description,issuetype,status,assignee,reporter,project,parent,labels,"
         "components,created,updated,resolutiondate,duedate,customfield_10020,"
-        "customfield_10016,customfield_10014,customfield_30000"
+        "customfield_10016,customfield_30000"
     ]
+
+
+def test_field_mapping_config_has_no_epic_link_field() -> None:
+    from em_radar_connector_jira.connector import JiraFieldMappingConfig
+
+    schema = JiraFieldMappingConfig.model_json_schema()
+    assert "epic_link" not in schema.get("properties", {})
+
+
+def test_field_mapping_config_rejects_unknown_keys() -> None:
+    from pydantic import ValidationError
+    from em_radar_connector_jira.connector import JiraFieldMappingConfig
+
+    with pytest.raises(ValidationError):
+        JiraFieldMappingConfig(story_pointz="customfield_10016")
 
 
 async def _collect(iterator: object) -> list[WorkItem]:

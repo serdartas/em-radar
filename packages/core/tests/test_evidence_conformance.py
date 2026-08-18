@@ -282,7 +282,7 @@ def _no_epic_fixture():
         _ctx(),
         JiraConnector.describe_signal_schema(),
         [_wi_scope()],
-        {"issue_type", "parent_id"},
+        {"issue_type", "has_epic_parent"},
     )
 
 

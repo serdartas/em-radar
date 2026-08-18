@@ -48,7 +48,6 @@ CLIENT_FACTORY: Callable[..., httpx.AsyncClient] = httpx.AsyncClient
 PAGE_SIZE = 50
 _NAMESPACE = UUID("1b6514a2-8027-43f2-a820-c771c419ca33")
 _STORY_POINTS_FIELD = "customfield_10016"
-_EPIC_LINK_FIELD = "customfield_10014"
 _SPRINT_FIELD = "customfield_10020"
 _ACCEPTANCE_CRITERIA_HEADING = "### Acceptance Criteria"
 _BLOCKED_LABEL = "blocked"
@@ -78,7 +77,6 @@ class JiraFieldMappingConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     story_points: str = _STORY_POINTS_FIELD
-    epic_link: str = _EPIC_LINK_FIELD
     acceptance_criteria: str | None = None
     acceptance_criteria_heading: str | None = _ACCEPTANCE_CRITERIA_HEADING
     blocked_label: str | None = _BLOCKED_LABEL
@@ -206,7 +204,14 @@ class JiraConnector:
                     "text",
                     ("is_empty", "is_not_empty"),
                 ),
-                SignalField("parent_id", "Parent Epic", "nullable", ("is_empty", "is_not_empty")),
+                SignalField("parent_id", "Parent", "nullable", ("is_empty", "is_not_empty")),
+                SignalField(
+                    "has_epic_parent",
+                    "Has Epic Parent",
+                    "boolean",
+                    ("is",),
+                    values=(True, False),
+                ),
                 SignalField(
                     "description_length",
                     "Description Length",
@@ -978,10 +983,6 @@ def _parent_id(fields: Mapping[str, object], field_mapping: JiraFieldMappingConf
             parent, "id", "issue parent"
         )
         return _stable_id("workitem", parent_reference)
-
-    epic_link = fields.get(field_mapping.epic_link)
-    if isinstance(epic_link, str) and epic_link:
-        return _stable_id("workitem", epic_link)
     return None
 
 
@@ -1008,7 +1009,6 @@ def _acceptance_criteria(
 def _issue_fields(field_mapping: JiraFieldMappingConfig) -> tuple[str, ...]:
     configurable_fields = [
         field_mapping.story_points,
-        field_mapping.epic_link,
         field_mapping.acceptance_criteria,
     ]
     fields = [*_SYSTEM_ISSUE_FIELDS]

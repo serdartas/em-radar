@@ -73,7 +73,7 @@ def test_fetch_workitems_normalizes_fixture_issues(monkeypatch: pytest.MonkeyPat
                             status="Done",
                             resolutiondate="2026-06-10T12:00:00.000Z",
                             labels=["blocked"],
-                            epic_link="ENG-1",
+                            parent={"id": "10001", "key": "ENG-1"},
                         ),
                     ],
                 },
@@ -452,6 +452,68 @@ def test_fetch_workitems_mid_stream_404_raises_without_restarting(
     assert seen_paths == ["/rest/api/2/search/jql", "/rest/api/2/search/jql"]
     assert "/rest/api/2/search" not in seen_paths
     assert [item.key for item in yielded_before_error] == ["ENG-1"]
+
+
+def test_fetch_workitems_epic_with_native_parent_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Jira Epic with a native parent (Initiative) must produce a valid WorkItem without raising.
+
+    Before this fix the model validator forbade any parent_id on EPICs, so this caused a 500
+    crash when the report runner ingested an Epic sitting under an Initiative.
+    """
+
+    async def run() -> list[WorkItem]:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={
+                    "issues": [
+                        _issue(
+                            issue_id="10000",
+                            key="ENG-0",
+                            issue_type="Initiative",
+                            status_category="new",
+                            status="To Do",
+                        ),
+                        _issue(
+                            issue_id="10001",
+                            key="ENG-1",
+                            issue_type="Epic",
+                            status_category="new",
+                            status="To Do",
+                            parent={"id": "10000", "key": "ENG-0"},
+                        ),
+                    ]
+                },
+            )
+
+        monkeypatch.setattr(jira_connector_module, "CLIENT_FACTORY", _client_factory_for(handler))
+        connector = JiraConnector(
+            {
+                "base_url": "https://jira.example.com",
+                "token": "jira-token-1234",
+            }
+        )
+        workitems = await _collect(
+            connector.fetch_workitems(
+                WorkItemScope(
+                    project_external_ids=["10000"],
+                    workitem_types=[WorkItemType.EPIC],
+                ),
+                _date_window(),
+            )
+        )
+        await connector.close()
+        return workitems
+
+    workitems = asyncio.run(run())
+
+    assert len(workitems) == 2
+    initiative, epic = workitems
+    assert initiative.type is WorkItemType.OTHER
+    assert epic.type is WorkItemType.EPIC
+    assert epic.parent_id == initiative.id
 
 
 def test_fetch_workitems_wraps_http_errors(monkeypatch: pytest.MonkeyPatch) -> None:

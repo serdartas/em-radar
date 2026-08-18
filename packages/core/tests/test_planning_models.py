@@ -91,7 +91,6 @@ def test_work_item_array_defaults_are_independent_json_fields() -> None:
     "overrides",
     [
         {"id": UUID(int=1), "parent_id": UUID(int=1)},
-        {"type": WorkItemType.EPIC, "parent_id": UUID(int=2)},
         {"current_sprint_id": UUID(int=3), "sprint_ids": []},
         {"status_category": StatusCategory.DONE, "resolved_at": None},
         {
@@ -103,6 +102,18 @@ def test_work_item_array_defaults_are_independent_json_fields() -> None:
 def test_work_item_invariant_violations_raise(overrides: dict[str, object]) -> None:
     with pytest.raises(ValidationError):
         work_item(**overrides)
+
+
+def test_epic_with_parent_id_validates() -> None:
+    parent_id = UUID(int=2)
+    item = work_item(type=WorkItemType.EPIC, parent_id=parent_id)
+    assert item.parent_id == parent_id
+
+
+def test_epic_self_reference_still_raises() -> None:
+    item_id = UUID(int=5)
+    with pytest.raises(ValidationError):
+        work_item(id=item_id, type=WorkItemType.EPIC, parent_id=item_id)
 
 
 def test_done_work_item_requires_and_accepts_resolved_at() -> None:

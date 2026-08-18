@@ -129,7 +129,7 @@ def test_story_without_parent_epic_fires_with_generic_evidence() -> None:
 
     assert len(findings) == 1
     ev = findings[0].evidence
-    assert "parent_id" in ev
+    assert "has_epic_parent" in ev
 
 
 def test_epic_too_broad_fires_with_generic_evidence() -> None:

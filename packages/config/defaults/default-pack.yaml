@@ -76,8 +76,9 @@ spec:
           - field: issue_type
             operator: is
             value: story
-          - field: parent_id
-            operator: is_empty
+          - field: has_epic_parent
+            operator: is
+            value: false
       report_settings:
         severity: info
         category: planning
