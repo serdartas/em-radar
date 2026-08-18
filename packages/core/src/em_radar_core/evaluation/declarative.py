@@ -18,6 +18,7 @@ from em_radar_core.models import (
     Transition,
     WindowType,
     WorkItem,
+    WorkItemType,
 )
 from em_radar_core.signals import SignalData
 
@@ -607,6 +608,11 @@ def _field_value(
         return workitem.acceptance_criteria
     if field_key == "parent_id":
         return str(workitem.parent_id) if workitem.parent_id is not None else None
+    if field_key == "has_epic_parent":
+        if workitem.parent_id is None:
+            return False
+        parent = next((item for item in data.workitems if item.id == workitem.parent_id), None)
+        return parent is not None and parent.type is WorkItemType.EPIC
     if field_key == "description_length":
         return len(workitem.description or "")
     if field_key == "child_count":

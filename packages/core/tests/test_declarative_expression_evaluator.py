@@ -7,7 +7,7 @@ from em_radar_core.evaluation import (
     evaluate_signal_definition,
     validate_expression,
 )
-from em_radar_core.models import ReportSettings, SignalDefinition, SignalOrigin
+from em_radar_core.models import ReportSettings, SignalDefinition, SignalOrigin, WorkItemType
 from em_radar_core.signals import SignalData
 from em_radar_connector_jira.connector import JiraConnector
 
@@ -363,3 +363,54 @@ def test_between_date_only_strings_false() -> None:
     )
 
     assert findings == []
+
+
+def test_has_epic_parent_true_when_parent_is_epic() -> None:
+    """has_epic_parent returns True for a story whose parent is an Epic."""
+    epic = workitem(key="RAD-0", item_type=WorkItemType.EPIC)
+    story = workitem(key="RAD-1", parent_id=epic.id)
+    expression = {"field": "has_epic_parent", "operator": "is", "value": True}
+
+    findings = evaluate_signal_definition(
+        _definition({"type": "group", "operator": "all", "conditions": [expression]}),
+        SignalData(report_id=uuid4(), projects=(project(),), workitems=(epic, story)),
+        context(),
+        JiraConnector.describe_signal_schema(),
+        [_scope()],
+    )
+
+    assert len(findings) == 1
+    assert findings[0].entity_id == story.id
+
+
+def test_has_epic_parent_false_when_no_parent() -> None:
+    """has_epic_parent returns False for a story with no parent."""
+    story = workitem(key="RAD-1", parent_id=None)
+    expression = {"field": "has_epic_parent", "operator": "is", "value": False}
+
+    findings = evaluate_signal_definition(
+        _definition({"type": "group", "operator": "all", "conditions": [expression]}),
+        SignalData(report_id=uuid4(), projects=(project(),), workitems=(story,)),
+        context(),
+        JiraConnector.describe_signal_schema(),
+        [_scope()],
+    )
+
+    assert len(findings) == 1
+
+
+def test_has_epic_parent_false_when_parent_is_not_epic() -> None:
+    """has_epic_parent returns False for a story whose parent is a Story (not Epic)."""
+    parent_story = workitem(key="RAD-0", item_type=WorkItemType.STORY)
+    child = workitem(key="RAD-1", parent_id=parent_story.id)
+    expression = {"field": "has_epic_parent", "operator": "is", "value": False}
+
+    findings = evaluate_signal_definition(
+        _definition({"type": "group", "operator": "all", "conditions": [expression]}),
+        SignalData(report_id=uuid4(), projects=(project(),), workitems=(parent_story, child)),
+        context(),
+        JiraConnector.describe_signal_schema(),
+        [_scope()],
+    )
+
+    assert len(findings) == 2
