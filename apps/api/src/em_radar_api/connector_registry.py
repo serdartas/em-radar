@@ -37,8 +37,7 @@ def list_connectors() -> list[dict[str, object]]:
             "config_schema": _schema_with_secret_flags(connector_type.config_schema),
             "capabilities": asdict(connector_type.describe_capabilities()),
         }
-        if hasattr(connector_type, "describe_signal_schema"):
-            descriptor["signal_schema"] = asdict(_signal_schema(connector_type))
+        descriptor["signal_schema"] = asdict(_signal_schema(connector_type))
         connectors.append(descriptor)
     return connectors
 
@@ -101,14 +100,7 @@ def _ensure_compatible(connector_type: type[ConnectorBase]) -> None:
 
 
 def _signal_schema(connector_type: type[ConnectorBase]) -> SignalCapabilitySchema:
-    if hasattr(connector_type, "describe_signal_schema"):
-        return connector_type.describe_signal_schema()
-    return SignalCapabilitySchema(
-        connector_type=connector_type.name,
-        entity_types=(),
-        scope_types=(),
-        fields=(),
-    )
+    return connector_type.describe_signal_schema()
 
 
 def _schema_with_secret_flags(schema: Mapping[str, object]) -> dict[str, object]:

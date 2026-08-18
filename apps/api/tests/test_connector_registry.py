@@ -10,6 +10,7 @@ from em_radar_core.connectors import (
     ConnectorConfigError,
     ConnectorError,
     ConnectorNotFoundError,
+    SignalCapabilitySchema,
 )
 
 
@@ -39,6 +40,16 @@ class ConfiguredConnector:
     def describe_capabilities(cls) -> Capabilities:
         del cls
         return Capabilities(provides_workitems=True)
+
+    @classmethod
+    def describe_signal_schema(cls) -> SignalCapabilitySchema:
+        del cls
+        return SignalCapabilitySchema(
+            connector_type="configured",
+            entity_types=("issue",),
+            scope_types=("project",),
+            fields=(),
+        )
 
     async def close(self) -> None:
         pass
@@ -123,3 +134,56 @@ def test_registry_rejects_connector_requiring_newer_model_version(
 
     with pytest.raises(ConnectorError, match="upgrade EM Radar"):
         create_connector("incompatible", {})
+
+
+def test_registry_requires_describe_signal_schema_on_connectors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A connector without describe_signal_schema raises AttributeError — not silently skipped."""
+
+    class SchemalessConnector:
+        name: ClassVar[str] = "schemaless"
+        display_name: ClassVar[str] = "Schemaless"
+        config_schema: ClassVar[dict[str, object]] = {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        }
+        min_model_version: ClassVar[int] = 1
+
+        def __init__(self, config: dict[str, object]) -> None:
+            pass
+
+        async def test_connection(self) -> ConnectionTestResult:
+            return ConnectionTestResult(ok=True, detail="")
+
+        @classmethod
+        def describe_capabilities(cls) -> Capabilities:
+            del cls
+            return Capabilities()
+
+        async def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(
+        "em_radar_api.connector_registry._connector_types",
+        lambda: [SchemalessConnector],
+    )
+
+    with pytest.raises(AttributeError):
+        list_connectors()
+
+
+def test_registry_exposes_signal_schema_from_protocol_method(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """list_connectors calls describe_signal_schema directly (no hasattr guard)."""
+    monkeypatch.setattr(
+        "em_radar_api.connector_registry._connector_types",
+        lambda: [ConfiguredConnector],
+    )
+
+    descriptor = list_connectors()[0]
+
+    assert descriptor["signal_schema"]["connector_type"] == "configured"
+    assert "issue" in descriptor["signal_schema"]["entity_types"]

@@ -121,6 +121,9 @@ class ConnectorBase(Protocol):
     @classmethod
     def describe_capabilities(cls) -> Capabilities: ...
 
+    @classmethod
+    def describe_signal_schema(cls) -> SignalCapabilitySchema: ...
+
     async def close(self) -> None: ...
 
 
