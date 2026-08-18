@@ -74,7 +74,7 @@ def test_all_eight_jira_templates_preserve_evidence_contracts() -> None:
         "stale-in-progress-work-item": ("status_category", "age_in_current_status"),
         "blocked-without-update": ("status_category", "age_since_updated"),
         "story-without-acceptance-criteria": ("issue_type", "acceptance_criteria"),
-        "story-without-parent-epic": ("issue_type", "parent_id"),
+        "story-without-parent-epic": ("issue_type", "has_epic_parent"),
         "epic-too-broad": ("issue_type", "child_count"),
         "epic-without-measurable-description": ("issue_type", "description_length"),
         "repeated-carry-over": ("status_category", "sprint_count"),
@@ -137,7 +137,7 @@ def test_jira_template_expressions_match_positive_and_negative_fixtures() -> Non
     assert set(_findings("story-without-parent-epic", tuple(workitems))[0].evidence) >= {
         "scope_id",
         "issue_type",
-        "parent_id",
+        "has_epic_parent",
     }
     assert set(_findings("epic-too-broad", tuple(workitems))[0].evidence) >= {
         "scope_id",
