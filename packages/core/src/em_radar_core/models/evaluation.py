@@ -66,6 +66,7 @@ class SignalFinding(SQLModel):
     title: str
     reason: str
     recommendation: str | None = None
+    scope_name: str | None = None
     evidence: JsonValue = Field(sa_type=JSON)
     source_link: str | None = None
     created_at: datetime

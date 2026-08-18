@@ -445,6 +445,7 @@ def upgrade() -> None:
         sa.Column("title", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
         sa.Column("reason", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
         sa.Column("recommendation", sqlmodel.sql.sqltypes.AutoString(), nullable=True),
+        sa.Column("scope_name", sqlmodel.sql.sqltypes.AutoString(), nullable=True),
         sa.Column("evidence", sa.JSON(), nullable=False),
         sa.Column("source_link", sqlmodel.sql.sqltypes.AutoString(), nullable=True),
         sa.Column("created_at", sa.DateTime(), nullable=False),

@@ -194,7 +194,7 @@ def evaluate_signal_definition(
     severity = resolve_severity(definition.report_settings.severity)
 
     if definition.entity_type == "merge_request":
-        return _evaluate_mr_signal(definition, data, ctx, severity)
+        return _evaluate_mr_signal(definition, data, ctx, severity, scopes)
 
     if definition.entity_type == "sprint":
         return _evaluate_sprint_signal(definition, data, ctx, severity, scopes)
@@ -216,6 +216,7 @@ def evaluate_signal_definition(
                     entity_id=workitem.id,
                     title=f"{workitem.key} - {workitem.title}",
                     reason=result.reason,
+                    scope_name=scope.name,
                     evidence={"scope_id": scope.scope_id, **result.evidence},
                     source_link=workitem.source_url,
                     created_at=ctx.now,
@@ -229,8 +230,10 @@ def _evaluate_mr_signal(
     data: SignalData,
     ctx: EvaluationContext,
     severity: Severity,
+    scopes: list[ScopeDescriptor],
 ) -> list[SignalFinding]:
     """Evaluate a merge_request entity signal over all MergeRequest entities in the data."""
+    scope_name = scopes[0].name if scopes else None
     findings: list[SignalFinding] = []
     for mr in data.mergerequests:
         result = _evaluate_mr_group(definition.expression, mr, data, ctx)
@@ -249,6 +252,7 @@ def _evaluate_mr_signal(
                 reason=result.reason,
                 evidence=result.evidence,
                 source_link=mr.source_url,
+                scope_name=scope_name,
                 created_at=ctx.now,
             )
         )
@@ -293,6 +297,7 @@ def _evaluate_sprint_signal(
                     entity_id=sprint.id,
                     title=sprint.name,
                     reason=result.reason,
+                    scope_name=scope.name,
                     evidence={"scope_id": scope.scope_id, **result.evidence},
                     source_link=sprint.source_url,
                     created_at=ctx.now,
@@ -457,7 +462,7 @@ def _evaluate_without_window_gate(
     severity = resolve_severity(definition.report_settings.severity)
 
     if definition.entity_type == "merge_request":
-        return _evaluate_mr_signal(definition, data, ctx, severity)
+        return _evaluate_mr_signal(definition, data, ctx, severity, scopes)
 
     if definition.entity_type == "sprint":
         return _evaluate_sprint_signal(definition, data, ctx, severity, scopes)
@@ -479,6 +484,7 @@ def _evaluate_without_window_gate(
                     entity_id=workitem.id,
                     title=f"{workitem.key} - {workitem.title}",
                     reason=result.reason,
+                    scope_name=scope.name,
                     evidence={"scope_id": scope.scope_id, **result.evidence},
                     source_link=workitem.source_url,
                     created_at=ctx.now,

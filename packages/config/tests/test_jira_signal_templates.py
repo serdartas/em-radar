@@ -180,7 +180,12 @@ def test_sprint_scope_churn_template_uses_sprint_level_evidence() -> None:
         start_date=NOW - timedelta(days=7),
     )
     original = _workitem("RAD-1", sprint_ids=[sprint.id], current_sprint_id=sprint.id)
-    added = _workitem("RAD-2", sprint_ids=[sprint.id], current_sprint_id=sprint.id)
+    added = _workitem(
+        "RAD-2",
+        sprint_ids=[sprint.id],
+        current_sprint_id=sprint.id,
+        created_at=NOW - timedelta(days=5),
+    )
     transitions = (
         _transition(original.id, NOW - timedelta(days=8)),
         _transition(added.id, NOW - timedelta(days=2)),
@@ -355,6 +360,7 @@ def _workitem(
     status: str = "In Progress",
     status_category: StatusCategory = StatusCategory.IN_PROGRESS,
     updated_at: datetime | None = None,
+    created_at: datetime | None = None,
 ) -> WorkItem:
     return WorkItem(
         source=Source.JIRA,
@@ -370,7 +376,7 @@ def _workitem(
         acceptance_criteria=acceptance_criteria,
         sprint_ids=sprint_ids or [],
         current_sprint_id=current_sprint_id,
-        created_at=NOW - timedelta(days=10),
+        created_at=created_at if created_at is not None else NOW - timedelta(days=10),
         updated_at=updated_at or NOW - timedelta(days=1),
     )
 
