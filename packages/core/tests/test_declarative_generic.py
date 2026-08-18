@@ -91,25 +91,6 @@ def test_stale_in_progress_fires_with_generic_evidence() -> None:
     assert "status_category" in ev
 
 
-def test_blocked_without_update_fires_with_generic_evidence() -> None:
-    item = workitem(
-        status="Blocked",
-        status_category=StatusCategory.BLOCKED,
-        is_blocked=True,
-        updated_at=NOW - timedelta(days=5),
-    )
-    data = SignalData(report_id=uuid4(), projects=(project(),), workitems=(item,))
-    definition = instantiate_jira_signal_template("blocked-without-update")
-
-    findings = evaluate_signal_definition(
-        definition, data, context(), JiraConnector.describe_signal_schema(), [_scope()]
-    )
-
-    assert len(findings) == 1
-    ev = findings[0].evidence
-    assert "age_since_updated" in ev
-
-
 def test_story_without_acceptance_criteria_fires_with_generic_evidence() -> None:
     item = workitem(item_type=WorkItemType.STORY, acceptance_criteria=None)
     data = SignalData(report_id=uuid4(), projects=(project(),), workitems=(item,))

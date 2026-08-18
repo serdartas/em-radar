@@ -41,7 +41,6 @@ class SignalEntry(PackModel):
 class JiraFieldMappings(PackModel):
     story_points: str | None = None
     acceptance_criteria_heading: str | None = None
-    blocked_label: str | None = None
 
 
 class GitLabFieldMappings(PackModel):

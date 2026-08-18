@@ -290,7 +290,7 @@ def test_field_mappings_are_advisory_without_current_mappings() -> None:
 spec:
   field_mappings:
     jira:
-      blocked_label: blocked
+      story_points: customfield_99999
   signals:""",
     )
 

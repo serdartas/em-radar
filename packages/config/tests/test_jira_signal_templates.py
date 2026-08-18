@@ -163,21 +163,10 @@ def test_jira_template_expressions_match_positive_and_negative_fixtures() -> Non
         (stale,),
         transitions=(_transition(stale.id, NOW - timedelta(days=8)),),
     )
-    blocked = _workitem(
-        "RAD-26",
-        status="Blocked",
-        status_category=StatusCategory.BLOCKED,
-        updated_at=NOW - timedelta(days=5),
-    )
     assert set(stale_findings[0].evidence) >= {
         "scope_id",
         "status_category",
         "age_in_current_status",
-    }
-    assert set(_findings("blocked-without-update", (blocked,))[0].evidence) >= {
-        "scope_id",
-        "status_category",
-        "age_since_updated",
     }
 
 
