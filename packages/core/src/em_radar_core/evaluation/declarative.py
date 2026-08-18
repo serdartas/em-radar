@@ -194,7 +194,7 @@ def evaluate_signal_definition(
     severity = resolve_severity(definition.report_settings.severity)
 
     if definition.entity_type == "merge_request":
-        return _evaluate_mr_signal(definition, data, ctx, severity)
+        return _evaluate_mr_signal(definition, data, ctx, severity, scopes)
 
     if definition.entity_type == "sprint":
         return _evaluate_sprint_signal(definition, data, ctx, severity, scopes)
@@ -230,8 +230,10 @@ def _evaluate_mr_signal(
     data: SignalData,
     ctx: EvaluationContext,
     severity: Severity,
+    scopes: list[ScopeDescriptor],
 ) -> list[SignalFinding]:
     """Evaluate a merge_request entity signal over all MergeRequest entities in the data."""
+    scope_name = scopes[0].name if scopes else None
     findings: list[SignalFinding] = []
     for mr in data.mergerequests:
         result = _evaluate_mr_group(definition.expression, mr, data, ctx)
@@ -250,6 +252,7 @@ def _evaluate_mr_signal(
                 reason=result.reason,
                 evidence=result.evidence,
                 source_link=mr.source_url,
+                scope_name=scope_name,
                 created_at=ctx.now,
             )
         )
@@ -459,7 +462,7 @@ def _evaluate_without_window_gate(
     severity = resolve_severity(definition.report_settings.severity)
 
     if definition.entity_type == "merge_request":
-        return _evaluate_mr_signal(definition, data, ctx, severity)
+        return _evaluate_mr_signal(definition, data, ctx, severity, scopes)
 
     if definition.entity_type == "sprint":
         return _evaluate_sprint_signal(definition, data, ctx, severity, scopes)
