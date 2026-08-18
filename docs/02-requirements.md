@@ -497,8 +497,6 @@ run. They are not hard-coded engine features — see [REQ-F-036](#req-f-036--no-
 Users shall be able to:
 
 * add shipped signals (or copies of them) to signal config groups
-* enable signals
-* disable signals
 * duplicate signals
 * edit signal conditions, thresholds, logical grouping, severity, and report category
 * delete any signal, including a shipped default
@@ -517,7 +515,6 @@ Acceptance criteria:
 
 * signal settings can be changed through the UI
 * changes persist after restart
-* disabled signals are not evaluated
 * built-in templates can be duplicated and edited without changing the system default template
 * validation rejects duplicate signal names in the local workspace
 * validation requires exactly one supported entity type per MVP signal
@@ -544,7 +541,6 @@ disabled, deleted, or recreated in the UI:
 Acceptance criteria:
 
 * each signal produces findings with reason, evidence, and recommendation
-* each signal can be enabled or disabled
 * each signal has configurable thresholds where relevant
 
 ---
@@ -566,7 +562,6 @@ engine-hardcoded checks; each can be edited, disabled, deleted, or recreated in 
 Acceptance criteria:
 
 * each signal produces findings with reason, evidence, and recommendation
-* each signal can be enabled or disabled
 * each signal has configurable thresholds where relevant
 
 ---
@@ -647,7 +642,7 @@ definitions, not fixed engine features (see [REQ-F-036](#req-f-036--no-hardcoded
 Acceptance criteria:
 
 * the default group is loaded on first startup by seeding the default signal pack
-* the default group contains enough enabled signals to produce useful reports
+* the default group contains enough signals to produce useful reports
 * default thresholds are documented
 * every signal in the default group is editable, deletable, and recreatable from the UI
 
@@ -662,7 +657,6 @@ The system shall allow users to configure signals and signal config groups throu
 Acceptance criteria:
 
 * user can see available signals
-* user can enable or disable signals
 * user can create, duplicate, edit, and delete user-created signals
 * user can edit conditions with field/operator/value controls
 * user can preview a signal before saving it
@@ -717,7 +711,7 @@ Acceptance criteria:
 * users can create, rename, and delete signal config groups
 * users can add and remove signals from a group; a signal may live in several groups
 * users can attach and detach groups from a team
-* a team's evaluated signals are the union of enabled signals across its attached groups
+* a team's evaluated signals are the union of signals across its attached groups
 * editing a group propagates to every team it is attached to
 
 ---

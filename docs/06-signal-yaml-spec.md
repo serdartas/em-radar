@@ -194,7 +194,7 @@ The default pack's signals ship as **templates**: pre-written signal definitions
 template is configuration, not executable code, and has no privileged evaluation path — the engine
 runs it exactly as it runs a user-authored signal, so any template can be recreated from scratch in
 the builder. Users may add a template to a group as-is, duplicate it into an editable signal
-(`origin: user_created`), disable it, or restore the shipped default. A template carries no scope —
+(`origin: user_created`), or restore the shipped default. A template carries no scope —
 it is added to a group, and scope is resolved from the team later.
 
 ## 9. Signal Definitions
@@ -533,35 +533,7 @@ spec:
 
 On import this becomes a group `platform-team-pack` with two signals, ready to attach to any team.
 
-### 17.3 Disabled imported signal
-
-```yaml
-apiVersion: emradar.dev/v1
-kind: SignalPack
-metadata:
-  name: partial-import
-  version: 0.1.0
-  description: Example of a signal imported disabled (kept off until reviewed).
-spec:
-  export_type: private_backup
-  signals:
-    - id: sig-disabled
-      name: Imported stale work signal
-      entity_type: issue
-      expression:
-        type: group
-        operator: all
-        conditions:
-          - field: status_category
-            operator: is
-            value: In Progress
-      report_settings:
-        severity: warning
-        category: flow
-      origin: imported
-```
-
-### 17.4 Multiple groups sharing a signal
+### 17.3 Multiple groups sharing a signal
 
 ```yaml
 apiVersion: emradar.dev/v1
