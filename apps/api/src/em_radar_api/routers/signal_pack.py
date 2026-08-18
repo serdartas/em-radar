@@ -54,12 +54,15 @@ def export_signal_pack_route(
         for signal_id in group.signal_ids
         if (definition := get_signal_definition(session, signal_id)) is not None
     }
-    yaml_text = export_signal_groups_pack(
-        groups,
-        definitions_by_id,
-        export_type=export_type,
-        name=name,
-    )
+    try:
+        yaml_text = export_signal_groups_pack(
+            groups,
+            definitions_by_id,
+            export_type=export_type,
+            name=name,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return Response(
         content=yaml_text,
         media_type="application/yaml",

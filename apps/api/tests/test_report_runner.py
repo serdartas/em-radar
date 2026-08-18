@@ -377,3 +377,58 @@ def test_findings_carry_scope_name(api_client: TestClient, monkeypatch) -> None:
     assert len(findings) > 0, "expected at least one finding from the in-progress work item"
     for finding in findings:
         assert finding["scope_name"] == "Platform Scrum"
+
+
+def test_mr_findings_carry_scope_name(api_client: TestClient, monkeypatch) -> None:
+    """MR findings produced by a merge_request signal include scope_name == 'code'."""
+    monkeypatch.setattr(
+        "em_radar_api.connector_registry._connector_types",
+        lambda: [JiraTestConnector, _LinkingMRConnector],
+    )
+    monkeypatch.setattr("em_radar_api.routers.reports.datetime", FrozenReportDateTime)
+
+    jira_id = _create_jira_connection(api_client)
+    scope_id = _create_board_scope(api_client, jira_id, _BOARD_CAPABILITIES)
+    gitlab_id = _create_gitlab_connection(api_client)
+
+    signal_id = api_client.post(
+        "/api/signal-definitions",
+        json={
+            "name": "Open MR",
+            "entity_type": "merge_request",
+            "expression": {
+                "type": "group",
+                "operator": "all",
+                "conditions": [{"field": "state", "operator": "is", "value": "open"}],
+            },
+            "report_settings": {"severity": "info", "category": "code"},
+            "origin": "user_created",
+        },
+    ).json()["id"]
+    group_id = api_client.post(
+        "/api/signal-config-groups",
+        json={"name": "MR group", "signal_ids": [signal_id]},
+    ).json()["id"]
+
+    team_id = api_client.post(
+        "/api/teams",
+        json={
+            "name": "MR scope name team",
+            "connection_ids": [jira_id],
+            "scope_ids": [scope_id],
+            "code_connection_id": gitlab_id,
+            "signal_config_group_ids": [group_id],
+            "working_mode": "scrum",
+            "sprint_length_days": 14,
+        },
+    ).json()["id"]
+
+    response = api_client.post(
+        "/api/reports/run", json={"connector": "jira", "team_profile_id": team_id}
+    )
+    assert response.status_code == 200
+    data = response.json()
+    mr_findings = [f for f in data["findings"] if f["entity_type"] == "mergerequest"]
+    assert len(mr_findings) > 0, "expected at least one MR finding from the open MR"
+    for finding in mr_findings:
+        assert finding["scope_name"] == "code"
