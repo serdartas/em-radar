@@ -56,8 +56,6 @@ class MergeRequest(CommonFields):
             raise ValueError("merged merge requests require merged_at")
         if self.state is MergeRequestState.CLOSED and self.closed_at is None:
             raise ValueError("closed merge requests require closed_at")
-        if self.merged_at is not None and self.closed_at is not None:
-            raise ValueError("merged_at and closed_at are mutually exclusive")
         return self
 
 

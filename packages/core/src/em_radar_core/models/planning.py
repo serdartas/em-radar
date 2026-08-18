@@ -73,8 +73,8 @@ class WorkItem(CommonFields):
             raise ValueError("parent_id cannot reference the work item itself")
         if self.current_sprint_id is not None and self.current_sprint_id not in self.sprint_ids:
             raise ValueError("current_sprint_id must be present in sprint_ids")
-        if (self.status_category is StatusCategory.DONE) != (self.resolved_at is not None):
-            raise ValueError("resolved_at must be set if and only if status_category is done")
+        if self.status_category is not StatusCategory.DONE and self.resolved_at is not None:
+            raise ValueError("resolved_at must not be set when status_category is not done")
         return self
 
 

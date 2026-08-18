@@ -436,3 +436,73 @@ def test_has_epic_parent_none_when_parent_not_in_scope() -> None:
     )
 
     assert findings == []
+
+
+def test_age_days_returns_fractional_value() -> None:
+    """AUDIT-3: _age_days must return fractional days so hour-granularity thresholds fire."""
+    # Item created 6 hours ago → 0.25 days; threshold is 5 hours (5/24 ≈ 0.208 days)
+    item = workitem(created_at=NOW - timedelta(hours=6), updated_at=NOW - timedelta(hours=6))
+    expression = {
+        "type": "group",
+        "operator": "all",
+        "conditions": [
+            {
+                "field": "age_since_created",
+                "operator": "greater_than",
+                "value": {"amount": 5, "unit": "hours"},
+            }
+        ],
+    }
+
+    findings = evaluate_signal_definition(
+        _definition(expression),
+        SignalData(report_id=uuid4(), projects=(project(),), workitems=(item,)),
+        context(),
+        JiraConnector.describe_signal_schema(),
+        [_scope()],
+    )
+
+    assert len(findings) == 1
+    age = findings[0].evidence["age_since_created"]
+    assert isinstance(age, float)
+    assert abs(age - 0.25) < 0.01
+
+
+def test_is_operator_against_none_field_returns_no_match() -> None:
+    """AUDIT-32: `is` against a None field must not fire — None is never equal to a real value."""
+    item = workitem(key="RAD-1")  # no sprint_ids/current_sprint_id → sprint_phase is None
+    expression = {
+        "type": "group",
+        "operator": "all",
+        "conditions": [{"field": "sprint_phase", "operator": "is", "value": "first_day"}],
+    }
+
+    findings = evaluate_signal_definition(
+        _definition(expression),
+        SignalData(report_id=uuid4(), projects=(project(),), workitems=(item,)),
+        context(),
+        JiraConnector.describe_signal_schema(),
+        [_scope(("sprint", "statuses", "labels"))],
+    )
+
+    assert findings == []
+
+
+def test_is_not_operator_against_none_field_returns_no_match() -> None:
+    """AUDIT-32: `is_not` against a None field must not spuriously fire."""
+    item = workitem(key="RAD-1")  # no sprint → sprint_phase is None
+    expression = {
+        "type": "group",
+        "operator": "all",
+        "conditions": [{"field": "sprint_phase", "operator": "is_not", "value": "first_day"}],
+    }
+
+    findings = evaluate_signal_definition(
+        _definition(expression),
+        SignalData(report_id=uuid4(), projects=(project(),), workitems=(item,)),
+        context(),
+        JiraConnector.describe_signal_schema(),
+        [_scope(("sprint", "statuses", "labels"))],
+    )
+
+    assert findings == []

@@ -805,7 +805,6 @@ async def list_reports_endpoint(
     return responses
 
 
-
 @router.delete("/reports", status_code=status.HTTP_204_NO_CONTENT)
 def delete_reports_endpoint(
     team_id: UUID | None = None,

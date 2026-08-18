@@ -396,12 +396,12 @@ def _sprint_scope_churn(
 
 
 def _first_seen_at(wi: WorkItem, data: SignalData) -> datetime | None:
-    """Return the first-seen datetime for a work item: min(transitions, updated_at, created_at)."""
+    """Return the first-seen datetime: min(transition occurred_at, created_at). updated_at excluded."""
     candidates = [t.occurred_at for t in data.transitions if t.entity_id == wi.id]
-    if wi.updated_at is not None:
-        candidates.append(wi.updated_at)
+    if wi.created_at is not None:
+        candidates.append(wi.created_at)
     if not candidates:
-        return wi.created_at
+        return None
     return min(candidates)
 
 
@@ -743,9 +743,9 @@ def _mr_field_value(
 
 def _compare(observed: object, operator: str, expected: object) -> bool:
     if operator == "is":
-        return observed == expected
+        return observed is not None and observed == expected
     if operator == "is_not":
-        return observed != expected
+        return observed is not None and observed != expected
     if operator == "is_any_of":
         return observed in _list(expected)
     if operator == "is_none_of":
@@ -836,7 +836,9 @@ def _workitems_for_scope(data: SignalData, scope: ScopeDescriptor) -> list[WorkI
     return list(data.workitems)
 
 
-def _current_status_started_at(workitem: WorkItem, transitions: tuple[Transition, ...]) -> datetime:
+def _current_status_started_at(
+    workitem: WorkItem, transitions: tuple[Transition, ...]
+) -> datetime | None:
     matching = [
         transition.occurred_at
         for transition in transitions
@@ -866,14 +868,14 @@ def _sprint_phase(workitem: WorkItem, data: SignalData, ctx: EvaluationContext) 
     return "middle"
 
 
-def _age_days(now: datetime, then: datetime | None) -> int | None:
+def _age_days(now: datetime, then: datetime | None) -> float | None:
     if then is None:
         return None
     if now.tzinfo is not None and then.tzinfo is None:
         then = then.replace(tzinfo=now.tzinfo)
     elif now.tzinfo is None and then.tzinfo is not None:
         now = now.replace(tzinfo=then.tzinfo)
-    return max((now - then).days, 0)
+    return max((now - then).total_seconds() / 86400.0, 0.0)
 
 
 def _list(value: object) -> list[object]:
