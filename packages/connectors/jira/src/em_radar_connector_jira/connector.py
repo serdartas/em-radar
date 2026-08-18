@@ -185,11 +185,16 @@ class JiraConnector:
                     value_provider=labels_provider,
                 ),
                 SignalField(
-                    "exclude_labels",
-                    "Exclude Labels",
+                    "components",
+                    "Components",
                     "string_list",
-                    ("does_not_contain", "does_not_contain_any"),
-                    value_provider=labels_provider,
+                    ("contains", "does_not_contain", "contains_any", "does_not_contain_any"),
+                ),
+                SignalField(
+                    "story_points",
+                    "Story Points",
+                    "number",
+                    ("gt", "lt", "gte", "lte", "eq", "neq", "is_empty", "is_not_empty"),
                 ),
                 SignalField(
                     "workitem_types",

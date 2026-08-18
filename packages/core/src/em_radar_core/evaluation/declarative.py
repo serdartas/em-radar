@@ -594,8 +594,10 @@ def _field_value(
         return workitem.status_category.value
     if field_key == "labels":
         return workitem.labels
-    if field_key == "exclude_labels":
-        return workitem.labels
+    if field_key == "components":
+        return workitem.components
+    if field_key == "story_points":
+        return workitem.story_points
     if field_key == "workitem_types":
         return workitem.type.value
     if field_key == "issue_type":
@@ -768,10 +770,38 @@ def _compare(observed: object, operator: str, expected: object) -> bool:
         return not _compare(observed, "is_empty", expected)
     if (
         operator
-        in {"greater_than", "less_than", "between", "before", "after", "is_before", "is_after"}
+        in {
+            "greater_than",
+            "less_than",
+            "between",
+            "before",
+            "after",
+            "is_before",
+            "is_after",
+            "gt",
+            "lt",
+            "gte",
+            "lte",
+            "eq",
+            "neq",
+        }
         and observed is None
     ):
         return False
+    if operator in {"gt", "lt", "gte", "lte", "eq", "neq"}:
+        left = _numeric(observed)
+        right = _numeric(expected)
+        if operator == "gt":
+            return left > right
+        if operator == "lt":
+            return left < right
+        if operator == "gte":
+            return left >= right
+        if operator == "lte":
+            return left <= right
+        if operator == "eq":
+            return left == right
+        return left != right
     if operator in {"greater_than", "less_than"}:
         left = _numeric(observed)
         right = _duration_days(expected)
