@@ -612,7 +612,11 @@ def _field_value(
         if workitem.parent_id is None:
             return False
         parent = next((item for item in data.workitems if item.id == workitem.parent_id), None)
-        return parent is not None and parent.type is WorkItemType.EPIC
+        if parent is None:
+            # Parent is outside the fetched scope (e.g. cross-project epic).
+            # Return None to indicate unknown rather than incorrectly signalling False.
+            return None
+        return parent.type is WorkItemType.EPIC
     if field_key == "description_length":
         return len(workitem.description or "")
     if field_key == "child_count":

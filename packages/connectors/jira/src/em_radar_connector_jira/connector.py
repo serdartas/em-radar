@@ -74,7 +74,9 @@ _SYSTEM_ISSUE_FIELDS = (
 
 
 class JiraFieldMappingConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    # extra="ignore" so persisted configs that still carry the removed epic_link key
+    # load without error; unknown keys are silently dropped.
+    model_config = ConfigDict(extra="ignore")
 
     story_points: str = _STORY_POINTS_FIELD
     acceptance_criteria: str | None = None

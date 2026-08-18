@@ -414,3 +414,25 @@ def test_has_epic_parent_false_when_parent_is_not_epic() -> None:
     )
 
     assert len(findings) == 2
+
+
+def test_has_epic_parent_none_when_parent_not_in_scope() -> None:
+    """has_epic_parent returns None (no finding) when the parent is outside the fetched scope.
+
+    Avoids false 'has_epic_parent is false' findings for cross-project parent scenarios
+    where the epic lives in a project that was not fetched.
+    """
+    from uuid import uuid4 as _uuid4
+
+    story = workitem(key="RAD-1", parent_id=_uuid4())  # parent_id points to unknown item
+    expression = {"field": "has_epic_parent", "operator": "is", "value": False}
+
+    findings = evaluate_signal_definition(
+        _definition({"type": "group", "operator": "all", "conditions": [expression]}),
+        SignalData(report_id=uuid4(), projects=(project(),), workitems=(story,)),
+        context(),
+        JiraConnector.describe_signal_schema(),
+        [_scope()],
+    )
+
+    assert findings == []
