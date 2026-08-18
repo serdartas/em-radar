@@ -26,8 +26,6 @@ BOARD_ID = uuid4()
 def context(sprint_id: UUID | None = None) -> EvaluationContext:
     team = TeamProfile(
         name="Signal test team",
-        project_ids=[PROJECT_ID],
-        repository_ids=[],
         created_at=NOW,
         updated_at=NOW,
     )

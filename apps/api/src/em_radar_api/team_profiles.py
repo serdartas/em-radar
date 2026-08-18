@@ -15,9 +15,6 @@ class TeamProfileCreate(SQLModel):
     description: str | None = None
     connection_ids: list[UUID] = Field(default_factory=list)
     scope_ids: list[UUID] = Field(default_factory=list)
-    project_ids: list[UUID] = Field(default_factory=list)
-    board_ids: list[UUID] = Field(default_factory=list)
-    repository_ids: list[UUID] = Field(default_factory=list)
     signal_config_group_ids: list[UUID] = Field(default_factory=list)
     code_connection_id: UUID | None = None
     working_mode: WorkingMode = WorkingMode.SCRUM
@@ -36,9 +33,6 @@ class TeamProfileUpdate(SQLModel):
     description: str | None = None
     connection_ids: list[UUID] | None = None
     scope_ids: list[UUID] | None = None
-    project_ids: list[UUID] | None = None
-    board_ids: list[UUID] | None = None
-    repository_ids: list[UUID] | None = None
     signal_config_group_ids: list[UUID] | None = None
     code_connection_id: UUID | None = None
     working_mode: WorkingMode | None = None
