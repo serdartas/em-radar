@@ -129,7 +129,7 @@ def test_fetch_workitems_normalizes_fixture_issues(monkeypatch: pytest.MonkeyPat
 
     assert seen_jql == [
         'project in ("10000") AND issuetype in ("Epic", "Story", "Bug") '
-        'AND updated >= "2026-06-01 00:00+0000" AND updated < "2026-06-15 00:00+0000"'
+        'AND updated < "2026-06-15 00:00+0000"'
     ]
 
 
@@ -289,13 +289,12 @@ def test_fetch_workitems_falls_back_to_classic_search_when_jql_missing(
     assert seen_paths == ["/rest/api/2/search/jql", "/rest/api/2/search"]
 
 
-def test_fetch_workitems_date_range_jql_uses_half_open_window(
+def test_fetch_workitems_date_range_jql_uses_exclusive_upper_bound(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """DATE_RANGE windows must emit updated >= start AND updated < end (half-open [start, end)).
+    """DATE_RANGE windows must emit updated < end (exclusive upper bound) with +0000 UTC offset.
 
-    Both bounds are emitted with an explicit +0000 UTC offset (AUDIT-6) so non-UTC
-    Jira accounts apply the correct window server-side.
+    No lower bound is emitted — stale issues must still appear for snapshot signals.
     """
     seen_jql: list[str] = []
 
@@ -323,8 +322,8 @@ def test_fetch_workitems_date_range_jql_uses_half_open_window(
     asyncio.run(run())
 
     assert len(seen_jql) == 1
-    assert 'updated >= "2026-06-01 00:00+0000"' in seen_jql[0]
     assert 'updated < "2026-06-15 00:00+0000"' in seen_jql[0]
+    assert "updated >= " not in seen_jql[0]
     assert 'updated <= "2026-06-15 00:00+0000"' not in seen_jql[0]
 
 
@@ -541,10 +540,14 @@ def test_fetch_workitems_wraps_http_errors(monkeypatch: pytest.MonkeyPatch) -> N
     asyncio.run(run())
 
 
-def test_date_range_jql_includes_explicit_utc_offset_and_start_predicate(
+def test_date_range_jql_includes_explicit_utc_offset_in_upper_bound(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """AUDIT-6/13: date-range JQL must include +0000 offsets and an updated >= <start> clause."""
+    """AUDIT-6: date-range JQL upper bound must carry an explicit +0000 UTC offset.
+
+    No lower-bound predicate is emitted — stale issues updated before window.start must
+    still appear in results so snapshot signals (e.g. StaleInProgressSignal) can evaluate them.
+    """
     seen_jql: list[str] = []
 
     async def run() -> None:
@@ -570,8 +573,8 @@ def test_date_range_jql_includes_explicit_utc_offset_and_start_predicate(
     asyncio.run(run())
 
     assert len(seen_jql) == 1
-    assert 'updated >= "2026-06-01 00:00+0000"' in seen_jql[0]
     assert 'updated < "2026-06-15 00:00+0000"' in seen_jql[0]
+    assert "updated >= " not in seen_jql[0]
 
 
 def test_sprint_jql_includes_sprint_external_id_predicate(

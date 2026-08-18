@@ -336,9 +336,13 @@ class JiraConnector:
                 inline_cl = payload.get("changelog")
                 if isinstance(inline_cl, Mapping):
                     try:
-                        self._inline_changelogs[external_id] = _payload_histories(
-                            cast(Mapping[str, object], inline_cl)
-                        )
+                        inline_cl_m = cast(Mapping[str, object], inline_cl)
+                        histories = _payload_histories(inline_cl_m)
+                        cl_total = inline_cl_m.get("total")
+                        # Only cache when the inline page is complete; if Jira truncated it
+                        # (total > len), fetch_transitions will fall back to the paginated endpoint.
+                        if not isinstance(cl_total, int) or cl_total == len(histories):
+                            self._inline_changelogs[external_id] = histories
                     except ConnectorDataError:
                         pass
 
@@ -1208,9 +1212,10 @@ def _workitem_jql(scope: WorkItemScope, window: EvaluationWindow) -> str:
     if scope.workitem_types:
         clauses.append(f"issuetype in ({_jql_list(_jira_issue_type_names(scope.workitem_types))})")
     if window.window_type is WindowType.DATE_RANGE:
-        if window.end is None or window.start is None:
-            raise ConnectorDataError("Date-range window was missing start or end")
-        clauses.append(f'updated >= "{_jql_datetime(window.start)}"')
+        if window.end is None:
+            raise ConnectorDataError("Date-range window was missing end")
+        # No lower-bound predicate: stale issues updated before window.start must still appear
+        # so snapshot signals (e.g. StaleInProgressSignal) can evaluate them.
         clauses.append(f'updated < "{_jql_datetime(_ceil_to_minute(window.end))}"')
     elif window.window_type is WindowType.SPRINT and scope.sprint_external_id is not None:
         clauses.append(f"sprint = {scope.sprint_external_id}")
