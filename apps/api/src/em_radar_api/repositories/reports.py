@@ -1,9 +1,11 @@
+# SPDX-License-Identifier: Apache-2.0
+
 from collections.abc import Sequence
 from uuid import UUID
 
-from sqlmodel import Session, desc, select
+from sqlmodel import Session, delete, desc, select
 
-from em_radar_api.tables import ReportTable, SignalFindingTable
+from em_radar_api.tables import EvaluationWindowTable, ReportTable, SignalFindingTable
 
 
 def create_report(session: Session, report: ReportTable) -> ReportTable:
@@ -40,3 +42,33 @@ def get_findings(session: Session, report_id: UUID) -> list[SignalFindingTable]:
     return list(
         session.exec(select(SignalFindingTable).where(SignalFindingTable.report_id == report_id))
     )
+
+
+def delete_reports_for_team(session: Session, team_id: UUID) -> None:
+    """Delete all reports, findings, and evaluation windows for a team."""
+    window_ids: list[UUID] = list(
+        session.exec(
+            select(EvaluationWindowTable.id).where(EvaluationWindowTable.team_profile_id == team_id)
+        )
+    )
+    if not window_ids:
+        return
+
+    report_ids: list[UUID] = list(
+        session.exec(select(ReportTable.id).where(ReportTable.evaluation_window_id.in_(window_ids)))
+    )
+    if report_ids:
+        session.exec(delete(SignalFindingTable).where(SignalFindingTable.report_id.in_(report_ids)))
+    session.exec(delete(ReportTable).where(ReportTable.evaluation_window_id.in_(window_ids)))
+    session.exec(
+        delete(EvaluationWindowTable).where(EvaluationWindowTable.team_profile_id == team_id)
+    )
+    session.commit()
+
+
+def delete_all_reports(session: Session) -> None:
+    """Delete every report, finding, and evaluation window in the database."""
+    session.exec(delete(SignalFindingTable))
+    session.exec(delete(ReportTable))
+    session.exec(delete(EvaluationWindowTable))
+    session.commit()

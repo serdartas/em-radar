@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 from em_radar_core.models.common import CommonFields, UUIDListJSON
 from em_radar_core.models.code import Comment, MergeRequest, Repository, Review, Transition
 from em_radar_core.models.enums import (

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -21,6 +23,7 @@ from em_radar_api.routers.signal_pack import router as signal_pack_router
 from em_radar_api.routers.source_connections import router as source_connections_router
 from em_radar_api.routers.teams import router as teams_router
 from em_radar_api.startup import seed_default_signal_group
+from em_radar_core.http_client import configure_log_scrubbing
 
 
 class SPAStaticFiles(StaticFiles):
@@ -45,6 +48,10 @@ def create_app(
     static_dir: Path | None = None,
     app_session_factory: sessionmaker[Session] = session_factory,
 ) -> FastAPI:
+    # Wire the credential-redacting log record factory before any connector or
+    # route handler can run so no log record can carry a raw token.
+    configure_log_scrubbing()
+
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         del app

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 import { Badge } from "@/components/ui/badge"
 import { connectionErrorGuidance } from "@/lib/connectionErrors"
 import { connectionErrorMessage, type ConnectionTestResult } from "@/lib/connections"

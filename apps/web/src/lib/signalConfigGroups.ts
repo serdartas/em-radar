@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 import { apiFetch } from "@/lib/api"
 
 export interface SignalConfigGroup {

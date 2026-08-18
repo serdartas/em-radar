@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 import { type ReactNode, useEffect, useRef, useState } from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { Link } from "react-router-dom"
@@ -318,9 +320,13 @@ const GITLAB_FIELD_HELP: Record<string, ReactNode> = {
   token: (
     <p>
       Use a <strong>read-only</strong> GitLab personal access token with the{" "}
-      <code className="rounded bg-blue-100 px-1">read_api</code> scope. Create one under Preferences
-      &rarr; Access Tokens for an account that can see the projects you report on. A read-only token
-      keeps EM Radar from making any changes to your GitLab data.
+      <code className="rounded bg-blue-100 px-1">read_api</code> scope - that is the only scope
+      EM Radar needs. Create one under Preferences &rarr; Access Tokens for an account that can see
+      the projects you report on.{" "}
+      <Link className="font-medium underline" to="/help/gitlab">
+        How to generate a GitLab token
+      </Link>
+      .
     </p>
   ),
   verify_tls: (

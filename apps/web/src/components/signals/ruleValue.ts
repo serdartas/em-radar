@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 import type { SignalField } from "@/lib/connectors"
 
 export const NO_VALUE_OPERATORS = new Set(["is_empty", "is_not_empty"])

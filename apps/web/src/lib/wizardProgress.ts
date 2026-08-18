@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 export type WizardStep = "gitlab" | "jira" | "sources" | "team" | "welcome"
 
 export interface WizardProgress {

@@ -1,15 +1,18 @@
+# SPDX-License-Identifier: Apache-2.0
+
 from collections.abc import Sequence
 from dataclasses import dataclass
 from uuid import UUID, uuid4, uuid5
 
-from sqlalchemy import text
-from sqlmodel import Session, SQLModel, select
+from sqlalchemy import text, update as sa_update
+from sqlmodel import Session, SQLModel, delete, select
 
 from em_radar_normalizer import resolve_references
 
 from em_radar_api.tables import (
     BoardTable,
     CommentTable,
+    EvaluationWindowTable,
     MergeRequestTable,
     ProjectTable,
     RepositoryTable,
@@ -17,8 +20,10 @@ from em_radar_api.tables import (
     SprintTable,
     TransitionTable,
     UserTable,
+    WorkItemLinkTable,
     WorkItemTable,
 )
+from em_radar_core.models import Source
 from em_radar_core.models import (
     Board,
     Comment,
@@ -220,3 +225,64 @@ def _history_id(table_cls: type[SQLModel], data: dict[str, object]) -> UUID:
     fields = _HISTORY_IDENTITY_FIELDS[table_cls.__tablename__]
     key = "|".join([table_cls.__tablename__, *(str(data.get(field)) for field in fields)])
     return uuid5(_HISTORY_NAMESPACE, key)
+
+
+def delete_canonical_data_for_source(session: Session, source: Source) -> None:
+    """Remove all cached canonical data for a connector source type.
+
+    Rows are removed in FK-safe order (children before parents) so that SQLite's
+    foreign_keys=ON constraint is satisfied without needing PRAGMA defer_foreign_keys.
+
+    This deletes all data keyed by the connector type (e.g. Source.JIRA).  If two
+    connections share a type the combined cached data is cleared — a known MVP
+    limitation of the data model where ``source`` is the connector type, not the
+    connection id.
+    """
+    # Collect ids of entities for this source that are parents of child-only tables.
+    # session.exec(select(Table.col)) returns the scalar column values directly.
+    work_item_ids: list[UUID] = list(
+        session.exec(select(WorkItemTable.id).where(WorkItemTable.source == source))
+    )
+    mr_ids: list[UUID] = list(
+        session.exec(select(MergeRequestTable.id).where(MergeRequestTable.source == source))
+    )
+    sprint_ids: list[UUID] = list(
+        session.exec(select(SprintTable.id).where(SprintTable.source == source))
+    )
+
+    # Delete append-only child rows before their parents.
+    if work_item_ids:
+        session.exec(
+            delete(WorkItemLinkTable).where(WorkItemLinkTable.source_workitem_id.in_(work_item_ids))
+        )
+        session.exec(
+            delete(TransitionTable).where(
+                TransitionTable.entity_type == "workitem",
+                TransitionTable.entity_id.in_(work_item_ids),
+            )
+        )
+    if mr_ids:
+        session.exec(delete(ReviewTable).where(ReviewTable.mergerequest_id.in_(mr_ids)))
+        session.exec(
+            delete(TransitionTable).where(
+                TransitionTable.entity_type == "mergerequest",
+                TransitionTable.entity_id.in_(mr_ids),
+            )
+        )
+    session.exec(delete(CommentTable).where(CommentTable.source == source))
+    session.exec(delete(MergeRequestTable).where(MergeRequestTable.source == source))
+    session.exec(delete(WorkItemTable).where(WorkItemTable.source == source))
+
+    # Null out sprint_id on evaluation windows before removing sprints.
+    if sprint_ids:
+        session.execute(
+            sa_update(EvaluationWindowTable.__table__)
+            .where(EvaluationWindowTable.__table__.c.sprint_id.in_(sprint_ids))
+            .values(sprint_id=None)
+        )
+
+    session.exec(delete(SprintTable).where(SprintTable.source == source))
+    session.exec(delete(BoardTable).where(BoardTable.source == source))
+    session.exec(delete(ProjectTable).where(ProjectTable.source == source))
+    session.exec(delete(RepositoryTable).where(RepositoryTable.source == source))
+    session.exec(delete(UserTable).where(UserTable.source == source))

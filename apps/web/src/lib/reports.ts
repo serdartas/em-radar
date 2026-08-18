@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+
+
 import { API_BASE_URL, ApiError, apiFetch } from "@/lib/api"
 import type { Severity } from "@/lib/severity"
 
@@ -160,4 +163,9 @@ export function reportMarkdownQuery(reportId: string) {
     queryKey: ["reports", reportId, "export.md"] as const,
     queryFn: () => getReportMarkdown(reportId),
   }
+}
+
+export async function deleteReportHistory(teamId?: string): Promise<void> {
+  const query = teamId ? `?team_id=${encodeURIComponent(teamId)}` : ""
+  await apiFetch<void>(`/reports${query}`, { method: "DELETE" })
 }

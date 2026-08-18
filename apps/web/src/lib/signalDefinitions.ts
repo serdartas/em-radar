@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 import { apiFetch } from "@/lib/api"
 import type { Severity } from "@/lib/severity"
 

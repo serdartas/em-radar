@@ -326,3 +326,35 @@ Carried as the explicit "do not pull into MVP" list. Reorder as priorities sharp
 - Specific calendar dates. This is a personal-cadence project; sequencing matters more than dates.
 - Resource allocation. Single owner.
 - Funding, marketing, branding.
+
+## M8 — Post-v0.1.0 UAT hardening
+
+This program is **post-release**: it starts after `v0.1.0` ships and addresses findings from a
+v0.1.0 user-acceptance-testing (UAT) pass plus a targeted codebase/docs audit. It does not change
+the MVP scope above; the milestones M0–v0.1.0 remain the record of the first release. The work is
+organized into six **strictly sequential** sub-milestones — nothing earlier depends on anything
+later, so they land in order.
+
+The findings, agreed solutions, and the ticket breakdown they map to are captured in
+[`docs/backlog/M8-UAT/M8-uat-findings.md`](./backlog/M8-UAT/M8-uat-findings.md); the individual
+issues live in [`docs/backlog/`](./backlog/). Each ticket updates its own spec section when it
+lands, so the numbered spec documents continue to describe current, committed behaviour.
+
+- **M8.1 — UAT: High-severity bugs.** Crash and correctness fixes surfaced by UAT, including the
+  report-run 500 (epics with parents) and core evaluation/model bugs.
+- **M8.2 — UAT: Data model & signal engine.** Expose `components` and `story_points` as signal
+  fields and remove `exclude_labels`; remove the synthesized "blocked" status category and
+  `is_blocked`; remove the signal `enabled` flag and `version`; make signal export a readable
+  rules list; add `scope_name` to findings; remove vestigial `TeamProfile` id arrays; add
+  `describe_signal_schema` to the connector protocol.
+- **M8.3 — UAT: Backend features & infrastructure.** Jira field metadata discovery; async report
+  jobs with persisted status; release the DB write-lock across connector I/O; a report-runner
+  sprint picker; telemetry wire-up; default-pack discoverability and validity.
+- **M8.4 — UAT: Component architecture & shared UI.** Introduce shared UI primitives and decompose
+  large pages so pages become thin compositions.
+- **M8.5 — UAT: UX improvements.** HIG-aligned polish across field mapping, the signal builder,
+  signal editing, report change-awareness, setup-wizard navigation, the sources combobox,
+  connections disclosure, teams/groups states, mutation robustness, and form validation +
+  accessibility.
+- **M8.6 — UAT: Documentation & tests.** Spec/doc sync for existing behaviour and test-coverage
+  fills.

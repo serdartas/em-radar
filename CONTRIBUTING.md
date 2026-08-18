@@ -71,6 +71,10 @@ docker compose -f deploy/docker/docker-compose.yml up --build
 # then open http://localhost:8080
 ```
 
+The app binds to `127.0.0.1:8080` by default (local machine only). To expose it on your
+LAN (trusted networks only - no authentication in the current release), see the override
+instructions in the [Quick start section of the README](README.md#quick-start).
+
 ### Debugging and local development
 
 For running the stack **without Docker** (backend with `--reload`, frontend with HMR, a
@@ -142,7 +146,21 @@ Two project-specific rules that are easy to get wrong:
 
 ---
 
-## 9. Contributor rights and assignment
+## 9. Definition of Done
+
+A contribution is done when **all** of the following are true:
+
+- The implementation matches the issue `Scope` exactly - nothing added, nothing omitted.
+- Nothing listed in `Out of scope` was implemented.
+- The `Verification` block passes locally (and in CI once the PR is open).
+- All new behavior has a test (scaffolding and docs issues are exempt).
+- Lint (`ruff check`, `ruff format --check`, `npm run lint`) is clean.
+- The PR references the issue with `Fixes #<n>`.
+- The Contributor Assignment Agreement box in the PR template is checked.
+
+---
+
+## 10. Contributor rights and assignment
 
 EM Radar requires a copyright assignment so accepted original contributions have a single
 copyright owner who can maintain, license, and commercially develop the project. Before a

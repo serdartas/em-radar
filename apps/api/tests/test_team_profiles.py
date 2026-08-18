@@ -561,7 +561,10 @@ def test_code_only_connection_deletion_blocked_by_team_guard(
     response = api_client.delete(f"/api/connections/{gitlab_id}")
 
     assert response.status_code == 409
-    assert "referenced by a team" in response.json()["detail"]
+    detail = response.json()["detail"]
+    # The 409 detail is now a structured object with message + dependent_teams.
+    assert "referenced by one or more teams" in detail["message"]
+    assert any(t["name"] == "Platform" for t in detail["dependent_teams"])
 
 
 # ---------------------------------------------------------------------------
@@ -593,7 +596,7 @@ def test_changing_code_source_connector_to_non_mr_capable_is_rejected(
     )
 
     assert response.status_code == 409
-    assert "non-MR-capable" in response.json()["detail"]
+    assert "non-MR-capable" in response.json()["detail"]["message"]
 
 
 def test_changing_code_source_connector_to_another_mr_capable_is_allowed(

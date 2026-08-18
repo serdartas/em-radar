@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 import fnmatch
 from dataclasses import dataclass, field
 from datetime import datetime, timezone

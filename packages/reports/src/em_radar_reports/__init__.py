@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+
+
 from em_radar_reports.markdown_export import REPORT_TITLE, ReportMetadata, render_markdown
 from em_radar_reports.sectioning import (
     SECTION_ORDER,

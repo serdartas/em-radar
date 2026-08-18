@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 from collections.abc import Hashable, Mapping, Sequence
 from dataclasses import dataclass, field
 from fnmatch import fnmatch
