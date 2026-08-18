@@ -232,11 +232,34 @@ def _validate_pack(pack: SignalPack, context: PackValidationContext) -> None:
 def _resolve_signal_expression(signal: SignalEntry) -> dict[str, object] | None:
     """Convert rules list to expression dict, or return expression directly."""
     if signal.rules is not None:
+        _validate_rules_join_sequence(signal.rules)
         first_join = signal.rules[0].get("join") if len(signal.rules) > 1 else None
         group_operator = "any" if first_join == "or" else "all"
         conditions = [{k: v for k, v in rule.items() if k != "join"} for rule in signal.rules]
         return {"type": "group", "operator": group_operator, "conditions": conditions}
     return signal.expression
+
+
+def _validate_rules_join_sequence(rules: list[dict[str, object]]) -> None:
+    """Enforce that the join sequence is uniform, valid, and absent on the last rule."""
+    if len(rules) <= 1:
+        if rules and rules[0].get("join") is not None:
+            raise PackValidationError("A single-rule signal must not have a join on the rule.")
+        return
+    first_join = rules[0].get("join")
+    if first_join not in ("and", "or"):
+        raise PackValidationError(
+            f"rules[0] has invalid or missing join {first_join!r}; expected 'and' or 'or'."
+        )
+    for i, rule in enumerate(rules[:-1]):
+        rule_join = rule.get("join")
+        if rule_join != first_join:
+            raise PackValidationError(
+                f"rules[{i}] join {rule_join!r} differs from rules[0] join {first_join!r}; "
+                "joins must be uniform across all rules."
+            )
+    if rules[-1].get("join") is not None:
+        raise PackValidationError("The last rule in a multi-rule signal must not have a join.")
 
 
 def _validate_signal_expression(

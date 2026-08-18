@@ -110,29 +110,43 @@ def _expression_to_rules(
     *,
     scrub: bool,
 ) -> list[dict[str, object]]:
-    """Convert a grouped expression to a flat rules list with per-rule join values."""
+    """Convert a grouped expression to a flat rules list with per-rule join values.
+
+    Top-level leaf conditions (non-group expressions) are wrapped as a single rule.
+    Nested group conditions are skipped — the builder never creates them.
+    """
     if expression.get("type") != "group":
-        return []
+        # Top-level leaf: wrap as a single-rule list.
+        return [_condition_to_rule(expression, join=None, scrub=scrub)]
     conditions = expression.get("conditions")
     if not isinstance(conditions, list) or not conditions:
         return []
     group_operator = expression.get("operator", "all")
     join = "or" if group_operator == "any" else "and"
+    leaf_conditions = [c for c in conditions if isinstance(c, dict) and c.get("type") != "group"]
     rules: list[dict[str, object]] = []
-    for i, condition in enumerate(conditions):
-        if not isinstance(condition, dict):
-            continue
-        rule: dict[str, object] = {
-            "field": condition.get("field"),
-            "operator": condition.get("operator"),
-        }
-        if condition.get("operator") not in ("is_empty", "is_not_empty"):
-            if not scrub:
-                rule["value"] = condition.get("value")
-        if i < len(conditions) - 1 and len(conditions) > 1:
-            rule["join"] = join
-        rules.append(rule)
+    for i, condition in enumerate(leaf_conditions):
+        rule_join = join if i < len(leaf_conditions) - 1 and len(leaf_conditions) > 1 else None
+        rules.append(_condition_to_rule(condition, join=rule_join, scrub=scrub))
     return rules
+
+
+def _condition_to_rule(
+    condition: dict[str, object],
+    *,
+    join: str | None,
+    scrub: bool,
+) -> dict[str, object]:
+    rule: dict[str, object] = {
+        "field": condition.get("field"),
+        "operator": condition.get("operator"),
+    }
+    if condition.get("operator") not in ("is_empty", "is_not_empty"):
+        if not scrub:
+            rule["value"] = condition.get("value")
+    if join is not None:
+        rule["join"] = join
+    return rule
 
 
 def _slugify(text: str) -> str | None:
