@@ -129,7 +129,7 @@ def test_story_without_parent_epic_fires_with_generic_evidence() -> None:
 
     assert len(findings) == 1
     ev = findings[0].evidence
-    assert "parent_id" in ev
+    assert "has_epic_parent" in ev
 
 
 def test_epic_too_broad_fires_with_generic_evidence() -> None:
@@ -370,6 +370,42 @@ def test_sprint_scope_churn_evidence_counts_with_multiple_originals() -> None:
 # ---------------------------------------------------------------------------
 # 3. No template_key == branch in declarative.py
 # ---------------------------------------------------------------------------
+
+
+def test_sprint_scope_churn_created_before_sprint_no_transitions_counts_as_original() -> None:
+    """AUDIT-1: item with created_at < sprint.start < updated_at and no transitions is pre-existing.
+
+    Before the fix, _first_seen_at used updated_at (which is after sprint start) so the item
+    was mis-counted as "added", inflating sprint_scope_added_pct.
+    """
+    s = sprint(name="Sprint 1", start_date=NOW - timedelta(days=7))
+    # created before sprint, updated after sprint start, no transitions
+    pre_existing = workitem(
+        key="RAD-1",
+        sprint_ids=[s.id],
+        current_sprint_id=s.id,
+        created_at=NOW - timedelta(days=10),
+        updated_at=NOW - timedelta(days=2),
+    )
+    data = SignalData(
+        report_id=uuid4(),
+        projects=(project(),),
+        boards=(board(),),
+        sprints=(s,),
+        workitems=(pre_existing,),
+        transitions=(),
+    )
+    ctx = context(sprint_id=s.id)
+    definition = instantiate_jira_signal_template("sprint-scope-churn")
+
+    # No added items → 0 % churn → signal must NOT fire (threshold=20%)
+    findings = evaluate_signal_definition(
+        definition, data, ctx, JiraConnector.describe_signal_schema(), [_sprint_scope()]
+    )
+    assert findings == [], (
+        "Item created before sprint start must count as pre-existing even if "
+        "updated_at is after sprint start"
+    )
 
 
 def test_declarative_py_has_no_template_key_equality_branches() -> None:

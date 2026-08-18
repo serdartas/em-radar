@@ -7,7 +7,7 @@ from em_radar_core.evaluation import (
     evaluate_signal_definition,
     validate_expression,
 )
-from em_radar_core.models import ReportSettings, SignalDefinition, SignalOrigin
+from em_radar_core.models import ReportSettings, SignalDefinition, SignalOrigin, WorkItemType
 from em_radar_core.signals import SignalData
 from em_radar_connector_jira.connector import JiraConnector
 
@@ -360,6 +360,149 @@ def test_between_date_only_strings_false() -> None:
         context(),
         JiraConnector.describe_signal_schema(),
         [_scope()],
+    )
+
+    assert findings == []
+
+
+def test_has_epic_parent_true_when_parent_is_epic() -> None:
+    """has_epic_parent returns True for a story whose parent is an Epic."""
+    epic = workitem(key="RAD-0", item_type=WorkItemType.EPIC)
+    story = workitem(key="RAD-1", parent_id=epic.id)
+    expression = {"field": "has_epic_parent", "operator": "is", "value": True}
+
+    findings = evaluate_signal_definition(
+        _definition({"type": "group", "operator": "all", "conditions": [expression]}),
+        SignalData(report_id=uuid4(), projects=(project(),), workitems=(epic, story)),
+        context(),
+        JiraConnector.describe_signal_schema(),
+        [_scope()],
+    )
+
+    assert len(findings) == 1
+    assert findings[0].entity_id == story.id
+
+
+def test_has_epic_parent_false_when_no_parent() -> None:
+    """has_epic_parent returns False for a story with no parent."""
+    story = workitem(key="RAD-1", parent_id=None)
+    expression = {"field": "has_epic_parent", "operator": "is", "value": False}
+
+    findings = evaluate_signal_definition(
+        _definition({"type": "group", "operator": "all", "conditions": [expression]}),
+        SignalData(report_id=uuid4(), projects=(project(),), workitems=(story,)),
+        context(),
+        JiraConnector.describe_signal_schema(),
+        [_scope()],
+    )
+
+    assert len(findings) == 1
+
+
+def test_has_epic_parent_false_when_parent_is_not_epic() -> None:
+    """has_epic_parent returns False for a story whose parent is a Story (not Epic)."""
+    parent_story = workitem(key="RAD-0", item_type=WorkItemType.STORY)
+    child = workitem(key="RAD-1", parent_id=parent_story.id)
+    expression = {"field": "has_epic_parent", "operator": "is", "value": False}
+
+    findings = evaluate_signal_definition(
+        _definition({"type": "group", "operator": "all", "conditions": [expression]}),
+        SignalData(report_id=uuid4(), projects=(project(),), workitems=(parent_story, child)),
+        context(),
+        JiraConnector.describe_signal_schema(),
+        [_scope()],
+    )
+
+    assert len(findings) == 2
+
+
+def test_has_epic_parent_none_when_parent_not_in_scope() -> None:
+    """has_epic_parent returns None (no finding) when the parent is outside the fetched scope.
+
+    Avoids false 'has_epic_parent is false' findings for cross-project parent scenarios
+    where the epic lives in a project that was not fetched.
+    """
+    from uuid import uuid4 as _uuid4
+
+    story = workitem(key="RAD-1", parent_id=_uuid4())  # parent_id points to unknown item
+    expression = {"field": "has_epic_parent", "operator": "is", "value": False}
+
+    findings = evaluate_signal_definition(
+        _definition({"type": "group", "operator": "all", "conditions": [expression]}),
+        SignalData(report_id=uuid4(), projects=(project(),), workitems=(story,)),
+        context(),
+        JiraConnector.describe_signal_schema(),
+        [_scope()],
+    )
+
+    assert findings == []
+
+
+def test_age_days_returns_fractional_value() -> None:
+    """AUDIT-3: _age_days must return fractional days so hour-granularity thresholds fire."""
+    # Item created 6 hours ago → 0.25 days; threshold is 5 hours (5/24 ≈ 0.208 days)
+    item = workitem(created_at=NOW - timedelta(hours=6), updated_at=NOW - timedelta(hours=6))
+    expression = {
+        "type": "group",
+        "operator": "all",
+        "conditions": [
+            {
+                "field": "age_since_created",
+                "operator": "greater_than",
+                "value": {"amount": 5, "unit": "hours"},
+            }
+        ],
+    }
+
+    findings = evaluate_signal_definition(
+        _definition(expression),
+        SignalData(report_id=uuid4(), projects=(project(),), workitems=(item,)),
+        context(),
+        JiraConnector.describe_signal_schema(),
+        [_scope()],
+    )
+
+    assert len(findings) == 1
+    age = findings[0].evidence["age_since_created"]
+    assert isinstance(age, float)
+    assert abs(age - 0.25) < 0.01
+
+
+def test_is_operator_against_none_field_returns_no_match() -> None:
+    """AUDIT-32: `is` against a None field must not fire — None is never equal to a real value."""
+    item = workitem(key="RAD-1")  # no sprint_ids/current_sprint_id → sprint_phase is None
+    expression = {
+        "type": "group",
+        "operator": "all",
+        "conditions": [{"field": "sprint_phase", "operator": "is", "value": "first_day"}],
+    }
+
+    findings = evaluate_signal_definition(
+        _definition(expression),
+        SignalData(report_id=uuid4(), projects=(project(),), workitems=(item,)),
+        context(),
+        JiraConnector.describe_signal_schema(),
+        [_scope(("sprint", "statuses", "labels"))],
+    )
+
+    assert findings == []
+
+
+def test_is_not_operator_against_none_field_returns_no_match() -> None:
+    """AUDIT-32: `is_not` against a None field must not spuriously fire."""
+    item = workitem(key="RAD-1")  # no sprint → sprint_phase is None
+    expression = {
+        "type": "group",
+        "operator": "all",
+        "conditions": [{"field": "sprint_phase", "operator": "is_not", "value": "first_day"}],
+    }
+
+    findings = evaluate_signal_definition(
+        _definition(expression),
+        SignalData(report_id=uuid4(), projects=(project(),), workitems=(item,)),
+        context(),
+        JiraConnector.describe_signal_schema(),
+        [_scope(("sprint", "statuses", "labels"))],
     )
 
     assert findings == []

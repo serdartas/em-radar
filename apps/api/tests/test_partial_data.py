@@ -230,10 +230,10 @@ def test_non_typed_connector_error_is_still_fatal(
     )
 
 
-def test_auth_error_on_board_source_produces_board_partial_data_note(
+def test_board_only_team_all_sources_failed_marks_report_failed(
     api_client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """ConnectorAuthError during board fetch → succeeded report with a board partial-data note."""
+    """AUDIT-5: board-only team whose sole board source fails → FAILED (not SUCCEEDED)."""
     monkeypatch.setattr(
         "em_radar_api.connector_registry._connector_types",
         lambda: [_FailingJiraTestConnector],
@@ -241,11 +241,10 @@ def test_auth_error_on_board_source_produces_board_partial_data_note(
     jira_id = _create_jira_connection(api_client)
     scope_id = _create_board_scope(api_client, jira_id, ["sprint", "statuses", "labels"])
 
-    # Board-only team: only board source, no code connection.
     team_id = api_client.post(
         "/api/teams",
         json={
-            "name": "Board auth-error team",
+            "name": "Board-only fail team",
             "connection_ids": [jira_id],
             "scope_ids": [scope_id],
             "working_mode": "kanban",
@@ -258,11 +257,40 @@ def test_auth_error_on_board_source_produces_board_partial_data_note(
 
     assert response.status_code == 200
     report = response.json()
-    assert report["status"] == "succeeded"
-    notes = report["signal_pack_snapshot"]["partial_data_notes"]
-    assert len(notes) == 1
-    assert notes[0]["source"] == "board"
-    assert "ConnectorAuthError" in notes[0]["reason"]
+    assert report["status"] == "failed", (
+        "board-only team with failing board source must be marked FAILED, not SUCCEEDED"
+    )
+    assert report["findings"] == []
+
+
+def test_code_only_team_all_sources_failed_marks_report_failed(
+    api_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AUDIT-5: code-only team whose sole (code) source fails → FAILED (not SUCCEEDED)."""
+    monkeypatch.setattr(
+        "em_radar_api.connector_registry._connector_types",
+        lambda: [_TransientGitLab],
+    )
+    gitlab_id = _create_gitlab_connection(api_client)
+    team_id = api_client.post(
+        "/api/teams",
+        json={
+            "name": "Code-only fail team",
+            "code_connection_id": gitlab_id,
+            "working_mode": "kanban",
+        },
+    ).json()["id"]
+
+    response = api_client.post(
+        "/api/reports/run", json={"connector": "jira", "team_profile_id": team_id}
+    )
+
+    assert response.status_code == 200
+    report = response.json()
+    assert report["status"] == "failed", (
+        "code-only team with failing code source must be marked FAILED, not SUCCEEDED"
+    )
+    assert report["findings"] == []
 
 
 def test_no_partial_data_note_when_all_sources_succeed(

@@ -491,15 +491,16 @@ async def _run_team_report(
 
     try:
         # All data sources failed — persist FAILED and return early rather than succeeding
-        # with zero findings (would violate REQ-NF-070). Only fires when both sources
-        # are configured; a single-source team with a partial failure keeps "succeeded".
-        if (
-            board_scope is not None
-            and has_code_source
-            and board_data is None
-            and code_data is None
+        # with zero findings (would violate REQ-NF-070). Fires when every configured source
+        # failed, regardless of how many sources are configured.
+        board_configured = board_scope is not None
+        code_configured = has_code_source
+        all_sources_failed = (
+            (not board_configured or board_data is None)
+            and (not code_configured or code_data is None)
             and partial_data_notes
-        ):
+        )
+        if all_sources_failed:
             report.status = ReportStatus.FAILED
             report.finished_at = datetime.now(timezone.utc)
             report.error = "all data sources failed: " + "; ".join(
@@ -681,12 +682,18 @@ async def _fetch_workitems_and_transitions(
     """Fetch workitems and transitions for an already-initialized board connector."""
     board_external_id = meta.board.external_id
     connector = meta.connector
+    sprint_external_id: str | None = None
+    if window.window_type is WindowType.SPRINT and window.sprint_id is not None:
+        matching_sprint = next((s for s in meta.sprints if s.id == window.sprint_id), None)
+        if matching_sprint is not None:
+            sprint_external_id = matching_sprint.external_id
     try:
         workitems = await _collect(
             connector.fetch_workitems(
                 WorkItemScope(
                     project_external_ids=[meta.project.external_id],
                     board_external_ids=[board_external_id],
+                    sprint_external_id=sprint_external_id,
                 ),
                 window,
             )
@@ -803,6 +810,7 @@ async def list_reports_endpoint(
             )
         )
     return responses
+
 
 
 
@@ -1056,6 +1064,8 @@ def _team_board_scope(session: Session, team_row: TeamProfileTable) -> ScopeDefi
 async def _find_jira_board(
     connector: WorkItemProvider, board_external_id: str
 ) -> tuple[Project, Board] | tuple[None, None]:
+    if isinstance(connector, JiraConnector):
+        return await connector.get_board(board_external_id)
     for project in await connector.list_projects():
         for board in await connector.list_boards(project.external_id):
             if board.external_id == board_external_id:

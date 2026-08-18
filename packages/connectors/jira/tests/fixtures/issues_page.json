@@ -59,13 +59,13 @@
         "issuetype": {"name": "Bug"},
         "status": {"name": "Done", "statusCategory": {"key": "done"}},
         "project": {"id": "10000", "key": "ENG"},
+        "parent": {"id": "10001", "key": "ENG-1"},
         "labels": [],
         "components": [{"name": "Reports"}],
         "created": "2026-06-03T09:00:00.000Z",
         "updated": "2026-06-06T09:00:00.000Z",
         "resolutiondate": "2026-06-06T09:00:00.000Z",
         "duedate": null,
-        "customfield_10014": "ENG-1",
         "customfield_10016": 2,
         "customfield_10020": []
       }

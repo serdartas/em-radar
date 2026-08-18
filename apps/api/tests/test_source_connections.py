@@ -84,6 +84,150 @@ def test_source_connection_crud_masks_credentials_but_instantiates_with_raw_conf
         assert instantiate_connector(session, created.id, RecordingConnector) is None
 
 
+def test_masked_credential_is_not_written_back_on_patch() -> None:
+    """AUDIT-4 regression: PATCH with a round-tripped masked token must not overwrite the real secret."""
+    engine = create_db_engine(":memory:")
+    SQLModel.metadata.create_all(engine)
+
+    real_token = "jira-real-secret-token-abcd"
+
+    with Session(engine) as session:
+        created = create_source_connection(
+            session,
+            SourceConnectionCreate(
+                name="Jira test",
+                connector_name=ConnectorName.JIRA,
+                config={"base_url": "https://jira.example.com", "token": real_token},
+            ),
+        )
+        # GET returns masked token
+        read_back = get_source_connection(session, created.id)
+        assert read_back is not None
+        masked_token = read_back.config["token"]
+        assert isinstance(masked_token, str) and masked_token.startswith("****")
+
+        # PATCH with masked token + a non-secret change — real token must be preserved
+        updated = update_source_connection(
+            session,
+            created.id,
+            SourceConnectionUpdate(
+                config={"base_url": "https://jira-new.example.com", "token": masked_token}
+            ),
+        )
+        assert updated is not None
+        assert updated.config["base_url"] == "https://jira-new.example.com"
+
+        stored = session.exec(select(SourceConnectionTable)).one()
+        assert stored.config["token"] == real_token, (
+            "masked sentinel must not overwrite real secret"
+        )
+
+        # PATCH with a genuinely new token — must be stored as the new value
+        new_token = "brand-new-token-wxyz"
+        updated2 = update_source_connection(
+            session,
+            created.id,
+            SourceConnectionUpdate(config={"token": new_token}),
+        )
+        assert updated2 is not None
+        assert updated2.config["token"].startswith("****")
+
+        session.refresh(stored)
+        assert stored.config["token"] == new_token
+
+
+def test_nested_masked_credential_is_preserved_on_patch() -> None:
+    """AUDIT-4: deep-nested masked tokens must not lose the real stored secret on merge."""
+    engine = create_db_engine(":memory:")
+    SQLModel.metadata.create_all(engine)
+
+    real_nested_token = "nested-real-token-efgh"
+
+    with Session(engine) as session:
+        created = create_source_connection(
+            session,
+            SourceConnectionCreate(
+                name="Jira nested",
+                connector_name=ConnectorName.JIRA,
+                config={
+                    "base_url": "https://jira.example.com",
+                    "auth": {"token": real_nested_token, "user": "admin"},
+                },
+            ),
+        )
+        read_back = get_source_connection(session, created.id)
+        assert read_back is not None
+        masked_nested = read_back.config["auth"]
+        assert isinstance(masked_nested, dict)
+        masked_token_val = masked_nested["token"]
+        assert isinstance(masked_token_val, str) and masked_token_val.startswith("****")
+
+        # Round-trip the full config including the masked nested token
+        updated = update_source_connection(
+            session,
+            created.id,
+            SourceConnectionUpdate(
+                config={
+                    "base_url": "https://jira-updated.example.com",
+                    "auth": {"token": masked_token_val, "user": "admin"},
+                }
+            ),
+        )
+        assert updated is not None
+        assert updated.config["base_url"] == "https://jira-updated.example.com"
+
+        stored = session.exec(select(SourceConnectionTable)).one()
+        assert stored.config["auth"]["token"] == real_nested_token, (  # type: ignore[index]
+            "nested masked sentinel must not overwrite real stored nested secret"
+        )
+
+
+def test_secret_str_masked_under_non_credential_key_name_is_preserved_on_patch() -> None:
+    """AUDIT-4: SecretStr-originated values masked via SECRET_MARKER must be preserved on patch.
+
+    When a key is not credential-shaped (e.g. 'credential_from_type'), but the stored value
+    is a SECRET_MARKER-wrapped secret, a round-tripped mask sentinel must not overwrite it.
+    """
+    from pydantic import SecretStr
+
+    engine = create_db_engine(":memory:")
+    SQLModel.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        created = create_source_connection(
+            session,
+            SourceConnectionCreate(
+                name="SecretStr test",
+                connector_name=ConnectorName.JIRA,
+                config={
+                    "base_url": "https://jira.example.com",
+                    "credential_from_type": SecretStr("real-secret-xyz"),
+                },
+            ),
+        )
+        read_back = get_source_connection(session, created.id)
+        assert read_back is not None
+        masked_val = read_back.config["credential_from_type"]
+        assert isinstance(masked_val, str) and masked_val.startswith("****")
+
+        updated = update_source_connection(
+            session,
+            created.id,
+            SourceConnectionUpdate(
+                config={"base_url": "https://new.example.com", "credential_from_type": masked_val}
+            ),
+        )
+        assert updated is not None
+        assert updated.config["base_url"] == "https://new.example.com"
+
+        stored = session.exec(select(SourceConnectionTable)).one()
+        from em_radar_api.repositories.source_connections import SECRET_MARKER
+
+        assert stored.config["credential_from_type"] == {SECRET_MARKER: "real-secret-xyz"}, (
+            "SecretStr-originated secret must not be overwritten by the round-tripped mask"
+        )
+
+
 def test_source_connection_referenced_by_team_cannot_be_deleted() -> None:
     engine = create_db_engine(":memory:")
     SQLModel.metadata.create_all(engine)

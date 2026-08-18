@@ -48,7 +48,6 @@ CLIENT_FACTORY: Callable[..., httpx.AsyncClient] = httpx.AsyncClient
 PAGE_SIZE = 50
 _NAMESPACE = UUID("1b6514a2-8027-43f2-a820-c771c419ca33")
 _STORY_POINTS_FIELD = "customfield_10016"
-_EPIC_LINK_FIELD = "customfield_10014"
 _SPRINT_FIELD = "customfield_10020"
 _ACCEPTANCE_CRITERIA_HEADING = "### Acceptance Criteria"
 _BLOCKED_LABEL = "blocked"
@@ -78,7 +77,6 @@ class JiraFieldMappingConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     story_points: str = _STORY_POINTS_FIELD
-    epic_link: str = _EPIC_LINK_FIELD
     acceptance_criteria: str | None = None
     acceptance_criteria_heading: str | None = _ACCEPTANCE_CRITERIA_HEADING
     blocked_label: str | None = _BLOCKED_LABEL
@@ -116,6 +114,8 @@ class JiraConnector:
             headers={"Authorization": auth_header},
             verify=self.config.verify_tls,
         )
+        self._inline_changelogs: dict[str, list[Mapping[str, object]]] = {}
+        self._issue_keys: dict[str, str] = {}
 
     async def test_connection(self) -> ConnectionTestResult:
         user_payload = await self._request_json("rest/api/2/myself")
@@ -206,7 +206,14 @@ class JiraConnector:
                     "text",
                     ("is_empty", "is_not_empty"),
                 ),
-                SignalField("parent_id", "Parent Epic", "nullable", ("is_empty", "is_not_empty")),
+                SignalField("parent_id", "Parent", "nullable", ("is_empty", "is_not_empty")),
+                SignalField(
+                    "has_epic_parent",
+                    "Has Epic Parent",
+                    "boolean",
+                    ("is",),
+                    values=(True, False),
+                ),
                 SignalField(
                     "description_length",
                     "Description Length",
@@ -288,6 +295,27 @@ class JiraConnector:
         payloads = await self._request_paginated_values(f"rest/agile/1.0/board/{board_id}/sprint")
         return [_sprint_from_payload(payload, board_id) for payload in payloads]
 
+    async def get_board(self, board_id: str) -> tuple[Project, Board] | tuple[None, None]:
+        """Resolve board and its project directly via the board endpoint without enumerating all boards."""
+        try:
+            board_payload = await self._request_json(f"rest/agile/1.0/board/{board_id}")
+        except ConnectorNotFoundError:
+            return None, None
+        location = board_payload.get("location")
+        if not isinstance(location, Mapping):
+            return None, None
+        project_key = _optional_str(location, "projectKey")
+        project_id_str = _optional_str(location, "projectId")
+        if project_key is None or project_id_str is None:
+            return None, None
+        try:
+            project_payload = await self._request_json(f"rest/api/2/project/{project_key}")
+        except ConnectorNotFoundError:
+            return None, None
+        board = _board_from_payload(board_payload, self._base_url, project_id_str)
+        project = _project_from_payload(project_payload, self._base_url)
+        return project, board
+
     async def fetch_workitems(
         self,
         scope: WorkItemScope,
@@ -297,8 +325,27 @@ class JiraConnector:
             params={
                 "jql": _workitem_jql(scope, window),
                 "fields": ",".join(_issue_fields(self.config.field_mapping)),
+                "expand": "changelog",
             }
         ):
+            external_id = _optional_str(payload, "id") or ""
+            if external_id:
+                issue_key = _optional_str(payload, "key")
+                if issue_key:
+                    self._issue_keys[external_id] = issue_key
+                inline_cl = payload.get("changelog")
+                if isinstance(inline_cl, Mapping):
+                    try:
+                        inline_cl_m = cast(Mapping[str, object], inline_cl)
+                        histories = _payload_histories(inline_cl_m)
+                        cl_total = inline_cl_m.get("total")
+                        # Only cache when the inline page is complete; if Jira truncated it
+                        # (total > len), fetch_transitions will fall back to the paginated endpoint.
+                        if not isinstance(cl_total, int) or cl_total == len(histories):
+                            self._inline_changelogs[external_id] = histories
+                    except ConnectorDataError:
+                        pass
+
             workitem = _workitem_from_payload(payload, self._base_url, self.config.field_mapping)
             if _workitem_in_window(workitem, window):
                 yield workitem
@@ -313,12 +360,18 @@ class JiraConnector:
 
         status_categories = await self._status_categories()
         for external_id in entity_external_ids:
-            issue_payload = await self._request_json(
-                f"rest/api/2/issue/{external_id}",
-                params={"fields": "key", "expand": "changelog"},
-            )
-            issue_key = _required_str(issue_payload, "key", "issue")
-            histories = await self._changelog_histories(external_id, issue_payload)
+            cached_histories = self._inline_changelogs.get(external_id)
+            cached_key = self._issue_keys.get(external_id)
+            if cached_histories is not None and cached_key is not None:
+                histories = cached_histories
+                issue_key = cached_key
+            else:
+                issue_payload = await self._request_json(
+                    f"rest/api/2/issue/{external_id}",
+                    params={"fields": "key", "expand": "changelog"},
+                )
+                issue_key = _required_str(issue_payload, "key", "issue")
+                histories = await self._changelog_histories(external_id, issue_payload)
             for transition in _transitions_from_changelog(issue_key, histories, status_categories):
                 yield transition
 
@@ -978,10 +1031,6 @@ def _parent_id(fields: Mapping[str, object], field_mapping: JiraFieldMappingConf
             parent, "id", "issue parent"
         )
         return _stable_id("workitem", parent_reference)
-
-    epic_link = fields.get(field_mapping.epic_link)
-    if isinstance(epic_link, str) and epic_link:
-        return _stable_id("workitem", epic_link)
     return None
 
 
@@ -1008,7 +1057,6 @@ def _acceptance_criteria(
 def _issue_fields(field_mapping: JiraFieldMappingConfig) -> tuple[str, ...]:
     configurable_fields = [
         field_mapping.story_points,
-        field_mapping.epic_link,
         field_mapping.acceptance_criteria,
     ]
     fields = [*_SYSTEM_ISSUE_FIELDS]
@@ -1166,7 +1214,11 @@ def _workitem_jql(scope: WorkItemScope, window: EvaluationWindow) -> str:
     if window.window_type is WindowType.DATE_RANGE:
         if window.end is None:
             raise ConnectorDataError("Date-range window was missing end")
+        # No lower-bound predicate: stale issues updated before window.start must still appear
+        # so snapshot signals (e.g. StaleInProgressSignal) can evaluate them.
         clauses.append(f'updated < "{_jql_datetime(_ceil_to_minute(window.end))}"')
+    elif window.window_type is WindowType.SPRINT and scope.sprint_external_id is not None:
+        clauses.append(f"sprint = {scope.sprint_external_id}")
     return " AND ".join(clauses) if clauses else "ORDER BY updated ASC"
 
 
@@ -1217,7 +1269,7 @@ def _jql_datetime(value: datetime) -> str:
         normalized = value.replace(tzinfo=timezone.utc)
     else:
         normalized = value.astimezone(timezone.utc)
-    return normalized.strftime("%Y-%m-%d %H:%M")
+    return normalized.strftime("%Y-%m-%d %H:%M+0000")
 
 
 def _error_for_status(
