@@ -210,6 +210,7 @@ class JiraConnector:
                     "Has Epic Parent",
                     "boolean",
                     ("is",),
+                    values=(True, False),
                 ),
                 SignalField(
                     "description_length",
