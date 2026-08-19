@@ -104,7 +104,6 @@ def _create_signal(api_client: TestClient, name: str) -> str:
                 ],
             },
             "report_settings": {"severity": "warning", "category": "flow"},
-            "enabled": True,
             "origin": "user_created",
         },
     ).json()["id"]

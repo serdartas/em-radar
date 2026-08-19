@@ -3,8 +3,8 @@
 Asserts that:
 1. default-pack.yaml validates against the signal-pack schema.
 2. Every signal entry is fully declarative (has an expression, no bare id+params).
-3. The pack contains exactly the 8 expected work-item signals.
-4. A fresh-DB seed produces the default group with 8 enabled SignalDefinitions.
+3. The pack contains exactly the 7 expected work-item signals.
+4. A fresh-DB seed produces the default group with 7 SignalDefinitions.
 5. The seeded group exports back to equivalent YAML (round-trip).
 """
 
@@ -18,13 +18,23 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import SQLModel, select
 
-from em_radar_config import load_signal_pack
+from em_radar_config import SignalEntry, load_signal_pack
 
 DEFAULT_PACK_PATH = Path(__file__).parents[1] / "defaults" / "default-pack.yaml"
 
+
+def _resolve_expression(signal: SignalEntry) -> dict | None:
+    """Convert flat rules list to grouped expression, or return expression directly."""
+    if signal.rules is not None:
+        first_join = signal.rules[0].get("join") if len(signal.rules) > 1 else None
+        group_operator = "any" if first_join == "or" else "all"
+        conditions = [{k: v for k, v in rule.items() if k != "join"} for rule in signal.rules]
+        return {"type": "group", "operator": group_operator, "conditions": conditions}
+    return signal.expression
+
+
 EXPECTED_TEMPLATE_KEYS = {
     "stale-in-progress-work-item",
-    "blocked-without-update",
     "story-without-acceptance-criteria",
     "story-without-parent-epic",
     "epic-too-broad",
@@ -68,10 +78,10 @@ def test_all_signals_are_fully_declarative() -> None:
         assert signal.report_settings is not None
 
 
-def test_pack_contains_exactly_8_work_item_signals_plus_5_mr() -> None:
+def test_pack_contains_exactly_7_work_item_signals_plus_5_mr() -> None:
     pack = load_signal_pack(DEFAULT_PACK_PATH.read_text(encoding="utf-8")).pack
 
-    assert len(pack.spec.signals) == 13
+    assert len(pack.spec.signals) == 12
     wi_keys = {s.template_key for s in pack.spec.signals if s.entity_type in ("issue", "sprint")}
     assert wi_keys == EXPECTED_TEMPLATE_KEYS
 
@@ -87,11 +97,10 @@ def test_default_group_references_all_signals() -> None:
         assert name in signal_names, f"Group references unknown signal name: {name!r}"
 
 
-def test_all_signals_are_enabled_and_system_template() -> None:
+def test_all_signals_are_system_template() -> None:
     pack = load_signal_pack(DEFAULT_PACK_PATH.read_text(encoding="utf-8")).pack
 
     for signal in pack.spec.signals:
-        assert signal.enabled is True, f"Signal {signal.name!r} must be enabled by default"
         assert signal.origin == "system_template", (
             f"Signal {signal.name!r} must have origin system_template"
         )
@@ -132,7 +141,7 @@ def _api_harness(tmp_path) -> Iterator[SimpleNamespace]:
         engine.dispose()
 
 
-def test_seed_creates_13_signal_definitions(_api_harness) -> None:
+def test_seed_creates_12_signal_definitions(_api_harness) -> None:
     from em_radar_api.signal_definitions import SignalDefinitionTable
 
     with _api_harness.client:
@@ -141,12 +150,12 @@ def test_seed_creates_13_signal_definitions(_api_harness) -> None:
     with _api_harness.session_factory() as session:
         definitions = session.exec(select(SignalDefinitionTable)).all()
 
-    assert len(definitions) == 13
+    assert len(definitions) == 12
     keys = {d.template_key for d in definitions}
-    assert EXPECTED_TEMPLATE_KEYS.issubset(keys)  # 8 WI + 5 MR
+    assert EXPECTED_TEMPLATE_KEYS.issubset(keys)  # 7 WI + 5 MR
 
 
-def test_seed_creates_default_signals_group_with_13_signals(_api_harness) -> None:
+def test_seed_creates_default_signals_group_with_12_signals(_api_harness) -> None:
     from em_radar_api.signal_config_groups import SignalConfigGroupTable
 
     with _api_harness.client:
@@ -158,7 +167,7 @@ def test_seed_creates_default_signals_group_with_13_signals(_api_harness) -> Non
         ).first()
 
     assert group is not None
-    assert len(group.signal_ids) == 13
+    assert len(group.signal_ids) == 12
 
 
 def test_seed_is_idempotent(_api_harness) -> None:
@@ -172,7 +181,7 @@ def test_seed_is_idempotent(_api_harness) -> None:
     with _api_harness.session_factory() as session:
         count = len(session.exec(select(SignalDefinitionTable)).all())
 
-    assert count == 13
+    assert count == 12
 
 
 def test_seeded_definitions_export_to_valid_pack(_api_harness) -> None:
@@ -196,16 +205,17 @@ def test_seeded_definitions_export_to_valid_pack(_api_harness) -> None:
     assert response.status_code == 200
     exported = load_signal_pack(response.text)
     assert exported.pack.api_version == "emradar.dev/v1"
-    assert len(exported.pack.spec.signals) == 13
+    assert len(exported.pack.spec.signals) == 12
     exported_keys = {s.template_key for s in exported.pack.spec.signals}
-    assert EXPECTED_TEMPLATE_KEYS.issubset(exported_keys)  # 8 WI keys must be present
+    assert EXPECTED_TEMPLATE_KEYS.issubset(exported_keys)  # 7 WI keys must be present
 
-    # Verify expressions and report_settings survive the round-trip.
     source = load_signal_pack(DEFAULT_PACK_PATH.read_text(encoding="utf-8")).pack
     source_by_key = {s.template_key: s for s in source.spec.signals}
     for exported_signal in exported.pack.spec.signals:
         key = exported_signal.template_key
-        assert exported_signal.expression == source_by_key[key].expression, (
+        exported_expression = _resolve_expression(exported_signal)
+        source_expression = source_by_key[key].expression
+        assert exported_expression == source_expression, (
             f"Expression mismatch for {key!r} after round-trip"
         )
         assert exported_signal.report_settings == source_by_key[key].report_settings, (

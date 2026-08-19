@@ -3,7 +3,7 @@ kind: SignalPack
 metadata:
   name: default-signals
   version: 1.0.0
-  description: Default EM Radar signal pack - 8 Jira work-item signals and 5 GitLab merge-request signals.
+  description: Default EM Radar signal pack - 7 Jira work-item signals and 5 GitLab merge-request signals.
 spec:
   export_type: private_backup
   signals:
@@ -23,29 +23,8 @@ spec:
       report_settings:
         severity: warning
         category: flow
-      enabled: true
       origin: system_template
       template_key: stale-in-progress-work-item
-
-    - name: Blocked without update
-      description: Finds blocked issues that have not changed recently.
-      entity_type: issue
-      expression:
-        type: group
-        operator: all
-        conditions:
-          - field: status_category
-            operator: is
-            value: blocked
-          - field: age_since_updated
-            operator: greater_than
-            value: {amount: 3, unit: days}
-      report_settings:
-        severity: critical
-        category: flow
-      enabled: true
-      origin: system_template
-      template_key: blocked-without-update
 
     - name: Story without acceptance criteria
       description: Finds stories missing acceptance criteria.
@@ -62,7 +41,6 @@ spec:
       report_settings:
         severity: warning
         category: quality
-      enabled: true
       origin: system_template
       template_key: story-without-acceptance-criteria
 
@@ -82,7 +60,6 @@ spec:
       report_settings:
         severity: info
         category: planning
-      enabled: true
       origin: system_template
       template_key: story-without-parent-epic
 
@@ -102,7 +79,6 @@ spec:
       report_settings:
         severity: warning
         category: planning
-      enabled: true
       origin: system_template
       template_key: epic-too-broad
 
@@ -122,7 +98,6 @@ spec:
       report_settings:
         severity: info
         category: planning
-      enabled: true
       origin: system_template
       template_key: epic-without-measurable-description
 
@@ -142,7 +117,6 @@ spec:
       report_settings:
         severity: warning
         category: delivery
-      enabled: true
       origin: system_template
       template_key: repeated-carry-over
 
@@ -159,7 +133,6 @@ spec:
       report_settings:
         severity: warning
         category: delivery
-      enabled: true
       origin: system_template
       template_key: sprint-scope-churn
 
@@ -179,7 +152,6 @@ spec:
       report_settings:
         severity: warning
         category: flow
-      enabled: true
       origin: system_template
       template_key: mergerequest-waiting-too-long
 
@@ -198,7 +170,6 @@ spec:
       report_settings:
         severity: warning
         category: quality
-      enabled: true
       origin: system_template
       template_key: mergerequest-without-linked-workitem
 
@@ -218,7 +189,6 @@ spec:
       report_settings:
         severity: warning
         category: quality
-      enabled: true
       origin: system_template
       template_key: large-mergerequest-risk
 
@@ -238,7 +208,6 @@ spec:
       report_settings:
         severity: warning
         category: flow
-      enabled: true
       origin: system_template
       template_key: failing-pipeline-too-long
 
@@ -258,7 +227,6 @@ spec:
       report_settings:
         severity: critical
         category: quality
-      enabled: true
       origin: system_template
       template_key: merged-without-enough-approval
 
@@ -267,7 +235,6 @@ spec:
       description: Bundled default signals for Jira + Scrum teams using GitLab.
       signals:
         - Stale in-progress work item
-        - Blocked without update
         - Story without acceptance criteria
         - Story without parent epic
         - Epic too broad

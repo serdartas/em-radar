@@ -16,10 +16,8 @@ export interface SignalDefinition {
   entity_type: string
   expression: Record<string, unknown>
   report_settings: ReportSettings
-  enabled: boolean
   origin: "system_template" | "user_created" | "imported"
   template_key: string | null
-  version: number
   created_at: string
   updated_at: string
 }
@@ -30,7 +28,6 @@ export interface SignalDefinitionCreate {
   entity_type: string
   expression: Record<string, unknown>
   report_settings: ReportSettings
-  enabled: boolean
   origin: "system_template" | "user_created" | "imported"
   template_key?: string | null
 }

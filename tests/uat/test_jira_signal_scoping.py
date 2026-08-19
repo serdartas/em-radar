@@ -235,8 +235,6 @@ def _workitem(
 def _context() -> EvaluationContext:
     team = TeamProfile(
         name="UAT Jira team",
-        project_ids=[PROJECT_ID, SUPPORT_PROJECT_ID],
-        repository_ids=[],
         created_at=NOW,
         updated_at=NOW,
     )

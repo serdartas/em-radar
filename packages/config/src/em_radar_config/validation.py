@@ -207,16 +207,17 @@ def _validate_pack(pack: SignalPack, context: PackValidationContext) -> None:
     if pack.spec.export_type not in {"private_backup", "public_template"}:
         raise PackValidationError("spec.export_type must be private_backup or public_template")
     for index, signal in enumerate(pack.spec.signals):
-        if signal.expression is None:
+        expression = _resolve_signal_expression(signal)
+        if expression is None:
             raise PackValidationError(
                 f"spec.signals.{index} ({signal.name!r}) is missing an expression"
             )
         _validate_signal_expression(
-            signal.expression,
+            expression,
             signal.entity_type or "issue",
             context.signal_schemas,
             path=f"spec.signals.{index}.expression",
-            allow_missing_values=not signal.enabled,
+            allow_missing_values=pack.spec.export_type == "public_template",
         )
 
     signal_names = {signal.name for signal in pack.spec.signals if signal.name is not None}
@@ -226,6 +227,39 @@ def _validate_pack(pack: SignalPack, context: PackValidationContext) -> None:
                 raise PackValidationError(
                     f"spec.groups.{group_index} references unknown signal {signal_name!r}"
                 )
+
+
+def _resolve_signal_expression(signal: SignalEntry) -> dict[str, object] | None:
+    """Convert rules list to expression dict, or return expression directly."""
+    if signal.rules is not None:
+        _validate_rules_join_sequence(signal.rules)
+        first_join = signal.rules[0].get("join") if len(signal.rules) > 1 else None
+        group_operator = "any" if first_join == "or" else "all"
+        conditions = [{k: v for k, v in rule.items() if k != "join"} for rule in signal.rules]
+        return {"type": "group", "operator": group_operator, "conditions": conditions}
+    return signal.expression
+
+
+def _validate_rules_join_sequence(rules: list[dict[str, object]]) -> None:
+    """Enforce that the join sequence is uniform, valid, and absent on the last rule."""
+    if len(rules) <= 1:
+        if rules and rules[0].get("join") is not None:
+            raise PackValidationError("A single-rule signal must not have a join on the rule.")
+        return
+    first_join = rules[0].get("join")
+    if first_join not in ("and", "or"):
+        raise PackValidationError(
+            f"rules[0] has invalid or missing join {first_join!r}; expected 'and' or 'or'."
+        )
+    for i, rule in enumerate(rules[:-1]):
+        rule_join = rule.get("join")
+        if rule_join != first_join:
+            raise PackValidationError(
+                f"rules[{i}] join {rule_join!r} differs from rules[0] join {first_join!r}; "
+                "joins must be uniform across all rules."
+            )
+    if rules[-1].get("join") is not None:
+        raise PackValidationError("The last rule in a multi-rule signal must not have a join.")
 
 
 def _validate_signal_expression(
@@ -308,8 +342,11 @@ def _validate_condition_value(
     value: object, field_schema: SignalField, operator: str, path: str
 ) -> None:
     if operator in {"is_any_of", "is_none_of", "contains_any", "does_not_contain_any"}:
+        # A single non-empty string is accepted; _list() in the evaluator normalises it at runtime.
+        if isinstance(value, str) and value:
+            return
         if not isinstance(value, list) or not value:
-            raise PackValidationError(f"{path}.value must be a non-empty list")
+            raise PackValidationError(f"{path}.value must be a non-empty list or string")
         return
     if operator == "between":
         if isinstance(value, list):

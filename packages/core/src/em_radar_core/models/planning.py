@@ -61,7 +61,6 @@ class WorkItem(CommonFields):
     parent_id: UUID | None = None
     story_points: float | None = None
     acceptance_criteria: str | None = None
-    is_blocked: bool = False
     resolved_at: datetime | None = None
     due_date: datetime | None = None
     sprint_ids: list[UUID] = Field(default_factory=list, sa_type=UUIDListJSON)

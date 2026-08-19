@@ -50,8 +50,6 @@ _NAMESPACE = UUID("1b6514a2-8027-43f2-a820-c771c419ca33")
 _STORY_POINTS_FIELD = "customfield_10016"
 _SPRINT_FIELD = "customfield_10020"
 _ACCEPTANCE_CRITERIA_HEADING = "### Acceptance Criteria"
-_BLOCKED_LABEL = "blocked"
-_BLOCKED_STATUS = "Blocked"
 # Jira requires an explicit permission key list on GET /mypermissions (400 otherwise).
 _PERMISSION_KEYS = ("BROWSE_PROJECTS",)
 _SYSTEM_ISSUE_FIELDS = (
@@ -79,8 +77,6 @@ class JiraFieldMappingConfig(BaseModel):
     story_points: str = _STORY_POINTS_FIELD
     acceptance_criteria: str | None = None
     acceptance_criteria_heading: str | None = _ACCEPTANCE_CRITERIA_HEADING
-    blocked_label: str | None = _BLOCKED_LABEL
-    blocked_status: str | None = _BLOCKED_STATUS
 
 
 class JiraConnectorConfig(BaseModel):
@@ -175,7 +171,7 @@ class JiraConnector:
                     "Status Category",
                     "enum",
                     ("is", "is_not", "is_any_of", "is_none_of"),
-                    values=("todo", "in_progress", "done", "blocked"),
+                    values=("todo", "in_progress", "done"),
                 ),
                 SignalField(
                     "labels",
@@ -185,11 +181,16 @@ class JiraConnector:
                     value_provider=labels_provider,
                 ),
                 SignalField(
-                    "exclude_labels",
-                    "Exclude Labels",
+                    "components",
+                    "Components",
                     "string_list",
-                    ("does_not_contain", "does_not_contain_any"),
-                    value_provider=labels_provider,
+                    ("contains", "does_not_contain", "contains_any", "does_not_contain_any"),
+                ),
+                SignalField(
+                    "story_points",
+                    "Story Points",
+                    "number",
+                    ("gt", "lt", "gte", "lte", "eq", "neq", "is_empty", "is_not_empty"),
                 ),
                 SignalField(
                     "workitem_types",
@@ -544,7 +545,7 @@ class JiraConnector:
         payloads = await self._request_json_list("rest/api/2/status")
         categories: dict[str, StatusCategory] = {}
         for payload in payloads:
-            category = _status_category(payload, [], self.config.field_mapping)
+            category = _status_category(payload)
             status_id = _optional_str(payload, "id")
             name = _optional_str(payload, "name")
             if status_id is not None:
@@ -730,7 +731,7 @@ def _workitem_from_payload(
     fields = _required_mapping(payload, "fields", "issue")
     status = _required_mapping(fields, "status", "issue")
     labels = _string_list(fields.get("labels"), "labels")
-    status_category = _status_category(status, labels, field_mapping)
+    status_category = _status_category(status)
     sprints = _sprints_from_field(fields.get(_SPRINT_FIELD))
 
     return WorkItem(
@@ -757,7 +758,6 @@ def _workitem_from_payload(
             field_mapping.story_points,
         ),
         acceptance_criteria=_acceptance_criteria(fields, field_mapping),
-        is_blocked=status_category is StatusCategory.BLOCKED,
         resolved_at=_parse_datetime(_optional_str(fields, "resolutiondate"))
         if status_category is StatusCategory.DONE
         else None,
@@ -920,15 +920,7 @@ def _workitem_type(payload: Mapping[str, object]) -> WorkItemType:
     return WorkItemType.OTHER
 
 
-def _status_category(
-    status: Mapping[str, object],
-    labels: Sequence[str],
-    field_mapping: JiraFieldMappingConfig | None = None,
-) -> StatusCategory:
-    name = _required_str(status, "name", "issue status")
-    if _is_blocked(name, labels, field_mapping or JiraFieldMappingConfig()):
-        return StatusCategory.BLOCKED
-
+def _status_category(status: Mapping[str, object]) -> StatusCategory:
     status_category = _required_mapping(status, "statusCategory", "issue status")
     key = _optional_str(status_category, "key")
     category_id = _optional_str(status_category, "id")
@@ -984,23 +976,6 @@ def _required_status_category_for_changelog_value(
         status_value = _optional_str(item, status_id_key) or _optional_str(item, status_name_key)
         raise ConnectorDataError(f"Unknown Jira status in changelog: {status_value or '<missing>'}")
     return category
-
-
-def _is_blocked(
-    status_name: str,
-    labels: Sequence[str],
-    field_mapping: JiraFieldMappingConfig,
-) -> bool:
-    blocked_status = field_mapping.blocked_status
-    if blocked_status is not None and _normalized_text(status_name) == _normalized_text(
-        blocked_status
-    ):
-        return True
-
-    blocked_label = field_mapping.blocked_label
-    return blocked_label is not None and any(
-        _normalized_text(label) == _normalized_text(blocked_label) for label in labels
-    )
 
 
 def _normalized_text(value: str) -> str:

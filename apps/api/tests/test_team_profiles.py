@@ -151,7 +151,7 @@ def _create_group(api_client: TestClient, name: str = "Backend signals") -> str:
 def test_team_defaults_signal_config_group_ids_to_empty(api_client: TestClient) -> None:
     response = api_client.post(
         "/api/teams",
-        json={"name": "Platform", "project_ids": [], "repository_ids": []},
+        json={"name": "Platform"},
     )
 
     assert response.status_code == 201
@@ -254,7 +254,7 @@ def test_attaching_group_via_patch(
     group_id = _create_group(api_client)
     created = api_client.post(
         "/api/teams",
-        json={"name": "Platform", "project_ids": [], "repository_ids": []},
+        json={"name": "Platform"},
     ).json()
 
     response = api_client.patch(
@@ -269,7 +269,7 @@ def test_attaching_group_via_patch(
 def test_patch_attaching_nonexistent_group_is_rejected(api_client: TestClient) -> None:
     created = api_client.post(
         "/api/teams",
-        json={"name": "Platform", "project_ids": [], "repository_ids": []},
+        json={"name": "Platform"},
     ).json()
 
     response = api_client.patch(

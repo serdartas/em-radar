@@ -34,7 +34,6 @@ spec:
       report_settings:
         severity: warning
         category: flow
-      enabled: true
 """
 
 
@@ -45,8 +44,6 @@ spec:
         ("kind: SignalPack", "kind: OtherPack"),
         ("name: example-pack", "name: Not_Kebab"),
         ("version: 1.2.3", "version: latest"),
-        ("enabled: true", "enabled: 1"),
-        ("enabled: true", 'enabled: "false"'),
     ],
 )
 def test_hard_validation_rules_reject_invalid_packs(old: str, new: str) -> None:
@@ -100,7 +97,7 @@ def test_group_referencing_unknown_signal_is_rejected() -> None:
 
 def test_duplicate_mapping_keys_are_rejected() -> None:
     yaml_text = VALID_PACK.replace(
-        "      enabled: true", "      enabled: true\n      enabled: false"
+        "  description: Example pack.", "  description: Example pack.\n  description: Duplicate"
     )
 
     with pytest.raises(PackValidationError, match="duplicate key"):
@@ -193,9 +190,9 @@ def test_valid_default_pack_passes() -> None:
 
 def test_valid_pack_returns_expected_soft_warnings() -> None:
     yaml_text = VALID_PACK.replace(
-        "      enabled: true",
+        "        category: flow",
         """\
-      enabled: true
+        category: flow
       severity: info
       scope:
         project_keys: [MISSING]
@@ -290,7 +287,7 @@ def test_field_mappings_are_advisory_without_current_mappings() -> None:
 spec:
   field_mappings:
     jira:
-      blocked_label: blocked
+      story_points: customfield_99999
   signals:""",
     )
 

@@ -24,9 +24,6 @@ class TeamProfile(SQLModel):
     description: str | None = None
     connection_ids: list[UUID] = Field(default_factory=list, sa_type=JSON)
     scope_ids: list[UUID] = Field(default_factory=list, sa_type=JSON)
-    project_ids: list[UUID] = Field(default_factory=list, sa_type=JSON)
-    board_ids: list[UUID] = Field(default_factory=list, sa_type=JSON)
-    repository_ids: list[UUID] = Field(default_factory=list, sa_type=JSON)
     signal_config_group_ids: list[UUID] = Field(default_factory=list, sa_type=JSON)
     code_connection_id: UUID | None = None
     working_mode: WorkingMode = WorkingMode.SCRUM
@@ -66,6 +63,7 @@ class SignalFinding(SQLModel):
     title: str
     reason: str
     recommendation: str | None = None
+    scope_name: str | None = None
     evidence: JsonValue = Field(sa_type=JSON)
     source_link: str | None = None
     created_at: datetime

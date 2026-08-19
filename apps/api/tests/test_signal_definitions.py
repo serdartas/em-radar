@@ -22,18 +22,18 @@ def _definition_payload(name: str = "Stale platform work") -> dict[str, object]:
             "conditions": [{"field": "status_category", "operator": "is", "value": "in_progress"}],
         },
         "report_settings": {"severity": "warning", "category": "flow"},
-        "enabled": True,
         "origin": "user_created",
         "template_key": None,
     }
 
 
-def test_signal_can_be_created_and_enabled_without_scope(api_client: TestClient) -> None:
+def test_signal_can_be_created_without_scope(api_client: TestClient) -> None:
     response = api_client.post("/api/signal-definitions", json=_definition_payload())
 
     assert response.status_code == 201
     created = response.json()
-    assert created["enabled"] is True
+    assert "enabled" not in created
+    assert "version" not in created
     assert "target_scopes" not in created
 
 
@@ -55,7 +55,7 @@ def test_duplicate_signal_names_are_rejected(api_client: TestClient) -> None:
     assert duplicate.json()["detail"] == "signal name must be unique"
 
 
-def test_version_increments_on_update(api_client: TestClient) -> None:
+def test_signal_updated_at_changes_on_update(api_client: TestClient) -> None:
     created = api_client.post("/api/signal-definitions", json=_definition_payload()).json()
 
     update_response = api_client.patch(
@@ -64,7 +64,7 @@ def test_version_increments_on_update(api_client: TestClient) -> None:
     )
 
     assert update_response.status_code == 200
-    assert update_response.json()["version"] == created["version"] + 1
+    assert update_response.json()["updated_at"] is not None
 
 
 def test_migration_drops_target_scopes_column(
@@ -81,3 +81,5 @@ def test_migration_drops_target_scopes_column(
         for column in inspect(create_db_engine(database_path)).get_columns("signal_definition")
     }
     assert "target_scopes" not in columns
+    assert "enabled" not in columns
+    assert "version" not in columns

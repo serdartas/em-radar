@@ -100,9 +100,6 @@ interface StoredTeam {
   description: null
   connection_ids: string[]
   scope_ids: string[]
-  project_ids: string[]
-  board_ids: string[]
-  repository_ids: string[]
   signal_config_group_ids: string[]
   code_connection_id: string | null
   working_mode: string
@@ -119,9 +116,6 @@ function storedTeam(id: string, name: string): StoredTeam {
     description: null,
     connection_ids: [],
     scope_ids: [],
-    project_ids: [],
-    board_ids: [],
-    repository_ids: [],
     signal_config_group_ids: [],
     code_connection_id: null,
     working_mode: "scrum",
@@ -217,9 +211,6 @@ function mockApi() {
         description: null,
         connection_ids: [],
         scope_ids: [],
-        project_ids: [],
-        board_ids: [],
-        repository_ids: [],
         signal_config_group_ids: body.signal_config_group_ids ?? [],
         code_connection_id: null,
         working_mode: "scrum",

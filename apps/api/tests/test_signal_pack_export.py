@@ -2,7 +2,12 @@
 
 import yaml
 from fastapi.testclient import TestClient
+from sqlalchemy.orm import sessionmaker
+from sqlmodel import Session
 
+from em_radar_api.signal_config_groups import SignalConfigGroupTable
+from em_radar_api.signal_definitions import SignalDefinitionTable
+from em_radar_core.models import SignalOrigin
 from em_radar_config import load_signal_pack
 
 
@@ -25,7 +30,6 @@ def test_export_signal_group_produces_valid_declarative_pack(
                 ],
             },
             "report_settings": {"severity": "warning", "category": "flow"},
-            "enabled": True,
             "origin": "user_created",
         },
     ).json()["id"]
@@ -81,7 +85,6 @@ def test_export_has_no_credential_named_keys(
                 ],
             },
             "report_settings": {"severity": "info", "category": "flow"},
-            "enabled": True,
             "origin": "user_created",
         },
     ).json()["id"]
@@ -98,6 +101,50 @@ def test_export_has_no_credential_named_keys(
     assert response.status_code == 200
     exported = yaml.safe_load(response.text)
     assert not _credential_keys(exported)
+
+
+def test_export_nested_group_returns_422(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+) -> None:
+    """A signal with a nested group expression cannot be flattened; export returns 422."""
+    nested_expression = {
+        "type": "group",
+        "operator": "all",
+        "conditions": [
+            {
+                "type": "group",
+                "operator": "any",
+                "conditions": [
+                    {"field": "status_category", "operator": "is", "value": "in_progress"},
+                ],
+            }
+        ],
+    }
+    with session_factory() as session:
+        defn = SignalDefinitionTable(
+            name="nested-group-signal",
+            entity_type="issue",
+            expression=nested_expression,
+            report_settings={"severity": "warning", "category": "flow"},
+            origin=SignalOrigin.USER_CREATED,
+        )
+        session.add(defn)
+        session.flush()
+        group = SignalConfigGroupTable(
+            name="nested-group-test-group",
+            signal_ids=[defn.id],
+        )
+        session.add(group)
+        session.commit()
+        group_id = str(group.id)
+
+    response = api_client.get(
+        "/api/signal-pack/export",
+        params={"group_ids": [group_id]},
+    )
+
+    assert response.status_code == 422
 
 
 def _credential_keys(value: object) -> set[str]:

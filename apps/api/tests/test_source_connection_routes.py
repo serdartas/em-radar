@@ -509,7 +509,6 @@ def test_jira_report_run_evaluates_saved_signal_definitions(
                 ],
             },
             "report_settings": {"severity": "warning", "category": "flow"},
-            "enabled": True,
             "origin": "user_created",
         },
     ).json()
@@ -599,7 +598,6 @@ def test_signal_definition_preview_uses_persisted_jira_samples_and_warnings(
                 ],
             },
             "report_settings": {"severity": "warning", "category": "flow"},
-            "enabled": True,
             "origin": "user_created",
         },
     )
@@ -615,7 +613,6 @@ def test_signal_definition_preview_uses_persisted_jira_samples_and_warnings(
                 "conditions": [{"field": "sprint_day", "operator": "is_after", "value": 1}],
             },
             "report_settings": {"severity": "warning", "category": "flow"},
-            "enabled": True,
             "origin": "user_created",
         },
     )

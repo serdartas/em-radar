@@ -173,7 +173,7 @@ def evaluate_signal_definition(
     schema: SignalCapabilitySchema,
     scopes: list[ScopeDescriptor],
 ) -> list[SignalFinding]:
-    if not definition.enabled or not scopes:
+    if not scopes:
         return []
 
     if check_window_gate(definition, ctx) is not None:
@@ -194,7 +194,7 @@ def evaluate_signal_definition(
     severity = resolve_severity(definition.report_settings.severity)
 
     if definition.entity_type == "merge_request":
-        return _evaluate_mr_signal(definition, data, ctx, severity)
+        return _evaluate_mr_signal(definition, data, ctx, severity, scopes)
 
     if definition.entity_type == "sprint":
         return _evaluate_sprint_signal(definition, data, ctx, severity, scopes)
@@ -216,6 +216,7 @@ def evaluate_signal_definition(
                     entity_id=workitem.id,
                     title=f"{workitem.key} - {workitem.title}",
                     reason=result.reason,
+                    scope_name=scope.name,
                     evidence={"scope_id": scope.scope_id, **result.evidence},
                     source_link=workitem.source_url,
                     created_at=ctx.now,
@@ -229,8 +230,10 @@ def _evaluate_mr_signal(
     data: SignalData,
     ctx: EvaluationContext,
     severity: Severity,
+    scopes: list[ScopeDescriptor],
 ) -> list[SignalFinding]:
     """Evaluate a merge_request entity signal over all MergeRequest entities in the data."""
+    scope_name = scopes[0].name if scopes else None
     findings: list[SignalFinding] = []
     for mr in data.mergerequests:
         result = _evaluate_mr_group(definition.expression, mr, data, ctx)
@@ -249,6 +252,7 @@ def _evaluate_mr_signal(
                 reason=result.reason,
                 evidence=result.evidence,
                 source_link=mr.source_url,
+                scope_name=scope_name,
                 created_at=ctx.now,
             )
         )
@@ -293,6 +297,7 @@ def _evaluate_sprint_signal(
                     entity_id=sprint.id,
                     title=sprint.name,
                     reason=result.reason,
+                    scope_name=scope.name,
                     evidence={"scope_id": scope.scope_id, **result.evidence},
                     source_link=sprint.source_url,
                     created_at=ctx.now,
@@ -443,7 +448,7 @@ def _evaluate_without_window_gate(
     scopes: list[ScopeDescriptor],
 ) -> list[SignalFinding]:
     """Like evaluate_signal_definition but skips check_window_gate — used by preview."""
-    if not definition.enabled or not scopes:
+    if not scopes:
         return []
 
     for scope in scopes:
@@ -457,7 +462,7 @@ def _evaluate_without_window_gate(
     severity = resolve_severity(definition.report_settings.severity)
 
     if definition.entity_type == "merge_request":
-        return _evaluate_mr_signal(definition, data, ctx, severity)
+        return _evaluate_mr_signal(definition, data, ctx, severity, scopes)
 
     if definition.entity_type == "sprint":
         return _evaluate_sprint_signal(definition, data, ctx, severity, scopes)
@@ -479,6 +484,7 @@ def _evaluate_without_window_gate(
                     entity_id=workitem.id,
                     title=f"{workitem.key} - {workitem.title}",
                     reason=result.reason,
+                    scope_name=scope.name,
                     evidence={"scope_id": scope.scope_id, **result.evidence},
                     source_link=workitem.source_url,
                     created_at=ctx.now,
@@ -594,8 +600,10 @@ def _field_value(
         return workitem.status_category.value
     if field_key == "labels":
         return workitem.labels
-    if field_key == "exclude_labels":
-        return workitem.labels
+    if field_key == "components":
+        return workitem.components
+    if field_key == "story_points":
+        return workitem.story_points
     if field_key == "workitem_types":
         return workitem.type.value
     if field_key == "issue_type":
@@ -768,10 +776,38 @@ def _compare(observed: object, operator: str, expected: object) -> bool:
         return not _compare(observed, "is_empty", expected)
     if (
         operator
-        in {"greater_than", "less_than", "between", "before", "after", "is_before", "is_after"}
+        in {
+            "greater_than",
+            "less_than",
+            "between",
+            "before",
+            "after",
+            "is_before",
+            "is_after",
+            "gt",
+            "lt",
+            "gte",
+            "lte",
+            "eq",
+            "neq",
+        }
         and observed is None
     ):
         return False
+    if operator in {"gt", "lt", "gte", "lte", "eq", "neq"}:
+        left = _numeric(observed)
+        right = _numeric(expected)
+        if operator == "gt":
+            return left > right
+        if operator == "lt":
+            return left < right
+        if operator == "gte":
+            return left >= right
+        if operator == "lte":
+            return left <= right
+        if operator == "eq":
+            return left == right
+        return left != right
     if operator in {"greater_than", "less_than"}:
         left = _numeric(observed)
         right = _duration_days(expected)

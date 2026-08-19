@@ -26,8 +26,6 @@ BOARD_ID = uuid4()
 def context(sprint_id: UUID | None = None) -> EvaluationContext:
     team = TeamProfile(
         name="Signal test team",
-        project_ids=[PROJECT_ID],
-        repository_ids=[],
         created_at=NOW,
         updated_at=NOW,
     )
@@ -88,8 +86,9 @@ def workitem(
     description: str | None = "Description",
     acceptance_criteria: str | None = "Given When Then",
     labels: list[str] | None = None,
+    components: list[str] | None = None,
+    story_points: float | None = None,
     parent_id: UUID | None = None,
-    is_blocked: bool = False,
     sprint_ids: list[UUID] | None = None,
     current_sprint_id: UUID | None = None,
     created_at: datetime | None = None,
@@ -106,9 +105,10 @@ def workitem(
         status=status,
         status_category=status_category,
         labels=labels or [],
+        components=components or [],
+        story_points=story_points,
         parent_id=parent_id,
         acceptance_criteria=acceptance_criteria,
-        is_blocked=is_blocked,
         resolved_at=NOW if status_category is StatusCategory.DONE else None,
         sprint_ids=sprint_ids or [],
         current_sprint_id=current_sprint_id,

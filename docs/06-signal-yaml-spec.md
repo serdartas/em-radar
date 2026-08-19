@@ -36,7 +36,7 @@ connectors provide access, teams own the board scope, and a pack is just the rul
 - **Signal Config Group.** The in-app entity a pack maps to: a reusable bundle of signals, attached to any number of teams. See [data model §5.12C](./05-data-model.md#512c-signalconfiggroup).
 - **Template.** A pre-authored signal definition shipped with the application (the default pack). A template seeds a signal in a group; it is configuration, not executable code, and carries no privileged behavior — a user can recreate the same signal from scratch. Templates are catalogued in §12.
 - **Signal.** A named, structured rule expression over one signal entity type, carrying its own
-  configuration (params, severity, enabled state). In MVP, `issue` belongs to the work-tracking
+  configuration (params, severity). In MVP, `issue` belongs to the work-tracking
   domain — the **task-board source** — and `merge_request` belongs to the code-repository domain —
   the **code source**. These entity types line up 1:1 with the two team sources of the same names
   ([data model §5.12](./05-data-model.md#512-teamprofile)). A signal selects neither a connection nor
@@ -71,20 +71,15 @@ spec:
   signals:
     - name: Stale in-progress work item
       entity_type: issue
-      expression:
-        type: group
-        operator: all
-        conditions:
-          - field: status_category
-            operator: is
-            value: In Progress
-          - field: age_in_current_status
-            operator: greater_than
-            value: {amount: 7, unit: days}
+      rules:
+        - field: status_category
+          operator: is
+          join: and
+        - field: age_in_current_status
+          operator: greater_than
       report_settings:
         severity: warning
         category: flow
-      enabled: true
       origin: system_template
       template_key: stale-in-progress-work-item
 ```
@@ -195,7 +190,7 @@ The default pack's signals ship as **templates**: pre-written signal definitions
 template is configuration, not executable code, and has no privileged evaluation path — the engine
 runs it exactly as it runs a user-authored signal, so any template can be recreated from scratch in
 the builder. Users may add a template to a group as-is, duplicate it into an editable signal
-(`origin: user_created`), disable it, or restore the shipped default. A template carries no scope —
+(`origin: user_created`), or restore the shipped default. A template carries no scope —
 it is added to a group, and scope is resolved from the team later.
 
 ## 9. Signal Definitions
@@ -209,20 +204,17 @@ to which a group is attached.
   name: Stale in-progress Scrum work
   description: Finds issues that stayed in progress longer than expected.
   entity_type: issue
-  expression:
-    type: group
-    operator: all
-    conditions:
-      - field: status_category
-        operator: is
-        value: In Progress
-      - field: age_in_current_status
-        operator: greater_than
-        value: {amount: 3, unit: days}
+  rules:
+    - field: status_category
+      operator: is
+      value: In Progress
+      join: and
+    - field: age_in_current_status
+      operator: greater_than
+      value: {amount: 3, unit: days}
   report_settings:
     severity: warning
     category: flow
-  enabled: true
   origin: system_template
   template_key: stale-in-progress-work-item
 ```
@@ -235,42 +227,57 @@ to which a group is attached.
 | `name` | string | yes | Human-readable name, unique in the local workspace. |
 | `description` | string | no | Shown in the builder and reports. |
 | `entity_type` | string | yes | Exactly one signal entity type in MVP: `issue` (work tracking) or `merge_request` (code repository). |
-| `expression` | object | yes | Rule expression. See §10. |
+| `rules` | list | yes | Flat list of rule conditions. See §10. |
 | `report_settings` | object | yes | Severity, category, and optional message template. |
-| `enabled` | boolean | yes | Disabled signals are persisted but not evaluated. |
 | `origin` | enum | yes | `system_template`, `user_created`, or `imported`. |
 | `template_key` | string | no | Source template key when instantiated from a template. |
 
 ## 10. Rule Expressions
 
-The MVP expression grammar is intentionally small:
+Signal YAML files (exported packs) use a flat `rules:` list. Each rule carries `field`, `operator`,
+and `value` (omitted for `is_empty` / `is_not_empty`). Every rule except the last carries a `join`
+key (`and` or `or`) that determines how the rules are combined; a single-rule signal has no `join`.
+The `join` is uniform across a signal (the engine does not support mixing AND and OR).
 
 ```yaml
-type: group
-operator: all # all | any
-conditions:
+# Single rule — no join
+rules:
   - field: status_category
     operator: is
-    value: In Progress
-  - type: group
-    operator: any
-    conditions:
-      - field: priority
-        operator: is
-        value: High
-      - field: labels
-        operator: contains
-        value: customer-impact
+    value: in_progress
+
+# Multiple rules — join on every rule except the last
+rules:
+  - field: status_category
+    operator: is
+    value: in_progress
+    join: and
+  - field: age_in_current_status
+    operator: greater_than
+    value:
+      amount: 7
+      unit: days
 ```
 
-Groups support `all` and `any`, with one level of nested grouping in MVP. Conditions use
-field/operator/value triples. Fields, operators, and values are validated against the selected
-connector capability schema.
+The importer derives the group operator from the uniform `join`: `and` → `all`, `or` → `any`.
+A single rule with no `join` defaults to `all`. Fields, operators, and values are validated against
+the selected connector capability schema.
 
 Time-based fields include created/updated/resolved dates, age since created/updated, and age in
 current status. Sprint-aware fields are evaluated only when the team's scope supplies sprint data
 (scrum boards); on date-range/kanban runs, sprint-only signals are skipped at report time
 ([data model §6.7](./05-data-model.md#67-workingmode)).
+
+The Jira connector exposes the following additional work-item fields in its capability schema:
+
+| Field | Type | Operators |
+|---|---|---|
+| `components` | `string_list` | `contains`, `does_not_contain`, `contains_any`, `does_not_contain_any` |
+| `story_points` | `number` | `gt`, `lt`, `gte`, `lte`, `eq`, `neq`, `is_empty`, `is_not_empty` |
+| `labels` | `string_list` | `contains`, `does_not_contain`, `contains_any`, `does_not_contain_any` |
+
+Negative label filtering (formerly `exclude_labels`) is expressed using `labels does_not_contain`
+or `labels does_not_contain_any`.
 
 ## 11. Field Mapping Block (Optional)
 
@@ -304,8 +311,8 @@ way.
 - **Default severity:** `warning`
 - **Template defaults:**
   - `days_threshold` (integer, default `7`)
-  - `exclude_labels` (string[], default `[]`)
 - **Evidence:** `{ days_idle, last_updated_at, threshold }`
+- **Tip:** To exclude items by label, add a `labels does_not_contain` rule (e.g. `labels does_not_contain "wont-fix"`). To exclude by component, use `components does_not_contain`.
 
 ### 12.2 `blocked-without-update`
 - **Default severity:** `critical`
@@ -461,20 +468,15 @@ spec:
   signals:
     - name: Merge request waiting longer than 1 day
       entity_type: merge_request
-      expression:
-        type: group
-        operator: all
-        conditions:
-          - field: state
-            operator: is
-            value: opened
-          - field: age_since_last_review_activity
-            operator: greater_than
-            value: {amount: 1, unit: days}
+      rules:
+        - field: state
+          operator: is
+          join: and
+        - field: age_since_last_review_activity
+          operator: greater_than
       report_settings:
         severity: warning
         category: flow
-      enabled: true
       origin: system_template
       template_key: mergerequest-waiting-too-long
 ```
@@ -494,70 +496,34 @@ spec:
     - id: sig-platform-review
       name: Platform MR waiting too long
       entity_type: merge_request
-      expression:
-        type: group
-        operator: all
-        conditions:
-          - field: age_since_last_review_activity
-            operator: greater_than
-            value: {amount: 1, unit: days}
+      rules:
+        - field: age_since_last_review_activity
+          operator: greater_than
+          value: {amount: 1, unit: days}
       report_settings:
         severity: critical
         category: flow
-      enabled: true
       origin: user_created
     - id: sig-platform-stale
       name: Platform stale in-progress work
       entity_type: issue
-      expression:
-        type: group
-        operator: all
-        conditions:
-          - field: status_category
-            operator: is
-            value: In Progress
-          - field: age_in_current_status
-            operator: greater_than
-            value: {amount: 5, unit: days}
+      rules:
+        - field: status_category
+          operator: is
+          value: In Progress
+          join: and
+        - field: age_in_current_status
+          operator: greater_than
+          value: {amount: 5, unit: days}
       report_settings:
         severity: warning
         category: flow
-      enabled: true
       origin: user_created
 ```
 
 On import this becomes a group `platform-team-pack` with two signals, ready to attach to any team.
 
-### 17.3 Disabled imported signal
-
-```yaml
-apiVersion: emradar.dev/v1
-kind: SignalPack
-metadata:
-  name: partial-import
-  version: 0.1.0
-  description: Example of a signal imported disabled (kept off until reviewed).
-spec:
-  export_type: private_backup
-  signals:
-    - id: sig-disabled
-      name: Imported stale work signal
-      entity_type: issue
-      expression:
-        type: group
-        operator: all
-        conditions:
-          - field: status_category
-            operator: is
-            value: In Progress
-      report_settings:
-        severity: warning
-        category: flow
-      enabled: false
-      origin: imported
-```
-
-### 17.4 Multiple groups sharing a signal
+### 17.3 Multiple groups sharing a signal
 
 ```yaml
 apiVersion: emradar.dev/v1
@@ -571,20 +537,17 @@ spec:
   signals:
     - name: Stale in-progress work
       entity_type: issue
-      expression:
-        type: group
-        operator: all
-        conditions:
-          - field: status_category
-            operator: is
-            value: in_progress
-          - field: age_in_current_status
-            operator: greater_than
-            value: {amount: 5, unit: days}
+      rules:
+        - field: status_category
+          operator: is
+          value: in_progress
+          join: and
+        - field: age_in_current_status
+          operator: greater_than
+          value: {amount: 5, unit: days}
       report_settings:
         severity: warning
         category: flow
-      enabled: true
       origin: user_created
   groups:
     - name: scrum-health

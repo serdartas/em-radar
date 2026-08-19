@@ -39,26 +39,25 @@ def test_templates_seed_once() -> None:
     second = seed_jira_signal_templates()
 
     assert first == second
-    assert len(first) == 8
+    assert len(first) == 7
 
 
 def test_template_duplicates_into_runnable_definition() -> None:
     definition = instantiate_jira_signal_template("stale-in-progress-work-item")
 
-    assert definition.enabled is True
     assert definition.origin is SignalOrigin.SYSTEM_TEMPLATE
     assert definition.template_key == "stale-in-progress-work-item"
 
 
 def test_restore_built_in_defaults_without_deleting_user_copies() -> None:
     copied = instantiate_jira_signal_template(
-        "blocked-without-update",
-        name="Team-specific blocked work",
+        "stale-in-progress-work-item",
+        name="Team-specific stale work",
     )
-    restored = restore_jira_signal_template("blocked-without-update")
+    restored = restore_jira_signal_template("stale-in-progress-work-item")
 
-    assert copied.name == "Team-specific blocked work"
-    assert restored.name == "Blocked without update"
+    assert copied.name == "Team-specific stale work"
+    assert restored.name == "Stale in-progress work item"
 
 
 def test_m2_m3_parameter_overrides_have_equivalent_expression_values() -> None:
@@ -69,10 +68,9 @@ def test_m2_m3_parameter_overrides_have_equivalent_expression_values() -> None:
     assert age_condition["value"] == {"amount": 7, "unit": "days"}
 
 
-def test_all_eight_jira_templates_preserve_evidence_contracts() -> None:
+def test_all_seven_jira_templates_preserve_evidence_contracts() -> None:
     expected = {
         "stale-in-progress-work-item": ("status_category", "age_in_current_status"),
-        "blocked-without-update": ("status_category", "age_since_updated"),
         "story-without-acceptance-criteria": ("issue_type", "acceptance_criteria"),
         "story-without-parent-epic": ("issue_type", "has_epic_parent"),
         "epic-too-broad": ("issue_type", "child_count"),
@@ -163,21 +161,10 @@ def test_jira_template_expressions_match_positive_and_negative_fixtures() -> Non
         (stale,),
         transitions=(_transition(stale.id, NOW - timedelta(days=8)),),
     )
-    blocked = _workitem(
-        "RAD-26",
-        status="Blocked",
-        status_category=StatusCategory.BLOCKED,
-        updated_at=NOW - timedelta(days=5),
-    )
     assert set(stale_findings[0].evidence) >= {
         "scope_id",
         "status_category",
         "age_in_current_status",
-    }
-    assert set(_findings("blocked-without-update", (blocked,))[0].evidence) >= {
-        "scope_id",
-        "status_category",
-        "age_since_updated",
     }
 
 
@@ -192,7 +179,12 @@ def test_sprint_scope_churn_template_uses_sprint_level_evidence() -> None:
         start_date=NOW - timedelta(days=7),
     )
     original = _workitem("RAD-1", sprint_ids=[sprint.id], current_sprint_id=sprint.id)
-    added = _workitem("RAD-2", sprint_ids=[sprint.id], current_sprint_id=sprint.id)
+    added = _workitem(
+        "RAD-2",
+        sprint_ids=[sprint.id],
+        current_sprint_id=sprint.id,
+        created_at=NOW - timedelta(days=5),
+    )
     transitions = (
         _transition(original.id, NOW - timedelta(days=8)),
         _transition(added.id, NOW - timedelta(days=2)),
@@ -367,6 +359,7 @@ def _workitem(
     status: str = "In Progress",
     status_category: StatusCategory = StatusCategory.IN_PROGRESS,
     updated_at: datetime | None = None,
+    created_at: datetime | None = None,
 ) -> WorkItem:
     return WorkItem(
         source=Source.JIRA,
@@ -382,7 +375,7 @@ def _workitem(
         acceptance_criteria=acceptance_criteria,
         sprint_ids=sprint_ids or [],
         current_sprint_id=current_sprint_id,
-        created_at=NOW - timedelta(days=10),
+        created_at=created_at if created_at is not None else NOW - timedelta(days=10),
         updated_at=updated_at or NOW - timedelta(days=1),
     )
 

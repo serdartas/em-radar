@@ -14,9 +14,6 @@ from em_radar_core.models import WindowType
 def test_team_profile_crud_supports_multiple_working_modes(
     api_client: TestClient, session_factory: sessionmaker[Session]
 ) -> None:
-    project_id = uuid4()
-    board_id = uuid4()
-    repository_id = uuid4()
     with session_factory() as session:
         connection = create_source_connection(
             session,
@@ -31,9 +28,6 @@ def test_team_profile_crud_supports_multiple_working_modes(
         json={
             "name": "Platform",
             "connection_ids": [str(connection.id)],
-            "project_ids": [str(project_id)],
-            "board_ids": [str(board_id)],
-            "repository_ids": [str(repository_id)],
             "working_mode": "scrum",
             "sprint_length_days": 14,
             "member_user_keys": ["jira:alice"],
@@ -48,8 +42,6 @@ def test_team_profile_crud_supports_multiple_working_modes(
             "name": "Operations",
             "description": "Production operations",
             "connection_ids": [str(connection.id)],
-            "project_ids": [str(project_id)],
-            "repository_ids": [],
             "working_mode": "kanban",
         },
     )
@@ -89,8 +81,6 @@ def test_kanban_team_rejects_non_null_sprint_length(api_client: TestClient) -> N
         "/api/teams",
         json={
             "name": "Operations",
-            "project_ids": [],
-            "repository_ids": [],
             "working_mode": "kanban",
             "sprint_length_days": 14,
         },
@@ -109,8 +99,6 @@ def test_caller_supplied_connection_ids_are_ignored(
         json={
             "name": "Platform",
             "connection_ids": [str(uuid4())],
-            "project_ids": [str(uuid4())],
-            "repository_ids": [],
         },
     )
 
@@ -126,8 +114,6 @@ def test_team_referenced_by_evaluation_window_cannot_be_deleted(
         "/api/teams",
         json={
             "name": "Platform",
-            "project_ids": [],
-            "repository_ids": [],
             "working_mode": "scrum",
             "sprint_length_days": 14,
         },
@@ -152,3 +138,22 @@ def test_team_referenced_by_evaluation_window_cannot_be_deleted(
     assert response.status_code == 409
     assert response.json()["detail"] == "team is referenced by an evaluation window"
     assert api_client.get(f"/api/teams/{team['id']}").status_code == 200
+
+
+def test_team_profile_omits_vestigial_id_arrays(api_client: TestClient) -> None:
+    """project_ids / board_ids / repository_ids are absent from both create payload and response."""
+    response = api_client.post(
+        "/api/teams",
+        json={"name": "Clean team", "working_mode": "scrum", "sprint_length_days": 14},
+    )
+    assert response.status_code == 201
+    body = response.json()
+
+    assert "project_ids" not in body
+    assert "board_ids" not in body
+    assert "repository_ids" not in body
+
+    read_body = api_client.get(f"/api/teams/{body['id']}").json()
+    assert "project_ids" not in read_body
+    assert "board_ids" not in read_body
+    assert "repository_ids" not in read_body

@@ -69,10 +69,8 @@ def _persist_report(
                         "name": "Blocked without update",
                         "entity_type": "workitem",
                         "category": "flow",
-                        "enabled": True,
                         "origin": "user_created",
                         "template_key": None,
-                        "version": 1,
                     }
                 ],
                 "skipped_signals": [
