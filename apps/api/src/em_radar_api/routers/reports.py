@@ -138,9 +138,12 @@ class ReportRunRequest(BaseModel):
             self.end = _ensure_utc(self.end)
             if self.start >= self.end:
                 raise ValueError("date_range start must be before end")
-        elif self.window_type is not WindowType.SPRINT and (
-            self.start is not None or self.end is not None
-        ):
+        elif self.window_type is WindowType.SPRINT:
+            if self.start is not None or self.end is not None:
+                raise ValueError(
+                    "date bounds are only valid for date_range windows; omit start/end for sprint windows"
+                )
+        elif self.start is not None or self.end is not None:
             raise ValueError("start/end are only valid with window_type=date_range")
         return self
 
@@ -534,7 +537,17 @@ async def _run_team_report(
     # window from the team's working mode (flows §6): with a board it is the active sprint
     # (scrum) or a rolling range (kanban); without one it falls back to a date range.
     try:
-        if sprint_external_id is not None and board_meta is not None:
+        if sprint_external_id is not None:
+            if board_meta is None:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Cannot resolve sprint: no board source available for this team",
+                )
+            if board_meta.sprints_unavailable:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Cannot resolve sprint: sprint metadata could not be fetched from the board",
+                )
             window = _sprint_window_by_external_id(sprint_external_id, board_meta.sprints, team.id)
         else:
             window = requested_window or _default_evaluation_window(
@@ -1136,18 +1149,31 @@ def _code_fetch_window(
 
     SPRINT windows carry no date bounds; MR providers that date-filter on
     window.start/window.end would receive None.  Convert to a DATE_RANGE starting
-    at the sprint's start_date and ending at the report snapshot time (started_at),
-    so MR activity after an overdue sprint's planned end is still captured.
+    at the sprint's start_date. For closed sprints, cap the end at the sprint's
+    completion/end date so historical runs are not contaminated with MRs from after
+    the sprint; for active/future sprints (no past end date) use the report snapshot
+    time (started_at) so in-flight MR activity is captured.
     Falls back to a 14-day lookback when the sprint has no start_date.
     """
     if window.window_type != WindowType.SPRINT:
         return window
     window_sprint = next((s for s in sprints if s.id == window.sprint_id), None)
-    if window_sprint is not None and window_sprint.start_date is not None:
+    if window_sprint is not None:
+        # Cap the end at the sprint's completion/end date for historical sprints so MRs merged
+        # after the sprint closed are not admitted into the code-signal window.
+        sprint_end = window_sprint.complete_date or window_sprint.end_date
+        end = sprint_end if sprint_end is not None and sprint_end < started_at else started_at
+        if window_sprint.start_date is not None:
+            return EvaluationWindow(
+                window_type=WindowType.DATE_RANGE,
+                start=window_sprint.start_date,
+                end=end,
+                team_profile_id=window.team_profile_id,
+            )
         return EvaluationWindow(
             window_type=WindowType.DATE_RANGE,
-            start=window_sprint.start_date,
-            end=started_at,
+            start=started_at - timedelta(days=DEFAULT_KANBAN_REPORT_DAYS),
+            end=end,
             team_profile_id=window.team_profile_id,
         )
     return EvaluationWindow(

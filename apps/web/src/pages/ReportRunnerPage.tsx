@@ -65,6 +65,12 @@ export function ReportRunnerPage() {
 
   const teams = teamsQuery.data ?? []
 
+  // Clear any previously selected sprint whenever the team selection changes so stale sprint IDs
+  // are never carried forward to a different team or a multi-team batch run.
+  useEffect(() => {
+    setSelectedSprintExternalId("")
+  }, [selectedTeamIds])
+
   // Fetch sprints for the picker when exactly one team is selected in sprint mode.
   const sprintFetchTeamId =
     windowMode === "sprint" && selectedTeamIds.length === 1 ? selectedTeamIds[0] : null
@@ -178,7 +184,10 @@ export function ReportRunnerPage() {
     if (windowMode === "sprint") {
       teamRun.mutate({
         teamIds: selectedTeamIds,
-        sprintExternalId: selectedSprintExternalId || undefined,
+        // Only apply explicit sprint selection for single-team runs; multi-team runs use each
+        // team's default window because the selected sprint may not exist on every board.
+        sprintExternalId:
+          selectedTeamIds.length === 1 ? selectedSprintExternalId || undefined : undefined,
       })
       return
     }
