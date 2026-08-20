@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { useId, useRef, useState } from "react"
+import { useEffect, useId, useRef, useState } from "react"
 
 import { Input } from "@/components/ui/input"
 import { cn } from "@/lib/utils"
@@ -16,11 +16,29 @@ interface ComboboxProps {
   onSelect: (value: string) => void
   placeholder?: string
   className?: string
-  /** Accessible label for the input field. */
+  /** Accessible label for the input field (aria-label). */
   inputLabel?: string
+  /**
+   * Standard input labeling attributes so the combobox can be composed inside
+   * FormRow: the cloned aria-describedby / id from cloneElement must reach the
+   * actual <input> element or the label/hint association is lost.
+   */
+  id?: string
+  "aria-describedby"?: string
+  "aria-labelledby"?: string
 }
 
-function Combobox({ className, inputLabel, onSelect, options, placeholder, value }: ComboboxProps) {
+function Combobox({
+  "aria-describedby": ariaDescribedby,
+  "aria-labelledby": ariaLabelledby,
+  className,
+  id,
+  inputLabel,
+  onSelect,
+  options,
+  placeholder,
+  value,
+}: ComboboxProps) {
   // query is only used for filtering while the user is actively typing.
   const [query, setQuery] = useState("")
   // isEditing is true only between the first keystroke and selection/blur.
@@ -45,6 +63,22 @@ function Combobox({ className, inputLabel, onSelect, options, placeholder, value
     isEditing && query.trim()
       ? options.filter((o) => o.label.toLowerCase().includes(query.toLowerCase()))
       : options
+
+  // aria-expanded must track whether the popup is actually visible, not just
+  // whether the component intends to open. When the filter matches nothing the
+  // listbox is removed from the DOM but `open` stays true — keep them in sync.
+  const listboxVisible = open && filtered.length > 0
+
+  // Scroll the keyboard-active option into view so it's visible in the capped
+  // max-h-56 container when navigating a long list.
+  useEffect(() => {
+    if (activeIndex < 0) return
+    document
+      .getElementById(`${optionIdPrefix}-option-${activeIndex}`)
+      // scrollIntoView is not available in all test environments; the ?. makes
+      // it a no-op in jsdom while remaining functional in real browsers.
+      ?.scrollIntoView?.({ block: "nearest" })
+  }, [activeIndex, optionIdPrefix])
 
   function handleSelect(option: ComboboxOption) {
     setQuery(option.label)
@@ -98,8 +132,11 @@ function Combobox({ className, inputLabel, onSelect, options, placeholder, value
         aria-activedescendant={activeOptionId}
         aria-autocomplete="list"
         aria-controls={listboxId}
-        aria-expanded={open}
+        aria-describedby={ariaDescribedby}
+        aria-expanded={listboxVisible}
         aria-label={inputLabel}
+        aria-labelledby={ariaLabelledby}
+        id={id}
         onChange={(e) => {
           setQuery(e.target.value)
           setIsEditing(true)
@@ -117,7 +154,7 @@ function Combobox({ className, inputLabel, onSelect, options, placeholder, value
         role="combobox"
         value={inputDisplayValue}
       />
-      {open && filtered.length > 0 && (
+      {listboxVisible && (
         <ul
           className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-md border border-border bg-background py-1 shadow-md"
           id={listboxId}

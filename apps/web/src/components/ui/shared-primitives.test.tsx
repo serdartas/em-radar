@@ -203,6 +203,37 @@ describe("FormRow", () => {
     expect(input).toHaveAttribute("aria-describedby", hint.id)
   })
 
+  it("preserves existing aria-describedby alongside the hint id", () => {
+    render(
+      <FormRow hint="Use lowercase" htmlFor="field" label="Label">
+        <input aria-describedby="existing-desc" id="field" />
+      </FormRow>,
+    )
+    const input = screen.getByRole("textbox")
+    const hint = screen.getByText("Use lowercase")
+    const describedBy = input.getAttribute("aria-describedby") ?? ""
+    expect(describedBy).toContain("existing-desc")
+    expect(describedBy).toContain(hint.id)
+  })
+
+  it("forwards the hint id to a Combobox child via aria-describedby", () => {
+    const comboOptions: ComboboxOption[] = [{ label: "Apple", value: "apple" }]
+    render(
+      <FormRow hint="Pick carefully" htmlFor="fruit" label="Fruit">
+        <Combobox
+          id="fruit"
+          inputLabel="Fruit"
+          onSelect={vi.fn()}
+          options={comboOptions}
+          placeholder="Pick..."
+        />
+      </FormRow>,
+    )
+    const input = screen.getByRole("combobox")
+    const hint = screen.getByText("Pick carefully")
+    expect(input).toHaveAttribute("aria-describedby", hint.id)
+  })
+
   it("renders an optional action", () => {
     render(
       <FormRow action={<button type="button">Go</button>} htmlFor="field" label="Label">
@@ -359,6 +390,32 @@ describe("Combobox", () => {
     expect(screen.getByRole("listbox")).toBeInTheDocument()
     fireEvent.keyDown(input, { key: "Escape" })
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument()
+  })
+
+  it("sets aria-expanded to false when the filter matches no options", () => {
+    render(
+      <Combobox inputLabel="Fruit" onSelect={vi.fn()} options={options} placeholder="Pick..." />,
+    )
+    const input = screen.getByRole("combobox")
+    fireEvent.focus(input)
+    fireEvent.change(input, { target: { value: "zzz" } })
+    // No options match — listbox must be absent and aria-expanded must be false.
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument()
+    expect(input).toHaveAttribute("aria-expanded", "false")
+  })
+
+  it("calls scrollIntoView on the active option when navigating with keyboard", () => {
+    const scrollIntoView = vi.fn()
+    window.HTMLElement.prototype.scrollIntoView = scrollIntoView
+
+    render(
+      <Combobox inputLabel="Fruit" onSelect={vi.fn()} options={options} placeholder="Pick..." />,
+    )
+    const input = screen.getByRole("combobox")
+    fireEvent.focus(input)
+    fireEvent.keyDown(input, { key: "ArrowDown" })
+
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: "nearest" })
   })
 })
 

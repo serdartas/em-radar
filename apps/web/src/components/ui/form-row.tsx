@@ -21,12 +21,17 @@ interface FormRowProps {
 function FormRow({ action, children, className, hint, htmlFor, label }: FormRowProps) {
   const hintId = useId()
 
-  // Inject aria-describedby on the direct field element when a hint is present,
-  // so assistive technology announces the hint without any extra consumer wiring.
-  const enhancedChildren =
-    hint && isValidElement<{ "aria-describedby"?: string }>(children)
-      ? cloneElement(children, { "aria-describedby": hintId })
-      : children
+  // Inject aria-describedby on the direct field element when a hint is present.
+  // Concatenate with any existing aria-describedby so validation / help text
+  // already on the field is not silently dropped.
+  const enhancedChildren = (() => {
+    if (!hint || !isValidElement<{ "aria-describedby"?: string }>(children)) {
+      return children
+    }
+    const existing = children.props["aria-describedby"]
+    const combined = [existing, hintId].filter(Boolean).join(" ")
+    return cloneElement(children, { "aria-describedby": combined })
+  })()
 
   return (
     <div className={cn("flex flex-col gap-1.5", className)}>
