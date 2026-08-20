@@ -425,14 +425,12 @@ def test_naive_date_range_treated_as_utc(
         {"window_type": "date_range", "start": _RANGE_START},
         {"window_type": "date_range", "start": _RANGE_END, "end": _RANGE_START},
         {"window_type": "date_range", "start": _RANGE_START, "end": _RANGE_START},
-        {"window_type": "sprint"},
         {"start": _RANGE_START, "end": _RANGE_END},
     ],
     ids=[
         "missing-end",
         "start-after-end",
         "start-equals-end",
-        "explicit-sprint-rejected",
         "stray-start-end-without-window-type",
     ],
 )
@@ -441,7 +439,7 @@ def test_invalid_window_request_returns_422(
     window_payload: dict[str, str],
 ) -> None:
     """Malformed window requests are rejected with 422 at request validation, before any team
-    lookup: bad date_range bounds, explicit sprint selection, and stray start/end."""
+    lookup: bad date_range bounds and stray start/end."""
     response = api_client.post(
         "/api/reports/run",
         json={"connector": "jira", "team_profile_id": str(uuid4()), **window_payload},

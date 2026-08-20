@@ -1150,18 +1150,20 @@ def _code_fetch_window(
     SPRINT windows carry no date bounds; MR providers that date-filter on
     window.start/window.end would receive None.  Convert to a DATE_RANGE starting
     at the sprint's start_date. For closed sprints, cap the end at the sprint's
-    completion/end date so historical runs are not contaminated with MRs from after
-    the sprint; for active/future sprints (no past end date) use the report snapshot
-    time (started_at) so in-flight MR activity is captured.
+    completion date (complete_date) so historical runs are not contaminated with MRs
+    from after the sprint closed; for active/future sprints (no complete_date) use the
+    report snapshot time (started_at) so in-flight MR activity past a planned end date
+    is still captured.
     Falls back to a 14-day lookback when the sprint has no start_date.
     """
     if window.window_type != WindowType.SPRINT:
         return window
     window_sprint = next((s for s in sprints if s.id == window.sprint_id), None)
     if window_sprint is not None:
-        # Cap the end at the sprint's completion/end date for historical sprints so MRs merged
-        # after the sprint closed are not admitted into the code-signal window.
-        sprint_end = window_sprint.complete_date or window_sprint.end_date
+        # For closed sprints cap the end at the sprint's completion date so MRs merged after the
+        # sprint closed are not included in the code-signal window. Active/future sprints have no
+        # complete_date, so end falls back to started_at, capturing in-flight MR activity.
+        sprint_end = window_sprint.complete_date
         end = sprint_end if sprint_end is not None and sprint_end < started_at else started_at
         if window_sprint.start_date is not None:
             return EvaluationWindow(
