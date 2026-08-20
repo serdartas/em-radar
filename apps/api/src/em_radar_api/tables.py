@@ -176,3 +176,10 @@ class ReportJobTable(SQLModel, table=True):
     window_type: str | None = None
     window_start: datetime | None = None
     window_end: datetime | None = None
+
+
+class AppSettingsTable(SQLModel, table=True):
+    __tablename__ = "app_settings"
+
+    id: int = Field(default=1, primary_key=True)
+    telemetry_enabled: bool = Field(default=False)
