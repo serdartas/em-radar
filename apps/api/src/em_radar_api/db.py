@@ -68,3 +68,15 @@ def write_session(sf: sessionmaker[Session]) -> Iterator[Session]:
     """
     with _write_lock, sf() as session:
         yield session
+
+
+@contextmanager
+def write_lock_acquired() -> Iterator[None]:
+    """Acquire the process-wide write lock without opening a new session.
+
+    For use inside functions that already hold an open session and need to serialize
+    their DB commits with other concurrent writers (e.g. the persistence portion of
+    a background report job that opens its session before lock acquisition).
+    """
+    with _write_lock:
+        yield

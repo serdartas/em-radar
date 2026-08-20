@@ -62,7 +62,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlmodel import Session, select
 
 
-from em_radar_api.db import get_session, get_session_factory, get_write_session, write_session
+from em_radar_api.db import get_session, get_session_factory, get_write_session, write_lock_acquired, write_session
 from em_radar_api.report_export import build_report_markdown, build_sectioned_report
 from em_radar_api.connector_registry import create_connector, get_connector_capabilities
 from em_radar_api.repositories.canonical import persist_fetch
@@ -286,9 +286,6 @@ async def run_report(
         team_profile_id=request.team_profile_id,
         status="queued",
         enqueued_at=now,
-        window_type=requested_window.window_type.value if requested_window else None,
-        window_start=requested_window.start if requested_window else None,
-        window_end=requested_window.end if requested_window else None,
     )
     session.add(job)
     session.commit()
@@ -387,6 +384,18 @@ async def list_team_sprints(
     return [SprintResponse.from_sprint(s) for s in sprints]
 
 
+class _ReportFailure(Exception):
+    """Wraps a hard exception from _run_team_report, carrying the FAILED report's id.
+
+    Allows _run_report_job to link the persisted FAILED report to the job row so the job
+    response includes the report_id rather than leaving the report unlinked.
+    """
+
+    def __init__(self, cause: BaseException, report_id: UUID) -> None:
+        super().__init__(str(cause))
+        self.report_id = report_id
+
+
 async def _run_report_job(
     job_id: UUID,
     team_profile_id: UUID,
@@ -418,7 +427,9 @@ async def _run_report_job(
             error_msg = None
             final_status = "done"
     except Exception as exc:
-        report_id = None
+        # _ReportFailure carries the id of the FAILED report row that was already persisted,
+        # so the job can reference it. Plain exceptions leave no report row.
+        report_id = exc.report_id if isinstance(exc, _ReportFailure) else None
         error_msg = str(exc)
         final_status = "failed"
 
@@ -632,159 +643,163 @@ async def _run_team_report(
     for merge_request in code_mergerequests:
         populate_merge_request_links(merge_request, board_workitems, key_pattern)
 
-    identity = persist_fetch(
-        session,
-        users=(
-            _placeholder_jira_users(board_workitems, board_transitions)
-            + _placeholder_code_users(code_mergerequests, code_reviews)
-        ),
-        projects=[board_data.project] if board_data else [],
-        boards=[board_data.board] if board_data else [],
-        sprints=board_data.sprints if board_data else [],
-        workitems=board_workitems,
-        transitions=board_transitions,
-        repositories=code_data.repositories if code_data else [],
-        mergerequests=code_mergerequests,
-        reviews=code_reviews,
-        # Degraded sprint fetch: keep cached work-item sprint links rather than clobbering them
-        # with unresolved connector ids (there is no sprint identity map on this path).
-        preserve_sprint_links=board_meta is not None and board_meta.sprints_unavailable,
-    )
-    persisted_window = _persisted_window(window, identity.identity_map)
-    # Snapshot the sprint name so retained reports stay readable after the cache is cleared.
-    sprint_label: str | None = None
-    if window.sprint_id is not None and board_meta is not None:
-        sprint_obj = next((s for s in board_meta.sprints if s.id == window.sprint_id), None)
-        if sprint_obj is not None:
-            sprint_label = sprint_obj.name
-    session.add(EvaluationWindowTable(**persisted_window.model_dump(), sprint_label=sprint_label))
-    session.commit()
-
-    ctx = EvaluationContext(now=started_at, window=window, team=team)
-    board_scope_descriptor = (
-        _scope_descriptor(board_scope, connector_name="jira") if board_scope is not None else None
-    )
-
-    skipped_signals = _skipped_signal_entries(
-        board_definitions=board_definitions,
-        code_definitions=code_definitions,
-        board_attached=board_scope is not None,
-        code_attached=has_code_source,
-        ctx=ctx,
-        board_scope_descriptor=board_scope_descriptor,
-    )
-
-    report = create_report(
-        session,
-        ReportTable(
-            evaluation_window_id=window.id,
-            signal_pack_snapshot=_team_signal_pack_snapshot(
-                team_row, all_definitions, skipped_signals, partial_data_notes
+    # Acquire the write lock for all DB writes. Connector I/O is complete at this point;
+    # holding the lock for persistence + evaluation (pure in-memory) keeps the write path
+    # serialized consistently with get_write_session / write_session.
+    with write_lock_acquired():
+        identity = persist_fetch(
+            session,
+            users=(
+                _placeholder_jira_users(board_workitems, board_transitions)
+                + _placeholder_code_users(code_mergerequests, code_reviews)
             ),
-            status=ReportStatus.PENDING,
-            started_at=started_at,
-        ),
-    )
-    report.status = ReportStatus.RUNNING
-    save_report(session, report)
-
-    try:
-        # All data sources failed — persist FAILED and return early rather than succeeding
-        # with zero findings (would violate REQ-NF-070). Fires when every configured source
-        # failed, regardless of how many sources are configured.
-        board_configured = board_scope is not None
-        code_configured = has_code_source
-        all_sources_failed = (
-            (not board_configured or board_data is None)
-            and (not code_configured or code_data is None)
-            and partial_data_notes
+            projects=[board_data.project] if board_data else [],
+            boards=[board_data.board] if board_data else [],
+            sprints=board_data.sprints if board_data else [],
+            workitems=board_workitems,
+            transitions=board_transitions,
+            repositories=code_data.repositories if code_data else [],
+            mergerequests=code_mergerequests,
+            reviews=code_reviews,
+            # Degraded sprint fetch: keep cached work-item sprint links rather than clobbering them
+            # with unresolved connector ids (there is no sprint identity map on this path).
+            preserve_sprint_links=board_meta is not None and board_meta.sprints_unavailable,
         )
-        if all_sources_failed:
+        persisted_window = _persisted_window(window, identity.identity_map)
+        # Snapshot the sprint name so retained reports stay readable after the cache is cleared.
+        sprint_label: str | None = None
+        if window.sprint_id is not None and board_meta is not None:
+            sprint_obj = next((s for s in board_meta.sprints if s.id == window.sprint_id), None)
+            if sprint_obj is not None:
+                sprint_label = sprint_obj.name
+        session.add(EvaluationWindowTable(**persisted_window.model_dump(), sprint_label=sprint_label))
+        session.commit()
+
+        ctx = EvaluationContext(now=started_at, window=window, team=team)
+        board_scope_descriptor = (
+            _scope_descriptor(board_scope, connector_name="jira") if board_scope is not None else None
+        )
+
+        skipped_signals = _skipped_signal_entries(
+            board_definitions=board_definitions,
+            code_definitions=code_definitions,
+            board_attached=board_scope is not None,
+            code_attached=has_code_source,
+            ctx=ctx,
+            board_scope_descriptor=board_scope_descriptor,
+        )
+
+        report = create_report(
+            session,
+            ReportTable(
+                evaluation_window_id=window.id,
+                signal_pack_snapshot=_team_signal_pack_snapshot(
+                    team_row, all_definitions, skipped_signals, partial_data_notes
+                ),
+                status=ReportStatus.PENDING,
+                started_at=started_at,
+            ),
+        )
+        report.status = ReportStatus.RUNNING
+        save_report(session, report)
+
+        try:
+            # All data sources failed — persist FAILED and return early rather than succeeding
+            # with zero findings (would violate REQ-NF-070). Fires when every configured source
+            # failed, regardless of how many sources are configured.
+            board_configured = board_scope is not None
+            code_configured = has_code_source
+            all_sources_failed = (
+                (not board_configured or board_data is None)
+                and (not code_configured or code_data is None)
+                and partial_data_notes
+            )
+            if all_sources_failed:
+                report.status = ReportStatus.FAILED
+                report.finished_at = datetime.now(timezone.utc)
+                report.error = "all data sources failed: " + "; ".join(
+                    n["reason"] for n in partial_data_notes
+                )
+                report.findings_count_by_severity = _counts_by_severity([])
+                save_report(session, report)
+                return ReportDetailResponse.from_report_with_findings(
+                    report, [], team_profile_id=team_row.id, team_name=team_row.name
+                )
+
+            signal_data = SignalData(
+                report_id=report.id,
+                projects=(board_data.project,) if board_data else (),
+                boards=(board_data.board,) if board_data else (),
+                sprints=tuple(board_data.sprints) if board_data else (),
+                workitems=tuple(board_workitems),
+                transitions=tuple(board_transitions),
+                repositories=tuple(code_data.repositories) if code_data else (),
+                mergerequests=tuple(code_mergerequests),
+                reviews=tuple(code_reviews),
+            )
+
+            # Evaluate board signals (workitem/sprint/issue entity types) when board source attached.
+            findings: list[SignalFinding] = []
+            if (
+                board_data is not None
+                and board_scope is not None
+                and board_scope_descriptor is not None
+            ):
+                scope_descriptor = board_scope_descriptor
+                for definition in board_definitions:
+                    findings.extend(
+                        evaluate_signal_definition(
+                            definition,
+                            signal_data,
+                            ctx,
+                            JiraConnector.describe_signal_schema(),
+                            [scope_descriptor],
+                        )
+                    )
+
+            # Evaluate code signals (merge_request entity type) when code source attached and data available.
+            if code_data is not None and team_row.code_connection_id is not None:
+                code_connection = get_source_connection(session, team_row.code_connection_id)
+                code_scope_descriptor = ScopeDescriptor(
+                    connector_id=str(team_row.code_connection_id),
+                    scope_id=str(team_row.code_connection_id),
+                    scope_type="repository",
+                    name="code",
+                    capabilities=("reviews", "pipelines"),
+                    connector_capabilities=get_connector_capabilities(
+                        str(code_connection.connector_name) if code_connection else None
+                    ),
+                )
+                for definition in code_definitions:
+                    findings.extend(
+                        evaluate_signal_definition(
+                            definition,
+                            signal_data,
+                            ctx,
+                            GitLabConnector.describe_signal_schema(),
+                            [code_scope_descriptor],
+                        )
+                    )
+
+            persisted_findings = [
+                _persisted_finding(finding, identity.identity_map) for finding in findings
+            ]
+            add_findings(session, persisted_findings)
+            report.status = ReportStatus.SUCCEEDED
+            report.finished_at = datetime.now(timezone.utc)
+            report.findings_count_by_severity = _counts_by_severity(findings)
+            save_report(session, report)
+        except Exception as error:
+            session.rollback()
             report.status = ReportStatus.FAILED
             report.finished_at = datetime.now(timezone.utc)
-            report.error = "all data sources failed: " + "; ".join(
-                n["reason"] for n in partial_data_notes
-            )
-            report.findings_count_by_severity = _counts_by_severity([])
+            report.error = str(error)
             save_report(session, report)
-            return ReportDetailResponse.from_report_with_findings(
-                report, [], team_profile_id=team_row.id, team_name=team_row.name
-            )
+            raise _ReportFailure(error, report.id) from error
 
-        signal_data = SignalData(
-            report_id=report.id,
-            projects=(board_data.project,) if board_data else (),
-            boards=(board_data.board,) if board_data else (),
-            sprints=tuple(board_data.sprints) if board_data else (),
-            workitems=tuple(board_workitems),
-            transitions=tuple(board_transitions),
-            repositories=tuple(code_data.repositories) if code_data else (),
-            mergerequests=tuple(code_mergerequests),
-            reviews=tuple(code_reviews),
+        return ReportDetailResponse.from_report_with_findings(
+            report, persisted_findings, team_profile_id=team_row.id, team_name=team_row.name
         )
-
-        # Evaluate board signals (workitem/sprint/issue entity types) when board source attached.
-        findings: list[SignalFinding] = []
-        if (
-            board_data is not None
-            and board_scope is not None
-            and board_scope_descriptor is not None
-        ):
-            scope_descriptor = board_scope_descriptor
-            for definition in board_definitions:
-                findings.extend(
-                    evaluate_signal_definition(
-                        definition,
-                        signal_data,
-                        ctx,
-                        JiraConnector.describe_signal_schema(),
-                        [scope_descriptor],
-                    )
-                )
-
-        # Evaluate code signals (merge_request entity type) when code source attached and data available.
-        if code_data is not None and team_row.code_connection_id is not None:
-            code_connection = get_source_connection(session, team_row.code_connection_id)
-            code_scope_descriptor = ScopeDescriptor(
-                connector_id=str(team_row.code_connection_id),
-                scope_id=str(team_row.code_connection_id),
-                scope_type="repository",
-                name="code",
-                capabilities=("reviews", "pipelines"),
-                connector_capabilities=get_connector_capabilities(
-                    str(code_connection.connector_name) if code_connection else None
-                ),
-            )
-            for definition in code_definitions:
-                findings.extend(
-                    evaluate_signal_definition(
-                        definition,
-                        signal_data,
-                        ctx,
-                        GitLabConnector.describe_signal_schema(),
-                        [code_scope_descriptor],
-                    )
-                )
-
-        persisted_findings = [
-            _persisted_finding(finding, identity.identity_map) for finding in findings
-        ]
-        add_findings(session, persisted_findings)
-        report.status = ReportStatus.SUCCEEDED
-        report.finished_at = datetime.now(timezone.utc)
-        report.findings_count_by_severity = _counts_by_severity(findings)
-        save_report(session, report)
-    except Exception as error:
-        session.rollback()
-        report.status = ReportStatus.FAILED
-        report.finished_at = datetime.now(timezone.utc)
-        report.error = str(error)
-        save_report(session, report)
-        raise
-
-    return ReportDetailResponse.from_report_with_findings(
-        report, persisted_findings, team_profile_id=team_row.id, team_name=team_row.name
-    )
 
 
 async def _fetch_board_metadata(

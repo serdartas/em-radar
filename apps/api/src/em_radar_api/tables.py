@@ -173,9 +173,6 @@ class ReportJobTable(SQLModel, table=True):
         sa_column=Column(sa.Uuid(), ForeignKey("report.id", ondelete="SET NULL"), nullable=True),
     )
     error: str | None = None
-    window_type: str | None = None
-    window_start: datetime | None = None
-    window_end: datetime | None = None
 
 
 class AppSettingsTable(SQLModel, table=True):
