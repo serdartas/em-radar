@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { ArrowLeft, ExternalLink } from "lucide-react"
-import { Link } from "react-router-dom"
-
+import { BackLink } from "@/components/ui/back-link"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
+import { ExternalDocLink } from "@/components/ui/external-doc-link"
+import { HelpDocCard } from "@/components/ui/help-doc-card"
 
 const ATLASSIAN_CLOUD_DOCS =
   "https://support.atlassian.com/atlassian-account/docs/manage-api-tokens-for-your-atlassian-account/"
@@ -14,13 +14,7 @@ export function JiraHelpPage() {
   return (
     <section aria-labelledby="page-title" className="space-y-8">
       <header className="space-y-2">
-        <Link
-          className="inline-flex items-center gap-1 text-sm text-slate-500 hover:text-foreground"
-          to="/connections"
-        >
-          <ArrowLeft aria-hidden="true" className="h-4 w-4" />
-          Back to Source Connections
-        </Link>
+        <BackLink to="/connections">Back to Source Connections</BackLink>
         <h1 className="text-2xl font-semibold tracking-tight" id="page-title">
           Connecting to Jira
         </h1>
@@ -49,30 +43,19 @@ export function JiraHelpPage() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <h2 className="text-lg font-semibold">Jira Cloud - API token</h2>
-        </CardHeader>
-        <CardContent className="space-y-3 text-sm text-slate-600">
-          <ol className="list-decimal space-y-1 pl-5">
-            <li>Sign in to your Atlassian account and open the API tokens page.</li>
-            <li>Create a token, give it a label, and copy the generated value.</li>
-            <li>
-              In EM Radar, enter your Atlassian account email and paste the token into the Token
-              field.
-            </li>
-          </ol>
-          <a
-            className="inline-flex items-center gap-1 font-medium text-blue-700 underline"
-            href={ATLASSIAN_CLOUD_DOCS}
-            rel="noreferrer"
-            target="_blank"
-          >
-            Atlassian docs: Manage API tokens
-            <ExternalLink aria-hidden="true" className="h-3.5 w-3.5" />
-          </a>
-        </CardContent>
-      </Card>
+      <HelpDocCard title="Jira Cloud - API token">
+        <ol className="list-decimal space-y-1 pl-5 text-blue-800">
+          <li>Sign in to your Atlassian account and open the API tokens page.</li>
+          <li>Create a token, give it a label, and copy the generated value.</li>
+          <li>
+            In EM Radar, enter your Atlassian account email and paste the token into the Token
+            field.
+          </li>
+        </ol>
+        <ExternalDocLink className="mt-2" href={ATLASSIAN_CLOUD_DOCS}>
+          Atlassian docs: Manage API tokens
+        </ExternalDocLink>
+      </HelpDocCard>
 
       <Card>
         <CardHeader>
@@ -84,15 +67,9 @@ export function JiraHelpPage() {
             <li>Create a token with read access to the projects and boards you report on.</li>
             <li>Copy the token and paste it into the Token field. The email field is not required.</li>
           </ol>
-          <a
-            className="inline-flex items-center gap-1 font-medium text-blue-700 underline"
-            href={ATLASSIAN_SERVER_DOCS}
-            rel="noreferrer"
-            target="_blank"
-          >
+          <ExternalDocLink href={ATLASSIAN_SERVER_DOCS}>
             Atlassian docs: Using Personal Access Tokens
-            <ExternalLink aria-hidden="true" className="h-3.5 w-3.5" />
-          </a>
+          </ExternalDocLink>
         </CardContent>
       </Card>
 

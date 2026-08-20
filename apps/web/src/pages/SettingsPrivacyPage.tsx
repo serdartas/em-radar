@@ -4,17 +4,12 @@ import { useState } from "react"
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 
+import { ConnectionDeleteConfirm } from "@/components/connections/ConnectionDeleteConfirm"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
-import { ApiError } from "@/lib/api"
-import {
-  type ConnectionConflict,
-  type SourceConnection,
-  deleteConnection,
-  listConnections,
-} from "@/lib/connections"
+import { listConnections, type SourceConnection } from "@/lib/connections"
 import { deleteReportHistory } from "@/lib/reports"
 import { getSettings, updateSettings } from "@/lib/settings"
 
@@ -164,37 +159,6 @@ interface DeleteConnectionItemProps {
 function DeleteConnectionItem({ connection }: DeleteConnectionItemProps) {
   const queryClient = useQueryClient()
   const [confirming, setConfirming] = useState(false)
-  const [conflict, setConflict] = useState<ConnectionConflict | null>(null)
-
-  const deleteMutation = useMutation({
-    mutationFn: (force: boolean) => deleteConnection(connection.id, force),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["connections"] })
-      void queryClient.invalidateQueries({ queryKey: ["teams"] })
-      setConfirming(false)
-      setConflict(null)
-    },
-    onError: (error: unknown) => {
-      if (
-        error instanceof ApiError &&
-        error.status === 409 &&
-        typeof error.detail === "object" &&
-        error.detail !== null &&
-        "dependent_teams" in error.detail
-      ) {
-        setConflict(error.detail as ConnectionConflict)
-      }
-    },
-  })
-
-  function handleInitialDelete() {
-    setConflict(null)
-    deleteMutation.mutate(false)
-  }
-
-  function handleConfirmDelete() {
-    deleteMutation.mutate(true)
-  }
 
   return (
     <li className="rounded-md border px-3 py-2">
@@ -204,71 +168,24 @@ function DeleteConnectionItem({ connection }: DeleteConnectionItemProps) {
           <span className="ml-2 text-xs text-slate-500">{connection.connector_name}</span>
         </div>
         {!confirming && (
-          <Button
-            onClick={() => {
-              setConfirming(true)
-              setConflict(null)
-            }}
-            size="sm"
-            variant="outline"
-          >
+          <Button onClick={() => setConfirming(true)} size="sm" variant="outline">
             Delete
           </Button>
         )}
       </div>
 
       {confirming && (
-        <div
-          aria-label={`Confirm: Delete connection ${connection.name}`}
-          className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"
-          role="alertdialog"
-        >
-          {conflict ? (
-            <>
-              {conflict.dependent_teams.length > 0 ? (
-                <>
-                  <p className="font-medium">This connection is used by the following teams:</p>
-                  <ul className="mt-1 list-disc pl-4">
-                    {conflict.dependent_teams.map((t) => (
-                      <li key={t.id}>{t.name}</li>
-                    ))}
-                  </ul>
-                </>
-              ) : (
-                <p className="font-medium">
-                  This connection has scope definitions that will be removed.
-                </p>
-              )}
-              <p className="mt-2">
-                Proceeding will remove the connection, its cached data, and all references to it.
-                This cannot be undone.
-              </p>
-            </>
-          ) : (
-            <p>
-              This removes the connection and all cached source data for it. This cannot be undone.
-            </p>
-          )}
-          <div className="mt-3 flex gap-2">
-            <Button
-              disabled={deleteMutation.isPending}
-              onClick={conflict ? handleConfirmDelete : handleInitialDelete}
-              size="sm"
-            >
-              {conflict ? "Confirm force delete" : "Confirm delete"}
-            </Button>
-            <Button
-              onClick={() => {
-                setConfirming(false)
-                setConflict(null)
-              }}
-              size="sm"
-              variant="outline"
-            >
-              Cancel
-            </Button>
-          </div>
-        </div>
+        <ConnectionDeleteConfirm
+          className="mt-3"
+          connectionId={connection.id}
+          connectionName={connection.name}
+          onCancel={() => setConfirming(false)}
+          onDeleted={() => {
+            void queryClient.invalidateQueries({ queryKey: ["connections"] })
+            void queryClient.invalidateQueries({ queryKey: ["teams"] })
+            setConfirming(false)
+          }}
+        />
       )}
     </li>
   )
