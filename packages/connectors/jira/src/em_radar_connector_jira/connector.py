@@ -89,6 +89,13 @@ class JiraConnectorConfig(BaseModel):
     field_mapping: JiraFieldMappingConfig = Field(default_factory=JiraFieldMappingConfig)
 
 
+class JiraFieldInfo(BaseModel):
+    id: str
+    name: str
+    custom: bool
+    field_type: str | None = None
+
+
 class JiraConnector:
     name: ClassVar[str] = "jira"
     display_name: ClassVar[str] = "Jira (Cloud or Server)"
@@ -112,6 +119,7 @@ class JiraConnector:
         )
         self._inline_changelogs: dict[str, list[Mapping[str, object]]] = {}
         self._issue_keys: dict[str, str] = {}
+        self._fields_cache: list[JiraFieldInfo] | None = None
 
     async def test_connection(self) -> ConnectionTestResult:
         user_payload = await self._request_json("rest/api/2/myself")
@@ -125,6 +133,17 @@ class JiraConnector:
             user_display_name=_display_name(user_payload),
             permissions=_permissions(permissions_payload),
         )
+
+    async def discover_fields(self) -> list[JiraFieldInfo]:
+        if self._fields_cache is not None:
+            return self._fields_cache
+        payloads = await self._request_json_list("rest/api/3/field")
+        fields = sorted(
+            (_field_info_from_payload(p) for p in payloads),
+            key=lambda f: f.name.lower(),
+        )
+        self._fields_cache = fields
+        return fields
 
     @classmethod
     def describe_capabilities(cls) -> Capabilities:
@@ -661,6 +680,17 @@ def _is_last_changelog_page(payload: Mapping[str, object], next_start_at: int) -
         return len(_payload_histories(payload)) < max_results
 
     return len(_payload_histories(payload)) < PAGE_SIZE
+
+
+def _field_info_from_payload(payload: Mapping[str, object]) -> JiraFieldInfo:
+    field_id = _optional_str(payload, "id") or ""
+    name = _optional_str(payload, "name") or field_id
+    custom = bool(payload.get("custom"))
+    schema = payload.get("schema")
+    field_type: str | None = None
+    if isinstance(schema, Mapping):
+        field_type = _optional_str(schema, "type")
+    return JiraFieldInfo(id=field_id, name=name, custom=custom, field_type=field_type)
 
 
 def _project_from_payload(payload: Mapping[str, object], base_url: str) -> Project:
