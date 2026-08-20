@@ -195,7 +195,6 @@ def _validate_pack(pack: SignalPack, context: PackValidationContext) -> None:
         raise PackValidationError(f"kind must be {PACK_KIND}")
     if not _NAME_PATTERN.fullmatch(pack.metadata.name):
         raise PackValidationError("metadata.name must be lowercase kebab-case")
-    _parse_semver(pack.metadata.version, "metadata.version")
     if pack.metadata.min_emradar_version is not None:
         minimum = _parse_semver(pack.metadata.min_emradar_version, "metadata.min_emradar_version")
         running = _parse_semver(context.em_radar_version, "running EM Radar version")

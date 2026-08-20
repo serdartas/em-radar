@@ -25,7 +25,6 @@ def test_pack_models_cover_defaults_scopes_and_field_mappings() -> None:
             "kind": "SignalPack",
             "metadata": {
                 "name": "example-pack",
-                "version": "1.0.0",
                 "description": "Example",
             },
             "spec": {

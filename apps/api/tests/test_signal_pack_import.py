@@ -8,7 +8,7 @@ apiVersion: emradar.dev/v1
 kind: SignalPack
 metadata:
   name: duplicate-signals-pack
-  version: 1.0.0
+
   description: Pack with two signals sharing the same name.
 spec:
   export_type: private_backup
@@ -44,7 +44,7 @@ apiVersion: emradar.dev/v1
 kind: SignalPack
 metadata:
   name: duplicate-groups-pack
-  version: 1.0.0
+
   description: Pack with unique signal names but two groups sharing the same name.
 spec:
   export_type: private_backup
@@ -85,7 +85,7 @@ apiVersion: emradar.dev/v1
 kind: SignalPack
 metadata:
   name: unique-signals-pack
-  version: 1.0.0
+
   description: Pack with unique signal names.
 spec:
   export_type: private_backup
@@ -121,7 +121,7 @@ apiVersion: emradar.dev/v1
 kind: SignalPack
 metadata:
   name: invalid-expression-pack
-  version: 1.0.0
+
   description: Pack with an invalid expression.
 spec:
   export_type: private_backup
@@ -145,7 +145,7 @@ apiVersion: emradar.dev/v1
 kind: SignalPack
 metadata:
   name: invalid-group-pack
-  version: 1.0.0
+
   description: Pack with a group that duplicates one signal reference.
 spec:
   export_type: private_backup
@@ -172,7 +172,7 @@ apiVersion: emradar.dev/v1
 kind: SignalPack
 metadata:
   name: scoped-pack
-  version: 1.0.0
+
   description: Pack with scope.
 spec:
   export_type: private_backup

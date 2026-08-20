@@ -18,7 +18,6 @@ apiVersion: emradar.dev/v1
 kind: SignalPack
 metadata:
   name: example-pack
-  version: 1.2.3
   description: Example pack.
 spec:
   signals:
@@ -43,7 +42,6 @@ spec:
         ("apiVersion: emradar.dev/v1", "apiVersion: emradar.dev/v2"),
         ("kind: SignalPack", "kind: OtherPack"),
         ("name: example-pack", "name: Not_Kebab"),
-        ("version: 1.2.3", "version: latest"),
     ],
 )
 def test_hard_validation_rules_reject_invalid_packs(old: str, new: str) -> None:
@@ -61,7 +59,6 @@ apiVersion: emradar.dev/v1
 kind: SignalPack
 metadata:
   name: group-pack
-  version: 1.0.0
   description: Pack with a group.
 spec:
   export_type: private_backup
@@ -227,7 +224,6 @@ apiVersion: emradar.dev/v1
 kind: SignalPack
 metadata:
   name: expr-pack
-  version: 1.0.0
   description: Expression validation pack.
 spec:
   signals:
@@ -252,7 +248,6 @@ apiVersion: emradar.dev/v1
 kind: SignalPack
 metadata:
   name: no-expr-pack
-  version: 1.0.0
   description: Pack with signal lacking expression.
 spec:
   signals:
