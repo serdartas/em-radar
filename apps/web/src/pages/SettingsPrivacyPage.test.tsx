@@ -91,7 +91,9 @@ describe("SettingsPrivacyPage", () => {
     const fetchSpy = mockFetch()
     renderPage()
 
-    const toggle = await screen.findByRole("switch", { name: "Enable anonymous telemetry" })
+    const toggle = screen.getByRole("switch", { name: "Enable anonymous telemetry" })
+    // Wait for settings to load so the switch becomes enabled before clicking
+    await waitFor(() => expect(toggle).not.toBeDisabled())
     fireEvent.click(toggle)
 
     await waitFor(() => {
@@ -195,5 +197,49 @@ describe("SettingsPrivacyPage", () => {
     })
     expect(dialog).toBeInTheDocument()
     expect(screen.queryByRole("alertdialog")).not.toBeNull()
+  })
+
+  it("toggle is disabled while settings are still loading", () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input)
+      const method = (init?.method ?? "GET").toUpperCase()
+      if (method === "GET" && url.includes("/api/settings")) {
+        // Never resolves — simulates a slow GET so we can assert the pre-load state
+        return new Promise<Response>(() => {})
+      }
+      if (method === "GET" && url.includes("/connections")) {
+        return new Response(JSON.stringify([]), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        })
+      }
+      throw new Error(`unexpected: ${method} ${url}`)
+    })
+    renderPage()
+
+    expect(screen.getByRole("switch", { name: "Enable anonymous telemetry" })).toBeDisabled()
+  })
+
+  it("toggle is disabled and an error message is shown when settings query fails", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input)
+      const method = (init?.method ?? "GET").toUpperCase()
+      if (method === "GET" && url.includes("/api/settings")) {
+        return new Response(JSON.stringify({ detail: "Internal Server Error" }), { status: 500 })
+      }
+      if (method === "GET" && url.includes("/connections")) {
+        return new Response(JSON.stringify([]), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        })
+      }
+      throw new Error(`unexpected: ${method} ${url}`)
+    })
+    renderPage()
+
+    await waitFor(() => {
+      expect(screen.getByRole("switch", { name: "Enable anonymous telemetry" })).toBeDisabled()
+      expect(screen.getByRole("alert")).toBeInTheDocument()
+    })
   })
 })
