@@ -12,8 +12,13 @@ imports.  Seeding is **one-shot and idempotent**: it only runs when no group nam
 "Default signals" exists in the database.  Edits to this file therefore take effect on a
 **fresh database** (delete the DB file and restart), not on an already-seeded one.
 
-This is intentional: the CC-1 constraint guarantees that connector data is always rebuilt
-from scratch, so editing the pack and wiping the DB is a clean, supported workflow.
+This is intentional: connector data is always rebuilt from connectors on the next sync, so
+signal-pack changes can be tested by wiping the DB and restarting the API.
+
+> **Warning — destructive operation.**  Deleting the database file also removes connection
+> configurations, credentials, team definitions, cached canonical data, and report history.
+> None of that state is rebuilt automatically.  Use this workflow only with a disposable
+> development database; never against a configured instance you care about.
 
 ## Making changes
 
