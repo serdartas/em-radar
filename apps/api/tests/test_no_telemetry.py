@@ -721,14 +721,11 @@ def test_demo_report_run_makes_no_outbound_network_calls(
         },
     ).json()["id"]
 
-    response = api_client.post(
-        "/api/reports/run",
-        json={"connector": "jira", "team_profile_id": team_id},
-    )
+    from test_source_connection_routes import _run_report
 
-    assert response.status_code == 200
-    data = response.json()
-    assert data["status"] == "succeeded"
+    report = _run_report(api_client, team_id)
+
+    assert report["status"] == "succeeded"
 
 
 # ---------------------------------------------------------------------------

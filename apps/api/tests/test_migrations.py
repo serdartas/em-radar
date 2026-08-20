@@ -18,6 +18,7 @@ EXPECTED_TABLES = {
     "merge_request",
     "project",
     "report",
+    "report_job",
     "repository",
     "review",
     "signal_config_group",

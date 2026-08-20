@@ -12,6 +12,7 @@ from em_radar_api.db import (
     create_db_engine,
     create_session_factory,
     get_session,
+    get_session_factory,
     get_write_session,
 )
 from em_radar_api.main import app
@@ -29,6 +30,7 @@ def api_harness(tmp_path: Path) -> Iterator[SimpleNamespace]:
 
     app.dependency_overrides[get_session] = _session
     app.dependency_overrides[get_write_session] = _session
+    app.dependency_overrides[get_session_factory] = lambda: session_factory
     try:
         yield SimpleNamespace(
             client=TestClient(app),

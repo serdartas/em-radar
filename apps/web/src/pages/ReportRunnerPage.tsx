@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useNavigate } from "react-router-dom"
 
@@ -8,8 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
 import { Select } from "@/components/ui/select"
-import { apiErrorMessage } from "@/lib/api"
-import { runTeamReport, type ReportDetail } from "@/lib/reports"
+import { enqueueTeamReport, formatTimestamp, listJobs, type ReportJob } from "@/lib/reports"
 import { listTeams, teamHasNoSources } from "@/lib/teams"
 
 type WindowMode = "date_range" | "sprint"
@@ -19,22 +18,22 @@ interface TeamRunInput {
   window?: { start: string; end: string }
 }
 
-interface TeamSuccess {
-  teamId: string
-  teamName: string | null
-  report: ReportDetail
+const JOB_POLL_MS = 3000
+
+function jobRuntime(job: ReportJob): string | null {
+  if (!job.started_at || !job.finished_at) return null
+  const ms =
+    new Date(job.finished_at.endsWith("Z") ? job.finished_at : `${job.finished_at}Z`).valueOf() -
+    new Date(job.started_at.endsWith("Z") ? job.started_at : `${job.started_at}Z`).valueOf()
+  if (Number.isNaN(ms) || ms < 0) return null
+  return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`
 }
 
-interface TeamFailure {
-  teamId: string
-  teamName: string | null
-  error: unknown
-  message: string
-}
-
-interface RunOutcome {
-  successes: TeamSuccess[]
-  failures: TeamFailure[]
+const STATUS_LABEL: Record<ReportJob["status"], string> = {
+  queued: "Queued",
+  running: "Running",
+  done: "Done",
+  failed: "Failed",
 }
 
 export function ReportRunnerPage() {
@@ -46,46 +45,37 @@ export function ReportRunnerPage() {
   const [startDate, setStartDate] = useState("")
   const [endDate, setEndDate] = useState("")
   const [dateError, setDateError] = useState<string | null>(null)
-  const [allFailures, setAllFailures] = useState<TeamFailure[] | null>(null)
+  const [singlePendingJobId, setSinglePendingJobId] = useState<string | null>(null)
 
-  // Derived before useMutation so the closure captures an initialized binding.
   const teams = teamsQuery.data ?? []
 
+  const jobsQuery = useQuery({
+    queryKey: ["report-jobs"],
+    queryFn: listJobs,
+    refetchInterval: singlePendingJobId ? JOB_POLL_MS : false,
+  })
+  const jobs = useMemo(() => jobsQuery.data ?? [], [jobsQuery.data])
+
+  // Navigate when a single-team job reaches a terminal state.
+  useEffect(() => {
+    if (!singlePendingJobId) return
+    const job = jobs.find((j) => j.id === singlePendingJobId)
+    if (!job) return
+    if (job.status === "done" && job.report_id) {
+      setSinglePendingJobId(null)
+      navigate(`/reports/results/${job.report_id}`)
+    } else if (job.status === "failed") {
+      setSinglePendingJobId(null)
+    }
+  }, [jobs, singlePendingJobId, navigate])
+
   const teamRun = useMutation({
-    mutationFn: async ({ teamIds, window }: TeamRunInput): Promise<RunOutcome> => {
-      const successes: TeamSuccess[] = []
-      const failures: TeamFailure[] = []
-      for (const teamId of teamIds) {
-        const teamMeta = teams.find((t) => t.id === teamId)
-        const teamName = teamMeta?.name ?? null
-        try {
-          const report = await runTeamReport(teamId, window)
-          successes.push({ teamId, teamName, report })
-        } catch (err: unknown) {
-          failures.push({
-            teamId,
-            teamName,
-            error: err,
-            message: apiErrorMessage(err, "An unexpected error occurred."),
-          })
-        }
-      }
-      return { successes, failures }
-    },
-    onSuccess: ({ successes, failures }: RunOutcome) => {
-      if (successes.length >= 1) {
-        void queryClient.invalidateQueries({ queryKey: ["reports"], exact: true })
-      }
-      if (successes.length === 0) {
-        setAllFailures(failures)
-        return
-      }
-      if (successes.length === 1 && failures.length === 0) {
-        navigate(`/reports/results/${successes[0].report.id}`)
-      } else if (failures.length > 0) {
-        navigate("/reports/results", {
-          state: { failedTeams: failures.map((f) => f.teamName ?? f.teamId) },
-        })
+    mutationFn: async ({ teamIds, window }: TeamRunInput): Promise<ReportJob[]> =>
+      Promise.all(teamIds.map((id) => enqueueTeamReport(id, window))),
+    onSuccess: (enqueuedJobs: ReportJob[]) => {
+      void queryClient.invalidateQueries({ queryKey: ["report-jobs"] })
+      if (enqueuedJobs.length === 1) {
+        setSinglePendingJobId(enqueuedJobs[0].id)
       } else {
         navigate("/reports/results")
       }
@@ -104,7 +94,6 @@ export function ReportRunnerPage() {
 
   function handleRun() {
     setDateError(null)
-    setAllFailures(null)
     if (windowMode === "sprint") {
       teamRun.mutate({ teamIds: selectedTeamIds })
       return
@@ -227,25 +216,50 @@ export function ReportRunnerPage() {
       </Card>
 
       <div aria-live="polite" className="space-y-4">
-        {teamRun.isError && (
-          <p className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-700" role="alert">
-            {apiErrorMessage(teamRun.error, "The report run failed. Please try again.")}
-          </p>
-        )}
-        {allFailures !== null && allFailures.length > 0 && (
-          <div
-            className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-700"
-            role="alert"
-          >
-            <p className="mb-2 font-medium">All team reports failed. No reports were created.</p>
-            <ul className="space-y-1 text-sm">
-              {allFailures.map((f) => (
-                <li key={f.teamId}>
-                  {f.teamName ?? f.teamId}: {f.message}
-                </li>
-              ))}
-            </ul>
-          </div>
+        {jobs.length > 0 && (
+          <Card>
+            <CardContent className="p-4">
+              <h2 className="mb-3 text-lg font-semibold">Running / recent</h2>
+              <ul className="space-y-2 text-sm" aria-label="report jobs">
+                {jobs.map((job) => (
+                  <li
+                    key={job.id}
+                    className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md border px-3 py-2"
+                  >
+                    <span
+                      className={`font-medium ${job.status === "failed" ? "text-red-700" : job.status === "done" ? "text-green-700" : "text-slate-700"}`}
+                    >
+                      {STATUS_LABEL[job.status]}
+                    </span>
+                    {job.started_at && (
+                      <span className="text-slate-500">
+                        Started: {formatTimestamp(job.started_at)}
+                      </span>
+                    )}
+                    {job.finished_at && (
+                      <span className="text-slate-500">
+                        Finished: {formatTimestamp(job.finished_at)}
+                      </span>
+                    )}
+                    {jobRuntime(job) && (
+                      <span className="text-slate-500">Runtime: {jobRuntime(job)}</span>
+                    )}
+                    {job.status === "done" && job.report_id && (
+                      <Link
+                        className="ml-auto text-blue-700 underline-offset-4 hover:underline"
+                        to={`/reports/results/${job.report_id}`}
+                      >
+                        View report
+                      </Link>
+                    )}
+                    {job.status === "failed" && job.error && (
+                      <span className="ml-auto text-xs text-red-600">{job.error}</span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </CardContent>
+          </Card>
         )}
         <p className="rounded-lg border border-dashed p-4 text-center text-slate-500">
           <Link

@@ -90,6 +90,19 @@ export function extractPartialDataNotes(snapshot: unknown): PartialDataNote[] {
   )
 }
 
+export type JobStatus = "done" | "failed" | "queued" | "running"
+
+export interface ReportJob {
+  id: string
+  team_profile_id: string
+  status: JobStatus
+  enqueued_at: string
+  started_at: string | null
+  finished_at: string | null
+  report_id: string | null
+  error: string | null
+}
+
 export interface JiraSprintReportRequest {
   connectionId: string
   projectExternalId: string
@@ -116,10 +129,10 @@ export async function runJiraSprintReport(
   })
 }
 
-export async function runTeamReport(
+export async function enqueueTeamReport(
   teamProfileId: string,
   window?: { start: string; end: string },
-): Promise<ReportDetail> {
+): Promise<ReportJob> {
   const body = window
     ? {
         connector: "jira",
@@ -129,11 +142,18 @@ export async function runTeamReport(
         end: window.end,
       }
     : { connector: "jira", team_profile_id: teamProfileId }
-  return apiFetch<ReportDetail>("/reports/run", {
+  return apiFetch<ReportJob>("/reports/run", {
     method: "POST",
     body: JSON.stringify(body),
   })
 }
+
+export async function listJobs(): Promise<ReportJob[]> {
+  return apiFetch<ReportJob[]>("/reports/jobs")
+}
+
+/** @deprecated Use enqueueTeamReport — kept for DashboardPage and SetupPage callers. */
+export const runTeamReport = enqueueTeamReport
 
 export async function listReports(): Promise<ReportSummary[]> {
   return apiFetch<ReportSummary[]>("/reports")

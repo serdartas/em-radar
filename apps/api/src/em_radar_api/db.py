@@ -52,3 +52,7 @@ def get_session() -> Iterator[Session]:
 def get_write_session() -> Iterator[Session]:
     with _write_lock, session_factory() as session:
         yield session
+
+
+def get_session_factory() -> sessionmaker[Session]:
+    return session_factory
