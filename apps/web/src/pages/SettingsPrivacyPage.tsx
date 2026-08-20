@@ -92,6 +92,11 @@ export function SettingsPrivacyPage() {
               Could not load settings. Reload the page to try again.
             </p>
           )}
+          {telemetryMutation.isError && (
+            <p className="text-sm text-red-600" role="alert">
+              Could not update the telemetry setting. Try again.
+            </p>
+          )}
         </CardContent>
       </Card>
 

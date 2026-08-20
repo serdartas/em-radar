@@ -64,12 +64,16 @@ export interface PartialDataNote {
   reason: string
 }
 
-export function formatTimestamp(value: string): string {
-  // The API serializes started_at/finished_at from naive SQLite columns (stored as UTC
-  // wall-time) without a timezone marker. Treat an offset-less string as UTC so viewers in
-  // non-UTC zones do not see shifted labels; strings that already carry a zone are used as-is.
+// The API serializes started_at/finished_at from naive SQLite columns (stored as UTC
+// wall-time) without a timezone marker. Treat an offset-less string as UTC so viewers in
+// non-UTC zones do not see shifted labels; strings that already carry a zone are used as-is.
+export function parseApiTimestamp(value: string): Date {
   const normalized = /([zZ]|[+-]\d{2}:?\d{2})$/.test(value) ? value : `${value}Z`
-  const parsed = new Date(normalized)
+  return new Date(normalized)
+}
+
+export function formatTimestamp(value: string): string {
+  const parsed = parseApiTimestamp(value)
   return Number.isNaN(parsed.valueOf()) ? value : parsed.toLocaleString()
 }
 
@@ -141,10 +145,17 @@ export async function getJob(jobId: string): Promise<ReportJob> {
   return apiFetch<ReportJob>(`/reports/jobs/${jobId}`)
 }
 
+const JOB_POLL_INTERVAL_MS = 1000
+const JOB_POLL_TIMEOUT_MS = 10 * 60 * 1000
+
 async function pollJobUntilTerminal(job: ReportJob): Promise<ReportJob> {
   let current = job
+  const deadline = Date.now() + JOB_POLL_TIMEOUT_MS
   while (current.status === "queued" || current.status === "running") {
-    await new Promise<void>((r) => setTimeout(r, 1000))
+    if (Date.now() >= deadline) {
+      throw new Error("The report is taking longer than expected. Check its status shortly.")
+    }
+    await new Promise<void>((r) => setTimeout(r, JOB_POLL_INTERVAL_MS))
     current = await apiFetch<ReportJob>(`/reports/jobs/${current.id}`)
   }
   return current

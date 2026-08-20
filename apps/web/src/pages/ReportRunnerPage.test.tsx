@@ -398,7 +398,7 @@ describe("ReportRunnerPage", () => {
     ).toBe(true)
   })
 
-  it("does not show a mutation error alert when enqueue fails (dead error branch removed)", async () => {
+  it("surfaces the enqueue error to the user when the run request fails", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const url = typeof input === "string" ? input : input.toString()
       if (url.endsWith("/api/teams")) return Promise.resolve(jsonResponse([team]))
@@ -414,11 +414,8 @@ describe("ReportRunnerPage", () => {
     fireEvent.click(await screen.findByLabelText("Platform"))
     fireEvent.click(screen.getByRole("button", { name: "Run team reports" }))
 
-    // Mutation errors but no error alert is rendered (the dead isError branch is gone).
-    await screen.findByRole("button", { name: "Run team reports" })
-    expect(
-      screen.queryByText("The report run failed. Please try again."),
-    ).toBeNull()
+    const alert = await screen.findByRole("alert")
+    expect(alert).toHaveTextContent("Internal server error")
   })
 })
 

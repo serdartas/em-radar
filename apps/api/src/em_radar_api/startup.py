@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
+from datetime import datetime, timezone
 from pathlib import Path
 
 from sqlalchemy.orm import sessionmaker
@@ -26,9 +27,11 @@ def recover_interrupted_jobs(app_session_factory: sessionmaker[Session]) -> None
         ).all()
         if not stuck:
             return
+        now = datetime.now(timezone.utc)
         for job in stuck:
             job.status = "failed"
             job.error = "Interrupted: server restarted"
+            job.finished_at = now
             session.add(job)
         session.commit()
 

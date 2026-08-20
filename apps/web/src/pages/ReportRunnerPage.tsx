@@ -15,6 +15,7 @@ import {
   getJob,
   getTeamSprints,
   listJobs,
+  parseApiTimestamp,
   type ReportJob,
 } from "@/lib/reports"
 import { listTeams, teamHasNoSources } from "@/lib/teams"
@@ -32,8 +33,7 @@ const JOB_POLL_MS = 3000
 function jobRuntime(job: ReportJob): string | null {
   if (!job.started_at || !job.finished_at) return null
   const ms =
-    new Date(job.finished_at.endsWith("Z") ? job.finished_at : `${job.finished_at}Z`).valueOf() -
-    new Date(job.started_at.endsWith("Z") ? job.started_at : `${job.started_at}Z`).valueOf()
+    parseApiTimestamp(job.finished_at).valueOf() - parseApiTimestamp(job.started_at).valueOf()
   if (Number.isNaN(ms) || ms < 0) return null
   return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`
 }

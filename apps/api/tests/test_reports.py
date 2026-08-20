@@ -358,6 +358,77 @@ def test_write_lock_not_held_during_connector_io(api_client: TestClient, monkeyp
     )
 
 
+def test_run_report_does_not_hold_write_lock_across_background_task(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: /reports/run must release _write_lock before its background task runs.
+
+    If run_report keeps the lock (e.g. via get_write_session, whose yield-dependency exit
+    stack is closed only *after* Starlette executes background tasks), the async job's
+    write_session() re-acquires the same lock on the event-loop thread and deadlocks the
+    server. This test exercises the real DB dependencies (real _write_lock) against a temp
+    engine, since the conftest fixture overrides them with a lock-free session and would hide
+    the deadlock. The probe uses a timeout so a reintroduced bug fails fast instead of hanging.
+    """
+    from datetime import UTC, datetime
+
+    from sqlmodel import SQLModel
+
+    import em_radar_api.db as db_module
+    import em_radar_api.routers.reports as reports_module
+    from em_radar_api.db import (
+        create_db_engine,
+        create_session_factory,
+        get_session,
+        get_session_factory,
+        get_write_session,
+    )
+    from em_radar_api.main import app
+    from em_radar_api.tables import TeamProfileTable
+
+    engine = create_db_engine(tmp_path / "lock-regression.db")
+    SQLModel.metadata.create_all(engine)
+    sf = create_session_factory(engine)
+    monkeypatch.setattr(db_module, "engine", engine)
+    monkeypatch.setattr(db_module, "session_factory", sf)
+
+    with sf() as session:
+        now = datetime.now(UTC)
+        team = TeamProfileTable(name="Lock Regression Team", created_at=now, updated_at=now)
+        session.add(team)
+        session.commit()
+        team_id = str(team.id)
+
+    lock_free_in_task: list[bool] = []
+
+    def _probe(job_id: object, *args: object, **kwargs: object) -> None:
+        acquired = _write_lock.acquire(timeout=1.0)
+        lock_free_in_task.append(acquired)
+        if acquired:
+            _write_lock.release()
+
+    monkeypatch.setattr(reports_module, "_run_report_job", _probe)
+
+    # Use the real dependencies (no lock-free overrides) so run_report takes the real lock.
+    app.dependency_overrides.pop(get_session, None)
+    app.dependency_overrides.pop(get_write_session, None)
+    app.dependency_overrides.pop(get_session_factory, None)
+    try:
+        client = TestClient(app)
+        resp = client.post(
+            "/api/reports/run", json={"connector": "jira", "team_profile_id": team_id}
+        )
+    finally:
+        app.dependency_overrides.clear()
+        engine.dispose()
+
+    assert resp.status_code == 202
+    assert lock_free_in_task == [True], (
+        "run_report held _write_lock while the background task ran; the async job would "
+        "deadlock re-acquiring it on the event-loop thread"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Sprint window tests (M8.3-04)
 # ---------------------------------------------------------------------------

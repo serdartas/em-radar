@@ -229,14 +229,25 @@ def _validate_pack(pack: SignalPack, context: PackValidationContext) -> None:
                 )
 
 
+def rules_to_expression(rules: list[dict[str, object]]) -> dict[str, object]:
+    """Convert a flat rules list into a grouped expression.
+
+    The group operator is derived from the join on the first rule (``or`` -> ``any``,
+    otherwise ``all``); the per-rule ``join`` marker is stripped from each condition.
+    """
+    if not rules:
+        return {"type": "group", "operator": "all", "conditions": []}
+    first_join = rules[0].get("join") if len(rules) > 1 else None
+    group_operator = "any" if first_join == "or" else "all"
+    conditions = [{k: v for k, v in rule.items() if k != "join"} for rule in rules]
+    return {"type": "group", "operator": group_operator, "conditions": conditions}
+
+
 def _resolve_signal_expression(signal: SignalEntry) -> dict[str, object] | None:
     """Convert rules list to expression dict, or return expression directly."""
     if signal.rules is not None:
         _validate_rules_join_sequence(signal.rules)
-        first_join = signal.rules[0].get("join") if len(signal.rules) > 1 else None
-        group_operator = "any" if first_join == "or" else "all"
-        conditions = [{k: v for k, v in rule.items() if k != "join"} for rule in signal.rules]
-        return {"type": "group", "operator": group_operator, "conditions": conditions}
+        return rules_to_expression(signal.rules)
     return signal.expression
 
 

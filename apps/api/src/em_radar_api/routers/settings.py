@@ -32,8 +32,9 @@ class AppSettingsPatch(BaseModel):
 
 @router.get("/settings", response_model=AppSettingsResponse)
 def get_settings(session: Session = Depends(get_session)) -> AppSettingsResponse:
-    row = _get_or_create(session)
-    return AppSettingsResponse(telemetry_enabled=row.telemetry_enabled)
+    row = session.get(AppSettingsTable, _SETTINGS_ID)
+    telemetry_enabled = row.telemetry_enabled if row is not None else False
+    return AppSettingsResponse(telemetry_enabled=telemetry_enabled)
 
 
 @router.patch("/settings", response_model=AppSettingsResponse)

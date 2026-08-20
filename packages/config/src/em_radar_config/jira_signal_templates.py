@@ -19,7 +19,6 @@ class JiraSignalTemplate:
     evidence_shape: tuple[str, ...] = ()
     entity_type: str = "issue"
     required_connector_type: str = "jira"
-    enabled_by_default: bool = True
 
 
 JIRA_SIGNAL_TEMPLATES: tuple[JiraSignalTemplate, ...] = (

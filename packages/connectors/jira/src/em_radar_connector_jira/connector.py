@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import time
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from datetime import datetime, timedelta, timezone
@@ -142,7 +143,7 @@ class JiraConnector:
         cache_key = _field_cache_key(self.config)
         cached = _field_discovery_cache.get(cache_key)
         if cached is not None and time.monotonic() < cached[1]:
-            return cached[0]
+            return list(cached[0])
         try:
             payloads = await self._request_json_list("rest/api/3/field")
         except ConnectorNotFoundError:
@@ -156,7 +157,7 @@ class JiraConnector:
         for k in expired:
             del _field_discovery_cache[k]
         _field_discovery_cache[cache_key] = (fields, now + _FIELD_CACHE_TTL)
-        return fields
+        return list(fields)
 
     @classmethod
     def describe_capabilities(cls) -> Capabilities:
@@ -696,8 +697,16 @@ def _is_last_changelog_page(payload: Mapping[str, object], next_start_at: int) -
 
 
 def _field_cache_key(config: JiraConnectorConfig) -> str:
-    email = repr(config.auth_email)  # distinguishes None from "" and "user@example.com"
-    raw = f"{config.base_url}:{config.token.get_secret_value()}:{email}:{config.verify_tls}"
+    # json.dumps gives a length-unambiguous encoding so no two distinct configs can collide
+    # by aligning ":"-joined substrings; None is preserved distinctly from "" for auth_email.
+    raw = json.dumps(
+        [
+            str(config.base_url),
+            config.token.get_secret_value(),
+            config.auth_email,
+            config.verify_tls,
+        ]
+    )
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 

@@ -267,7 +267,7 @@ class ReportDetailResponse(ReportSummaryResponse):
 async def run_report(
     request: ReportRunRequest,
     background_tasks: BackgroundTasks,
-    session: Session = Depends(get_write_session),
+    session: Session = Depends(get_session),
     sf: sessionmaker[Session] = Depends(get_session_factory),
 ) -> ReportJobResponse:
     assert request.team_profile_id is not None  # enforced by model validator
@@ -287,9 +287,13 @@ async def run_report(
         status="queued",
         enqueued_at=now,
     )
-    session.add(job)
-    session.commit()
-    session.refresh(job)
+    # Serialize only the job-row insert with the write lock, then release it before the
+    # background task runs. Holding the lock across background execution (as get_write_session
+    # would) deadlocks: the async job re-acquires the same lock on the event-loop thread.
+    with write_lock_acquired():
+        session.add(job)
+        session.commit()
+        session.refresh(job)
     background_tasks.add_task(
         _run_report_job,
         job.id,

@@ -113,6 +113,69 @@ def test_discover_fields_caches_result_across_instances(monkeypatch: pytest.Monk
     asyncio.run(run())
 
 
+def test_discover_fields_refetches_after_ttl_expiry(monkeypatch: pytest.MonkeyPatch) -> None:
+    call_count = 0
+    clock = {"now": 1000.0}
+
+    async def run() -> None:
+        nonlocal call_count
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal call_count
+            if request.url.path == "/rest/api/3/field":
+                call_count += 1
+                return httpx.Response(200, json=_FIELD_PAYLOAD)
+            raise AssertionError(f"unexpected path: {request.url.path}")
+
+        monkeypatch.setattr(jira_connector_module, "CLIENT_FACTORY", _client_factory_for(handler))
+        monkeypatch.setattr(jira_connector_module.time, "monotonic", lambda: clock["now"])
+        config = {"base_url": "https://jira.example.com", "token": "tok", "auth_email": "u@x.com"}
+
+        connector = JiraConnector(config)
+        await connector.discover_fields()
+        await connector.close()
+        assert call_count == 1
+
+        # Advance past the TTL so the cached entry is expired and evicted on the next call.
+        clock["now"] += jira_connector_module._FIELD_CACHE_TTL + 1.0
+        connector = JiraConnector(config)
+        await connector.discover_fields()
+        await connector.close()
+        assert call_count == 2
+
+    asyncio.run(run())
+
+
+def test_discover_fields_cache_is_keyed_by_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    call_count = 0
+
+    async def run() -> None:
+        nonlocal call_count
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal call_count
+            if request.url.path == "/rest/api/3/field":
+                call_count += 1
+                return httpx.Response(200, json=_FIELD_PAYLOAD)
+            raise AssertionError(f"unexpected path: {request.url.path}")
+
+        monkeypatch.setattr(jira_connector_module, "CLIENT_FACTORY", _client_factory_for(handler))
+        base = {"base_url": "https://jira.example.com", "auth_email": "u@x.com"}
+
+        connector1 = JiraConnector({**base, "token": "tok-a"})
+        await connector1.discover_fields()
+        await connector1.close()
+
+        connector2 = JiraConnector({**base, "token": "tok-b"})
+        await connector2.discover_fields()
+        await connector2.close()
+
+        # Distinct tokens must not share a cache entry.
+        assert call_count == 2
+
+    asyncio.run(run())
+
+
 def test_discover_fields_falls_back_to_v2_for_server(monkeypatch: pytest.MonkeyPatch) -> None:
     call_count_v2 = 0
 
