@@ -2,12 +2,15 @@
 
 from dataclasses import asdict
 from datetime import datetime
+from typing import Protocol, runtime_checkable
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlmodel import Session
 from starlette.responses import Response
+
+from em_radar_connector_jira.connector import JiraFieldInfo
 
 from em_radar_api.connector_registry import create_connector
 from em_radar_api.db import get_session, get_write_session
@@ -41,6 +44,13 @@ from em_radar_core.connectors import (
     WorkItemProvider,
 )
 from em_radar_core.models import Board, BoardType, Project, Sprint, SprintState
+
+
+@runtime_checkable
+class FieldDiscoveryConnector(Protocol):
+    async def discover_fields(self) -> list[JiraFieldInfo]: ...
+    async def close(self) -> None: ...
+
 
 router = APIRouter()
 
@@ -235,6 +245,20 @@ async def list_connection_sprints(
         await connector.close()
 
 
+@router.get("/connections/{connection_id}/jira/fields", response_model=list[JiraFieldInfo])
+async def list_jira_fields(
+    connection_id: UUID,
+    session: Session = Depends(get_session),
+) -> list[JiraFieldInfo]:
+    connector = await _jira_field_connector(session, connection_id)
+    try:
+        return await connector.discover_fields()
+    except ConnectorError as error:
+        raise HTTPException(status_code=_picker_status(error), detail=str(error)) from error
+    finally:
+        await connector.close()
+
+
 async def _test_connector(
     connector_name: str,
     config: dict[str, object],
@@ -254,6 +278,37 @@ async def _test_connector_instance(connector: ConnectorBase) -> ConnectionTestRe
         return _failed_test(str(error), _error_code(error))
     finally:
         await connector.close()
+
+
+async def _jira_field_connector(session: Session, connection_id: UUID) -> "FieldDiscoveryConnector":
+    connection = get_source_connection(session, connection_id)
+    if connection is None:
+        raise _connection_not_found()
+    if connection.connector_name != ConnectorName.JIRA:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="connection is not a Jira connection",
+        )
+    try:
+        connector = instantiate_connector(
+            session,
+            connection_id,
+            lambda config: create_connector("jira", config),
+        )
+    except ConnectorConfigError as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(error),
+        ) from error
+    if connector is None:
+        raise _connection_not_found()
+    if not isinstance(connector, FieldDiscoveryConnector):
+        await connector.close()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="connection does not support Jira field discovery",
+        )
+    return connector
 
 
 def _workitem_connector(session: Session, connection_id: UUID) -> WorkItemProvider:

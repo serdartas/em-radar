@@ -56,12 +56,13 @@ from em_radar_core.models import (
 )
 from em_radar_core.signals import SignalData
 from em_radar_normalizer import DEFAULT_WORKITEM_KEY_PATTERN, populate_merge_request_links
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response, status
 from pydantic import BaseModel, JsonValue, model_validator
+from sqlalchemy.orm import sessionmaker
 from sqlmodel import Session, select
 
 
-from em_radar_api.db import get_session, get_write_session
+from em_radar_api.db import get_session, get_session_factory, get_write_session, write_lock_acquired, write_session
 from em_radar_api.report_export import build_report_markdown, build_sectioned_report
 from em_radar_api.connector_registry import create_connector, get_connector_capabilities
 from em_radar_api.repositories.canonical import persist_fetch
@@ -79,12 +80,14 @@ from em_radar_api.repositories.source_connections import (
     get_source_connection,
     instantiate_connector,
 )
+from em_radar_api.routers.source_connections import SprintResponse
 from em_radar_api.scope_definitions import ScopeDefinitionTable, ScopeType
 from em_radar_api.signal_config_groups import SignalConfigGroupTable
 from em_radar_api.signal_definitions import SignalDefinitionTable
 from em_radar_api.source_connections import ConnectorName
 from em_radar_api.tables import (
     EvaluationWindowTable,
+    ReportJobTable,
     ReportTable,
     SignalFindingTable,
     SprintTable,
@@ -93,6 +96,7 @@ from em_radar_api.tables import (
 
 router = APIRouter()
 DEFAULT_KANBAN_REPORT_DAYS = 14
+_RECENT_JOBS_LIMIT = 20
 
 # Entity types whose signals require a code (VCS) source.  Everything else is treated as
 # a board (task-tracker) signal.  Both the connector-capability spelling (`merge_request`,
@@ -119,16 +123,14 @@ class ReportRunRequest(BaseModel):
     window_type: WindowType | None = None
     start: datetime | None = None
     end: datetime | None = None
+    sprint_external_id: str | None = None
 
     @model_validator(mode="after")
     def validate_connector_scope(self) -> Self:
         if self.connector == "jira" and self.team_profile_id is None:
             raise ValueError("jira reports require a team_profile_id")
-        if self.window_type is WindowType.SPRINT:
-            raise ValueError(
-                "explicit sprint selection is not supported here; "
-                "sprint windows use the team's working-mode default"
-            )
+        if self.sprint_external_id is not None and self.window_type is not WindowType.SPRINT:
+            raise ValueError("sprint_external_id requires window_type=sprint")
         if self.window_type is WindowType.DATE_RANGE:
             if self.start is None or self.end is None:
                 raise ValueError("date_range windows require both start and end")
@@ -136,6 +138,11 @@ class ReportRunRequest(BaseModel):
             self.end = _ensure_utc(self.end)
             if self.start >= self.end:
                 raise ValueError("date_range start must be before end")
+        elif self.window_type is WindowType.SPRINT:
+            if self.start is not None or self.end is not None:
+                raise ValueError(
+                    "date bounds are only valid for date_range windows; omit start/end for sprint windows"
+                )
         elif self.start is not None or self.end is not None:
             raise ValueError("start/end are only valid with window_type=date_range")
         return self
@@ -175,6 +182,21 @@ class SectionRef(BaseModel):
 class SkipNoteResponse(BaseModel):
     signal_id: str
     reason: str
+
+
+class ReportJobResponse(BaseModel):
+    id: UUID
+    team_profile_id: UUID
+    status: str
+    enqueued_at: datetime
+    started_at: datetime | None
+    finished_at: datetime | None
+    report_id: UUID | None
+    error: str | None
+
+    @classmethod
+    def from_job(cls, job: ReportJobTable) -> "ReportJobResponse":
+        return cls.model_validate(job, from_attributes=True)
 
 
 class ReportSummaryResponse(BaseModel):
@@ -241,12 +263,16 @@ class ReportDetailResponse(ReportSummaryResponse):
         )
 
 
-@router.post("/reports/run", response_model=ReportDetailResponse)
+@router.post("/reports/run", response_model=ReportJobResponse, status_code=status.HTTP_202_ACCEPTED)
 async def run_report(
     request: ReportRunRequest,
-    session: Session = Depends(get_write_session),
-) -> ReportDetailResponse:
+    background_tasks: BackgroundTasks,
+    session: Session = Depends(get_session),
+    sf: sessionmaker[Session] = Depends(get_session_factory),
+) -> ReportJobResponse:
     assert request.team_profile_id is not None  # enforced by model validator
+    if not session.get(TeamProfileTable, request.team_profile_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
     requested_window: EvaluationWindow | None = None
     if request.window_type is WindowType.DATE_RANGE:
         requested_window = EvaluationWindow(
@@ -255,7 +281,173 @@ async def run_report(
             end=request.end,
             team_profile_id=request.team_profile_id,
         )
-    return await _run_team_report(request.team_profile_id, session, requested_window)
+    now = datetime.now(timezone.utc)
+    job = ReportJobTable(
+        team_profile_id=request.team_profile_id,
+        status="queued",
+        enqueued_at=now,
+    )
+    # Serialize only the job-row insert with the write lock, then release it before the
+    # background task runs. Holding the lock across background execution (as get_write_session
+    # would) deadlocks: the async job re-acquires the same lock on the event-loop thread.
+    with write_lock_acquired():
+        session.add(job)
+        session.commit()
+        session.refresh(job)
+    background_tasks.add_task(
+        _run_report_job,
+        job.id,
+        request.team_profile_id,
+        requested_window,
+        sf,
+        request.sprint_external_id,
+    )
+    return ReportJobResponse.from_job(job)
+
+
+@router.get("/reports/jobs", response_model=list[ReportJobResponse])
+def list_report_jobs(
+    session: Session = Depends(get_session),
+) -> list[ReportJobResponse]:
+    # Always return ALL non-terminal jobs so the frontend can poll pending IDs to completion,
+    # then append the N most-recent terminal jobs for the "recent runs" display.
+    non_terminal = session.exec(
+        select(ReportJobTable)
+        .where(ReportJobTable.status.in_(["queued", "running"]))  # type: ignore[union-attr]
+        .order_by(ReportJobTable.enqueued_at.desc())  # type: ignore[arg-type]
+    ).all()
+    terminal = session.exec(
+        select(ReportJobTable)
+        .where(ReportJobTable.status.in_(["done", "failed"]))  # type: ignore[union-attr]
+        .order_by(ReportJobTable.enqueued_at.desc())  # type: ignore[arg-type]
+        .limit(_RECENT_JOBS_LIMIT)
+    ).all()
+    jobs = sorted(
+        list(non_terminal) + list(terminal),
+        key=lambda j: j.enqueued_at,
+        reverse=True,
+    )
+    return [ReportJobResponse.from_job(job) for job in jobs]
+
+
+@router.get("/reports/jobs/{job_id}", response_model=ReportJobResponse)
+def get_report_job(
+    job_id: UUID,
+    session: Session = Depends(get_session),
+) -> ReportJobResponse:
+    job = session.get(ReportJobTable, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    return ReportJobResponse.from_job(job)
+
+
+@router.get("/teams/{team_id}/sprints", response_model=list[SprintResponse])
+async def list_team_sprints(
+    team_id: UUID,
+    session: Session = Depends(get_session),
+) -> list[SprintResponse]:
+    """Return available sprints for the team's board, fetched live from the connector.
+
+    Active sprint is listed first, then closed sprints newest-first, then future sprints.
+    Returns an empty list if the team has no board scope or the board has no sprints.
+    Returns 404 if the team does not exist, 400 if the board scope uses a non-Jira connection.
+    """
+    team_row = session.get(TeamProfileTable, team_id)
+    if team_row is None:
+        raise HTTPException(status_code=404, detail="team not found")
+    board_scope = _team_board_scope(session, team_row)
+    if board_scope is None:
+        return []
+    board_external_id = str(board_scope.external_ref.get("id"))
+    try:
+        connector = instantiate_connector(
+            session,
+            board_scope.connection_id,
+            lambda config: create_connector("jira", config),
+        )
+    except ConnectorConfigError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    if connector is None:
+        raise HTTPException(status_code=404, detail="connection not found")
+    if not isinstance(connector, WorkItemProvider):
+        raise HTTPException(status_code=400, detail="board scope does not support sprint listing")
+    try:
+        sprints = await connector.list_sprints(board_external_id)
+    except ConnectorError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    finally:
+        await connector.close()
+    # Active first, then closed newest-first by end_date, then future sprints.
+    sprints.sort(
+        key=lambda s: (
+            0 if s.state is SprintState.ACTIVE else (1 if s.state.value == "closed" else 2),
+            -(s.end_date.timestamp() if s.end_date else 0) if s.state.value == "closed" else 0,
+            s.name,
+        )
+    )
+    return [SprintResponse.from_sprint(s) for s in sprints]
+
+
+class _ReportFailure(Exception):
+    """Wraps a hard exception from _run_team_report, carrying the FAILED report's id.
+
+    Allows _run_report_job to link the persisted FAILED report to the job row so the job
+    response includes the report_id rather than leaving the report unlinked.
+    """
+
+    def __init__(self, cause: BaseException, report_id: UUID) -> None:
+        super().__init__(str(cause))
+        self.report_id = report_id
+
+
+async def _run_report_job(
+    job_id: UUID,
+    team_profile_id: UUID,
+    requested_window: EvaluationWindow | None,
+    sf: sessionmaker[Session],
+    sprint_external_id: str | None = None,
+) -> None:
+    # Phase 1: mark running — hold write lock only for the DB write, then release.
+    with write_session(sf) as session:
+        job = session.get(ReportJobTable, job_id)
+        if job is None:
+            return
+        job.status = "running"
+        job.started_at = datetime.now(timezone.utc)
+        session.add(job)
+        session.commit()
+
+    # Phase 2: connector I/O — no write lock held during network calls.
+    try:
+        with sf() as session:
+            result = await _run_team_report(
+                team_profile_id, session, requested_window, sprint_external_id
+            )
+        report_id = result.id
+        if result.status == ReportStatus.FAILED:
+            error_msg = result.error or "Report evaluation failed"
+            final_status = "failed"
+        else:
+            error_msg = None
+            final_status = "done"
+    except Exception as exc:
+        # _ReportFailure carries the id of the FAILED report row that was already persisted,
+        # so the job can reference it. Plain exceptions leave no report row.
+        report_id = exc.report_id if isinstance(exc, _ReportFailure) else None
+        error_msg = str(exc)
+        final_status = "failed"
+
+    # Phase 3: persist outcome — hold write lock only for the DB write.
+    with write_session(sf) as session:
+        job = session.get(ReportJobTable, job_id)
+        if job is None:
+            return
+        job.status = final_status
+        job.finished_at = datetime.now(timezone.utc)
+        job.report_id = report_id
+        job.error = error_msg
+        session.add(job)
+        session.commit()
 
 
 @dataclass
@@ -293,6 +485,7 @@ async def _run_team_report(
     team_profile_id: UUID,
     session: Session,
     requested_window: EvaluationWindow | None = None,
+    sprint_external_id: str | None = None,
 ) -> ReportDetailResponse:
     started_at = datetime.now(timezone.utc)
     team_row = session.get(TeamProfileTable, team_profile_id)
@@ -328,8 +521,15 @@ async def _run_team_report(
             # sprints instead of failing/emptying the board, so the range report never *depends*
             # on the Agile endpoint (REQ-F-051); a default run still needs sprints to derive its
             # active-sprint window and propagates the failure as before.
+            # sprints_optional only when an explicit date-range is requested; sprint windows
+            # (explicit or default) always need sprints to derive or validate the window.
             board_meta = await _fetch_board_metadata(
-                session, board_scope, sprints_optional=requested_window is not None
+                session,
+                board_scope,
+                sprints_optional=(
+                    requested_window is not None
+                    and requested_window.window_type is WindowType.DATE_RANGE
+                ),
             )
         except (ConnectorRateLimitedError, ConnectorTransientError, ConnectorAuthError) as error:
             partial_data_notes.append(
@@ -347,14 +547,27 @@ async def _run_team_report(
         )
 
     # An explicit date-range request wins over working-mode derivation and bypasses sprint
-    # selection (so a scrum team can run an ad-hoc range without an active sprint). Otherwise
-    # derive the default window from the team's working mode (flows §6): with a board it is the
-    # active sprint (scrum) or a rolling range (kanban); without one it falls back to a date
-    # range (sprints=None) for both working modes.
+    # selection (so a scrum team can run an ad-hoc range without an active sprint). An explicit
+    # sprint_external_id resolves to a specific sprint window. Otherwise derive the default
+    # window from the team's working mode (flows §6): with a board it is the active sprint
+    # (scrum) or a rolling range (kanban); without one it falls back to a date range.
     try:
-        window = requested_window or _default_evaluation_window(
-            team, board_meta.sprints if board_meta is not None else None, started_at
-        )
+        if sprint_external_id is not None:
+            if board_meta is None:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Cannot resolve sprint: no board source available for this team",
+                )
+            if board_meta.sprints_unavailable:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Cannot resolve sprint: sprint metadata could not be fetched from the board",
+                )
+            window = _sprint_window_by_external_id(sprint_external_id, board_meta.sprints, team.id)
+        else:
+            window = requested_window or _default_evaluation_window(
+                team, board_meta.sprints if board_meta is not None else None, started_at
+            )
     except HTTPException:
         # Default derivation can 422 (scrum board with no active sprint). The board connector
         # opened in Phase 1 is normally closed by the Phase 2 workitem fetch, which never runs
@@ -434,159 +647,163 @@ async def _run_team_report(
     for merge_request in code_mergerequests:
         populate_merge_request_links(merge_request, board_workitems, key_pattern)
 
-    identity = persist_fetch(
-        session,
-        users=(
-            _placeholder_jira_users(board_workitems, board_transitions)
-            + _placeholder_code_users(code_mergerequests, code_reviews)
-        ),
-        projects=[board_data.project] if board_data else [],
-        boards=[board_data.board] if board_data else [],
-        sprints=board_data.sprints if board_data else [],
-        workitems=board_workitems,
-        transitions=board_transitions,
-        repositories=code_data.repositories if code_data else [],
-        mergerequests=code_mergerequests,
-        reviews=code_reviews,
-        # Degraded sprint fetch: keep cached work-item sprint links rather than clobbering them
-        # with unresolved connector ids (there is no sprint identity map on this path).
-        preserve_sprint_links=board_meta is not None and board_meta.sprints_unavailable,
-    )
-    persisted_window = _persisted_window(window, identity.identity_map)
-    # Snapshot the sprint name so retained reports stay readable after the cache is cleared.
-    sprint_label: str | None = None
-    if window.sprint_id is not None and board_meta is not None:
-        sprint_obj = next((s for s in board_meta.sprints if s.id == window.sprint_id), None)
-        if sprint_obj is not None:
-            sprint_label = sprint_obj.name
-    session.add(EvaluationWindowTable(**persisted_window.model_dump(), sprint_label=sprint_label))
-    session.commit()
-
-    ctx = EvaluationContext(now=started_at, window=window, team=team)
-    board_scope_descriptor = (
-        _scope_descriptor(board_scope, connector_name="jira") if board_scope is not None else None
-    )
-
-    skipped_signals = _skipped_signal_entries(
-        board_definitions=board_definitions,
-        code_definitions=code_definitions,
-        board_attached=board_scope is not None,
-        code_attached=has_code_source,
-        ctx=ctx,
-        board_scope_descriptor=board_scope_descriptor,
-    )
-
-    report = create_report(
-        session,
-        ReportTable(
-            evaluation_window_id=window.id,
-            signal_pack_snapshot=_team_signal_pack_snapshot(
-                team_row, all_definitions, skipped_signals, partial_data_notes
+    # Acquire the write lock for all DB writes. Connector I/O is complete at this point;
+    # holding the lock for persistence + evaluation (pure in-memory) keeps the write path
+    # serialized consistently with get_write_session / write_session.
+    with write_lock_acquired():
+        identity = persist_fetch(
+            session,
+            users=(
+                _placeholder_jira_users(board_workitems, board_transitions)
+                + _placeholder_code_users(code_mergerequests, code_reviews)
             ),
-            status=ReportStatus.PENDING,
-            started_at=started_at,
-        ),
-    )
-    report.status = ReportStatus.RUNNING
-    save_report(session, report)
-
-    try:
-        # All data sources failed — persist FAILED and return early rather than succeeding
-        # with zero findings (would violate REQ-NF-070). Fires when every configured source
-        # failed, regardless of how many sources are configured.
-        board_configured = board_scope is not None
-        code_configured = has_code_source
-        all_sources_failed = (
-            (not board_configured or board_data is None)
-            and (not code_configured or code_data is None)
-            and partial_data_notes
+            projects=[board_data.project] if board_data else [],
+            boards=[board_data.board] if board_data else [],
+            sprints=board_data.sprints if board_data else [],
+            workitems=board_workitems,
+            transitions=board_transitions,
+            repositories=code_data.repositories if code_data else [],
+            mergerequests=code_mergerequests,
+            reviews=code_reviews,
+            # Degraded sprint fetch: keep cached work-item sprint links rather than clobbering them
+            # with unresolved connector ids (there is no sprint identity map on this path).
+            preserve_sprint_links=board_meta is not None and board_meta.sprints_unavailable,
         )
-        if all_sources_failed:
+        persisted_window = _persisted_window(window, identity.identity_map)
+        # Snapshot the sprint name so retained reports stay readable after the cache is cleared.
+        sprint_label: str | None = None
+        if window.sprint_id is not None and board_meta is not None:
+            sprint_obj = next((s for s in board_meta.sprints if s.id == window.sprint_id), None)
+            if sprint_obj is not None:
+                sprint_label = sprint_obj.name
+        session.add(EvaluationWindowTable(**persisted_window.model_dump(), sprint_label=sprint_label))
+        session.commit()
+
+        ctx = EvaluationContext(now=started_at, window=window, team=team)
+        board_scope_descriptor = (
+            _scope_descriptor(board_scope, connector_name="jira") if board_scope is not None else None
+        )
+
+        skipped_signals = _skipped_signal_entries(
+            board_definitions=board_definitions,
+            code_definitions=code_definitions,
+            board_attached=board_scope is not None,
+            code_attached=has_code_source,
+            ctx=ctx,
+            board_scope_descriptor=board_scope_descriptor,
+        )
+
+        report = create_report(
+            session,
+            ReportTable(
+                evaluation_window_id=window.id,
+                signal_pack_snapshot=_team_signal_pack_snapshot(
+                    team_row, all_definitions, skipped_signals, partial_data_notes
+                ),
+                status=ReportStatus.PENDING,
+                started_at=started_at,
+            ),
+        )
+        report.status = ReportStatus.RUNNING
+        save_report(session, report)
+
+        try:
+            # All data sources failed — persist FAILED and return early rather than succeeding
+            # with zero findings (would violate REQ-NF-070). Fires when every configured source
+            # failed, regardless of how many sources are configured.
+            board_configured = board_scope is not None
+            code_configured = has_code_source
+            all_sources_failed = (
+                (not board_configured or board_data is None)
+                and (not code_configured or code_data is None)
+                and partial_data_notes
+            )
+            if all_sources_failed:
+                report.status = ReportStatus.FAILED
+                report.finished_at = datetime.now(timezone.utc)
+                report.error = "all data sources failed: " + "; ".join(
+                    n["reason"] for n in partial_data_notes
+                )
+                report.findings_count_by_severity = _counts_by_severity([])
+                save_report(session, report)
+                return ReportDetailResponse.from_report_with_findings(
+                    report, [], team_profile_id=team_row.id, team_name=team_row.name
+                )
+
+            signal_data = SignalData(
+                report_id=report.id,
+                projects=(board_data.project,) if board_data else (),
+                boards=(board_data.board,) if board_data else (),
+                sprints=tuple(board_data.sprints) if board_data else (),
+                workitems=tuple(board_workitems),
+                transitions=tuple(board_transitions),
+                repositories=tuple(code_data.repositories) if code_data else (),
+                mergerequests=tuple(code_mergerequests),
+                reviews=tuple(code_reviews),
+            )
+
+            # Evaluate board signals (workitem/sprint/issue entity types) when board source attached.
+            findings: list[SignalFinding] = []
+            if (
+                board_data is not None
+                and board_scope is not None
+                and board_scope_descriptor is not None
+            ):
+                scope_descriptor = board_scope_descriptor
+                for definition in board_definitions:
+                    findings.extend(
+                        evaluate_signal_definition(
+                            definition,
+                            signal_data,
+                            ctx,
+                            JiraConnector.describe_signal_schema(),
+                            [scope_descriptor],
+                        )
+                    )
+
+            # Evaluate code signals (merge_request entity type) when code source attached and data available.
+            if code_data is not None and team_row.code_connection_id is not None:
+                code_connection = get_source_connection(session, team_row.code_connection_id)
+                code_scope_descriptor = ScopeDescriptor(
+                    connector_id=str(team_row.code_connection_id),
+                    scope_id=str(team_row.code_connection_id),
+                    scope_type="repository",
+                    name="code",
+                    capabilities=("reviews", "pipelines"),
+                    connector_capabilities=get_connector_capabilities(
+                        str(code_connection.connector_name) if code_connection else None
+                    ),
+                )
+                for definition in code_definitions:
+                    findings.extend(
+                        evaluate_signal_definition(
+                            definition,
+                            signal_data,
+                            ctx,
+                            GitLabConnector.describe_signal_schema(),
+                            [code_scope_descriptor],
+                        )
+                    )
+
+            persisted_findings = [
+                _persisted_finding(finding, identity.identity_map) for finding in findings
+            ]
+            add_findings(session, persisted_findings)
+            report.status = ReportStatus.SUCCEEDED
+            report.finished_at = datetime.now(timezone.utc)
+            report.findings_count_by_severity = _counts_by_severity(findings)
+            save_report(session, report)
+        except Exception as error:
+            session.rollback()
             report.status = ReportStatus.FAILED
             report.finished_at = datetime.now(timezone.utc)
-            report.error = "all data sources failed: " + "; ".join(
-                n["reason"] for n in partial_data_notes
-            )
-            report.findings_count_by_severity = _counts_by_severity([])
+            report.error = str(error)
             save_report(session, report)
-            return ReportDetailResponse.from_report_with_findings(
-                report, [], team_profile_id=team_row.id, team_name=team_row.name
-            )
+            raise _ReportFailure(error, report.id) from error
 
-        signal_data = SignalData(
-            report_id=report.id,
-            projects=(board_data.project,) if board_data else (),
-            boards=(board_data.board,) if board_data else (),
-            sprints=tuple(board_data.sprints) if board_data else (),
-            workitems=tuple(board_workitems),
-            transitions=tuple(board_transitions),
-            repositories=tuple(code_data.repositories) if code_data else (),
-            mergerequests=tuple(code_mergerequests),
-            reviews=tuple(code_reviews),
+        return ReportDetailResponse.from_report_with_findings(
+            report, persisted_findings, team_profile_id=team_row.id, team_name=team_row.name
         )
-
-        # Evaluate board signals (workitem/sprint/issue entity types) when board source attached.
-        findings: list[SignalFinding] = []
-        if (
-            board_data is not None
-            and board_scope is not None
-            and board_scope_descriptor is not None
-        ):
-            scope_descriptor = board_scope_descriptor
-            for definition in board_definitions:
-                findings.extend(
-                    evaluate_signal_definition(
-                        definition,
-                        signal_data,
-                        ctx,
-                        JiraConnector.describe_signal_schema(),
-                        [scope_descriptor],
-                    )
-                )
-
-        # Evaluate code signals (merge_request entity type) when code source attached and data available.
-        if code_data is not None and team_row.code_connection_id is not None:
-            code_connection = get_source_connection(session, team_row.code_connection_id)
-            code_scope_descriptor = ScopeDescriptor(
-                connector_id=str(team_row.code_connection_id),
-                scope_id=str(team_row.code_connection_id),
-                scope_type="repository",
-                name="code",
-                capabilities=("reviews", "pipelines"),
-                connector_capabilities=get_connector_capabilities(
-                    str(code_connection.connector_name) if code_connection else None
-                ),
-            )
-            for definition in code_definitions:
-                findings.extend(
-                    evaluate_signal_definition(
-                        definition,
-                        signal_data,
-                        ctx,
-                        GitLabConnector.describe_signal_schema(),
-                        [code_scope_descriptor],
-                    )
-                )
-
-        persisted_findings = [
-            _persisted_finding(finding, identity.identity_map) for finding in findings
-        ]
-        add_findings(session, persisted_findings)
-        report.status = ReportStatus.SUCCEEDED
-        report.finished_at = datetime.now(timezone.utc)
-        report.findings_count_by_severity = _counts_by_severity(findings)
-        save_report(session, report)
-    except Exception as error:
-        session.rollback()
-        report.status = ReportStatus.FAILED
-        report.finished_at = datetime.now(timezone.utc)
-        report.error = str(error)
-        save_report(session, report)
-        raise
-
-    return ReportDetailResponse.from_report_with_findings(
-        report, persisted_findings, team_profile_id=team_row.id, team_name=team_row.name
-    )
 
 
 async def _fetch_board_metadata(
@@ -813,8 +1030,6 @@ async def list_reports_endpoint(
     return responses
 
 
-
-
 @router.delete("/reports", status_code=status.HTTP_204_NO_CONTENT)
 def delete_reports_endpoint(
     team_id: UUID | None = None,
@@ -921,6 +1136,29 @@ def _default_evaluation_window(
     )
 
 
+def _sprint_window_by_external_id(
+    external_id: str,
+    sprints: list[Sprint],
+    team_profile_id: UUID,
+) -> EvaluationWindow:
+    """Build a sprint window from a user-selected sprint external ID.
+
+    Matches against the sprints returned by the connector in this run; raises 422
+    if the sprint is not found on the board (it may have been closed or deleted).
+    """
+    selected = next((s for s in sprints if s.external_id == external_id), None)
+    if selected is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"sprint '{external_id}' not found on board",
+        )
+    return EvaluationWindow(
+        window_type=WindowType.SPRINT,
+        sprint_id=selected.id,
+        team_profile_id=team_profile_id,
+    )
+
+
 def _code_fetch_window(
     window: EvaluationWindow,
     sprints: list[Sprint],
@@ -930,18 +1168,36 @@ def _code_fetch_window(
 
     SPRINT windows carry no date bounds; MR providers that date-filter on
     window.start/window.end would receive None.  Convert to a DATE_RANGE starting
-    at the sprint's start_date and ending at the report snapshot time (started_at),
-    so MR activity after an overdue sprint's planned end is still captured.
+    at the sprint's start_date. For closed sprints, cap the end at the sprint's
+    completion date (complete_date) so historical runs are not contaminated with MRs
+    from after the sprint closed; for active/future sprints (no complete_date) use the
+    report snapshot time (started_at) so in-flight MR activity past a planned end date
+    is still captured.
     Falls back to a 14-day lookback when the sprint has no start_date.
     """
     if window.window_type != WindowType.SPRINT:
         return window
     window_sprint = next((s for s in sprints if s.id == window.sprint_id), None)
-    if window_sprint is not None and window_sprint.start_date is not None:
+    if window_sprint is not None:
+        # For closed sprints cap the end at the sprint's completion date so MRs merged after the
+        # sprint closed are not included in the code-signal window. Active/future sprints have no
+        # complete_date, so end falls back to started_at, capturing in-flight MR activity.
+        sprint_end = window_sprint.complete_date
+        end = sprint_end if sprint_end is not None and sprint_end < started_at else started_at
+        if window_sprint.start_date is not None:
+            # Clamp start to end for future sprints whose start_date is after the report
+            # snapshot time; without the clamp, start > end produces a reversed window.
+            start = min(window_sprint.start_date, end)
+            return EvaluationWindow(
+                window_type=WindowType.DATE_RANGE,
+                start=start,
+                end=end,
+                team_profile_id=window.team_profile_id,
+            )
         return EvaluationWindow(
             window_type=WindowType.DATE_RANGE,
-            start=window_sprint.start_date,
-            end=started_at,
+            start=started_at - timedelta(days=DEFAULT_KANBAN_REPORT_DAYS),
+            end=end,
             team_profile_id=window.team_profile_id,
         )
     return EvaluationWindow(

@@ -1,9 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 
+from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import UniqueConstraint
-from sqlmodel import Field
+import sqlalchemy as sa
+from sqlalchemy import Column, ForeignKey, UniqueConstraint
+from sqlmodel import Field, SQLModel
 
 from em_radar_api.models.signal_pack_history import SignalPackHistory  # noqa: F401
 from em_radar_api.scope_definitions import ScopeDefinitionTable  # noqa: F401
@@ -151,3 +153,30 @@ class SignalFindingTable(SignalFinding, table=True):
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     report_id: UUID = Field(foreign_key="report.id")
+
+
+class ReportJobTable(SQLModel, table=True):
+    __tablename__ = "report_job"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    team_profile_id: UUID = Field(
+        sa_column=Column(
+            sa.Uuid(), ForeignKey("team_profile.id", ondelete="CASCADE"), nullable=False
+        )
+    )
+    status: str  # queued | running | done | failed
+    enqueued_at: datetime
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    report_id: UUID | None = Field(
+        default=None,
+        sa_column=Column(sa.Uuid(), ForeignKey("report.id", ondelete="SET NULL"), nullable=True),
+    )
+    error: str | None = None
+
+
+class AppSettingsTable(SQLModel, table=True):
+    __tablename__ = "app_settings"
+
+    id: int = Field(default=1, primary_key=True)
+    telemetry_enabled: bool = Field(default=False)

@@ -64,12 +64,16 @@ export interface PartialDataNote {
   reason: string
 }
 
-export function formatTimestamp(value: string): string {
-  // The API serializes started_at/finished_at from naive SQLite columns (stored as UTC
-  // wall-time) without a timezone marker. Treat an offset-less string as UTC so viewers in
-  // non-UTC zones do not see shifted labels; strings that already carry a zone are used as-is.
+// The API serializes started_at/finished_at from naive SQLite columns (stored as UTC
+// wall-time) without a timezone marker. Treat an offset-less string as UTC so viewers in
+// non-UTC zones do not see shifted labels; strings that already carry a zone are used as-is.
+export function parseApiTimestamp(value: string): Date {
   const normalized = /([zZ]|[+-]\d{2}:?\d{2})$/.test(value) ? value : `${value}Z`
-  const parsed = new Date(normalized)
+  return new Date(normalized)
+}
+
+export function formatTimestamp(value: string): string {
+  const parsed = parseApiTimestamp(value)
   return Number.isNaN(parsed.valueOf()) ? value : parsed.toLocaleString()
 }
 
@@ -90,49 +94,87 @@ export function extractPartialDataNotes(snapshot: unknown): PartialDataNote[] {
   )
 }
 
-export interface JiraSprintReportRequest {
-  connectionId: string
-  projectExternalId: string
-  boardExternalId: string
-  workingMode: "kanban" | "scrum"
-  sprintLengthDays: number | null
+export type JobStatus = "done" | "failed" | "queued" | "running"
+
+export interface ReportJob {
+  id: string
+  team_profile_id: string
+  status: JobStatus
+  enqueued_at: string
+  started_at: string | null
+  finished_at: string | null
+  report_id: string | null
+  error: string | null
 }
 
-export async function runJiraSprintReport(
-  request: JiraSprintReportRequest,
-): Promise<ReportDetail> {
-  return apiFetch<ReportDetail>("/reports/run", {
-    method: "POST",
-    body: JSON.stringify({
-      connector: "jira",
-      jira: {
-        connection_id: request.connectionId,
-        project_external_id: request.projectExternalId,
-        board_external_id: request.boardExternalId,
-        working_mode: request.workingMode,
-        sprint_length_days: request.sprintLengthDays,
-      },
-    }),
-  })
+export interface SprintOption {
+  id: string
+  external_id: string
+  name: string
+  state: string
+  start_date: string | null
+  end_date: string | null
 }
 
-export async function runTeamReport(
+export async function getTeamSprints(teamId: string): Promise<SprintOption[]> {
+  return apiFetch<SprintOption[]>(`/teams/${teamId}/sprints`)
+}
+
+export async function enqueueTeamReport(
   teamProfileId: string,
   window?: { start: string; end: string },
-): Promise<ReportDetail> {
-  const body = window
-    ? {
-        connector: "jira",
-        team_profile_id: teamProfileId,
-        window_type: "date_range",
-        start: window.start,
-        end: window.end,
-      }
-    : { connector: "jira", team_profile_id: teamProfileId }
-  return apiFetch<ReportDetail>("/reports/run", {
+  sprintExternalId?: string,
+): Promise<ReportJob> {
+  let body: Record<string, unknown> = { connector: "jira", team_profile_id: teamProfileId }
+  if (window) {
+    body = { ...body, window_type: "date_range", start: window.start, end: window.end }
+  } else if (sprintExternalId) {
+    body = { ...body, window_type: "sprint", sprint_external_id: sprintExternalId }
+  }
+  return apiFetch<ReportJob>("/reports/run", {
     method: "POST",
     body: JSON.stringify(body),
   })
+}
+
+export async function listJobs(): Promise<ReportJob[]> {
+  return apiFetch<ReportJob[]>("/reports/jobs")
+}
+
+export async function getJob(jobId: string): Promise<ReportJob> {
+  return apiFetch<ReportJob>(`/reports/jobs/${jobId}`)
+}
+
+const JOB_POLL_INTERVAL_MS = 1000
+const JOB_POLL_TIMEOUT_MS = 10 * 60 * 1000
+
+async function pollJobUntilTerminal(job: ReportJob): Promise<ReportJob> {
+  let current = job
+  const deadline = Date.now() + JOB_POLL_TIMEOUT_MS
+  while (current.status === "queued" || current.status === "running") {
+    if (Date.now() >= deadline) {
+      throw new Error("The report is taking longer than expected. Check its status shortly.")
+    }
+    await new Promise<void>((r) => setTimeout(r, JOB_POLL_INTERVAL_MS))
+    current = await apiFetch<ReportJob>(`/reports/jobs/${current.id}`)
+  }
+  return current
+}
+
+/**
+ * Enqueue a team report and poll until it reaches a terminal state.
+ * Kept for DashboardPage and SetupPage which need the completed state before proceeding.
+ */
+export async function runTeamReport(
+  teamProfileId: string,
+  window?: { start: string; end: string },
+): Promise<ReportJob> {
+  const job = await enqueueTeamReport(teamProfileId, window)
+  const terminal = await pollJobUntilTerminal(job)
+  if (terminal.status === "failed") {
+    throw new Error(terminal.error ?? "Report job failed")
+  }
+  return terminal
 }
 
 export async function listReports(): Promise<ReportSummary[]> {

@@ -2,6 +2,7 @@
 
 import os
 from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from threading import Lock
 
@@ -52,3 +53,30 @@ def get_session() -> Iterator[Session]:
 def get_write_session() -> Iterator[Session]:
     with _write_lock, session_factory() as session:
         yield session
+
+
+def get_session_factory() -> sessionmaker[Session]:
+    return session_factory
+
+
+@contextmanager
+def write_session(sf: sessionmaker[Session]) -> Iterator[Session]:
+    """Context manager for serialized DB writes in background tasks.
+
+    Acquires the same process-wide write lock used by get_write_session so concurrent
+    background jobs do not race on SQLite. Release the context before doing I/O.
+    """
+    with _write_lock, sf() as session:
+        yield session
+
+
+@contextmanager
+def write_lock_acquired() -> Iterator[None]:
+    """Acquire the process-wide write lock without opening a new session.
+
+    For use inside functions that already hold an open session and need to serialize
+    their DB commits with other concurrent writers (e.g. the persistence portion of
+    a background report job that opens its session before lock acquisition).
+    """
+    with _write_lock:
+        yield

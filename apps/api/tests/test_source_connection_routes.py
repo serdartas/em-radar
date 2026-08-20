@@ -316,6 +316,24 @@ def _create_jira_team(
     return api_client.post("/api/teams", json=payload).json()["id"]
 
 
+def _run_report(api_client: TestClient, team_profile_id: str, **extra: object) -> dict:
+    """POST /reports/run, wait for the job to complete, and return the full ReportDetail dict.
+
+    The POST response contains the initial job state ("queued"). BackgroundTasks runs the job
+    during the POST request, so a subsequent GET on the job endpoint reflects the terminal state.
+    Raises AssertionError if the job does not reach a terminal state or has no report_id.
+    """
+    body: dict[str, object] = {"connector": "jira", "team_profile_id": team_profile_id, **extra}
+    resp = api_client.post("/api/reports/run", json=body)
+    assert resp.status_code == 202, f"expected 202, got {resp.status_code}: {resp.text}"
+    job_id = resp.json()["id"]
+    job = api_client.get(f"/api/reports/jobs/{job_id}").json()
+    assert job["status"] in ("done", "failed"), f"job not terminal: {job}"
+    if job.get("report_id"):
+        return api_client.get(f"/api/reports/{job['report_id']}").json()
+    return job
+
+
 def test_source_connection_test_maps_failures_to_error_codes(
     api_client: TestClient, monkeypatch
 ) -> None:
@@ -462,14 +480,10 @@ def test_jira_active_sprint_report_run_persists_user_references(
     scope_id = _create_board_scope(api_client, connection_id, ["sprint", "statuses", "labels"])
     team_id = _create_jira_team(api_client, connection_id, scope_id, "scrum", sprint_length_days=14)
 
-    response = api_client.post(
-        "/api/reports/run",
-        json={"connector": "jira", "team_profile_id": team_id},
-    )
+    report = _run_report(api_client, team_id)
 
-    assert response.status_code == 200
-    assert response.json()["status"] == "succeeded"
-    assert response.json()["findings"] == []
+    assert report["status"] == "succeeded"
+    assert report["findings"] == []
 
     with session_factory() as session:
         users = session.exec(select(UserTable).order_by(UserTable.external_id)).all()
@@ -524,18 +538,12 @@ def test_jira_report_run_evaluates_saved_signal_definitions(
         sprint_length_days=14,
         group_ids=[group["id"]],
     )
-    response = api_client.post(
-        "/api/reports/run",
-        json={"connector": "jira", "team_profile_id": team_id},
-    )
+    report = _run_report(api_client, team_id)
 
-    assert response.status_code == 200
-    findings = response.json()["findings"]
+    findings = report["findings"]
     assert any(finding["signal_id"] == definition["id"] for finding in findings)
     assert all(finding["signal_id"] != "stale-in-progress-work-item" for finding in findings)
-    assert (
-        response.json()["signal_pack_snapshot"]["signal_definitions"][0]["id"] == definition["id"]
-    )
+    assert report["signal_pack_snapshot"]["signal_definitions"][0]["id"] == definition["id"]
 
 
 def test_signal_definition_preview_uses_persisted_jira_samples_and_warnings(
@@ -578,7 +586,7 @@ def test_signal_definition_preview_uses_persisted_jira_samples_and_warnings(
     team_id = _create_jira_team(
         api_client, created["id"], board_scope["id"], "scrum", sprint_length_days=14
     )
-    api_client.post("/api/reports/run", json={"connector": "jira", "team_profile_id": team_id})
+    _run_report(api_client, team_id)
 
     response = api_client.post(
         "/api/signal-definitions/preview",
@@ -639,18 +647,14 @@ def test_jira_kanban_report_uses_date_range_without_active_sprint(
     scope_id = _create_board_scope(api_client, connection_id, ["statuses", "labels"])
     team_id = _create_jira_team(api_client, connection_id, scope_id, "kanban")
 
-    response = api_client.post(
-        "/api/reports/run",
-        json={"connector": "jira", "team_profile_id": team_id},
-    )
+    report = _run_report(api_client, team_id)
 
-    assert response.status_code == 200
-    assert response.json()["status"] == "succeeded"
+    assert report["status"] == "succeeded"
 
     with session_factory() as session:
         window = session.get(
             EvaluationWindowTable,
-            UUID(response.json()["evaluation_window_id"]),
+            UUID(report["evaluation_window_id"]),
         )
 
     assert window is not None

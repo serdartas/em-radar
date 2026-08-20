@@ -36,6 +36,7 @@ from test_source_connection_routes import (
     _create_board_scope,
     _create_jira_connection,
     _create_jira_team,
+    _run_report,
 )
 
 
@@ -124,19 +125,11 @@ def test_date_range_run_persists_requested_window(
     scope_id = _create_board_scope(api_client, connection_id, _BOARD_CAPABILITIES)
     team_id = _create_jira_team(api_client, connection_id, scope_id, "scrum", sprint_length_days=14)
 
-    response = api_client.post(
-        "/api/reports/run",
-        json={
-            "connector": "jira",
-            "team_profile_id": team_id,
-            "window_type": "date_range",
-            "start": _RANGE_START,
-            "end": _RANGE_END,
-        },
+    report = _run_report(
+        api_client, team_id, window_type="date_range", start=_RANGE_START, end=_RANGE_END
     )
-    assert response.status_code == 200
 
-    window = _persisted_window(session_factory, response.json()["id"])
+    window = _persisted_window(session_factory, report["id"])
     assert window.window_type == WindowType.DATE_RANGE
     assert window.sprint_id is None
     assert window.start == _RANGE_START_NAIVE
@@ -168,19 +161,11 @@ def test_date_range_run_skips_sprint_only_signals(
         group_ids=[group_id],
     )
 
-    response = api_client.post(
-        "/api/reports/run",
-        json={
-            "connector": "jira",
-            "team_profile_id": team_id,
-            "window_type": "date_range",
-            "start": _RANGE_START,
-            "end": _RANGE_END,
-        },
+    report = _run_report(
+        api_client, team_id, window_type="date_range", start=_RANGE_START, end=_RANGE_END
     )
-    assert response.status_code == 200
 
-    skipped = response.json()["signal_pack_snapshot"]["skipped_signals"]
+    skipped = report["signal_pack_snapshot"]["skipped_signals"]
     assert any(
         entry["name"] == "Late sprint scope churn" and entry["reason"] == "requires a sprint window"
         for entry in skipped
@@ -204,19 +189,11 @@ def test_scrum_ad_hoc_date_range_bypasses_no_active_sprint(
     scope_id = _create_board_scope(api_client, connection_id, _BOARD_CAPABILITIES)
     team_id = _create_jira_team(api_client, connection_id, scope_id, "scrum", sprint_length_days=14)
 
-    response = api_client.post(
-        "/api/reports/run",
-        json={
-            "connector": "jira",
-            "team_profile_id": team_id,
-            "window_type": "date_range",
-            "start": _RANGE_START,
-            "end": _RANGE_END,
-        },
+    report = _run_report(
+        api_client, team_id, window_type="date_range", start=_RANGE_START, end=_RANGE_END
     )
-    assert response.status_code == 200
 
-    window = _persisted_window(session_factory, response.json()["id"])
+    window = _persisted_window(session_factory, report["id"])
     assert window.window_type == WindowType.DATE_RANGE
     assert window.sprint_id is None
     assert window.start == _RANGE_START_NAIVE
@@ -241,10 +218,7 @@ def test_date_range_run_preserves_sprint_linkage(
     team_id = _create_jira_team(api_client, connection_id, scope_id, "scrum", sprint_length_days=14)
 
     # First a default (sprint) run persists PLAT-1 with a resolved current_sprint_id.
-    default_run = api_client.post(
-        "/api/reports/run", json={"connector": "jira", "team_profile_id": team_id}
-    )
-    assert default_run.status_code == 200
+    _run_report(api_client, team_id)
     with session_factory() as session:
         sprint = session.exec(
             select(SprintTable).where(
@@ -258,17 +232,7 @@ def test_date_range_run_preserves_sprint_linkage(
         assert sprint.id in workitem.sprint_ids
 
     # A date-range run must keep that linkage (sprints fetched best-effort and re-resolved).
-    range_run = api_client.post(
-        "/api/reports/run",
-        json={
-            "connector": "jira",
-            "team_profile_id": team_id,
-            "window_type": "date_range",
-            "start": _RANGE_START,
-            "end": _RANGE_END,
-        },
-    )
-    assert range_run.status_code == 200
+    _run_report(api_client, team_id, window_type="date_range", start=_RANGE_START, end=_RANGE_END)
 
     with session_factory() as session:
         sprint = session.exec(
@@ -300,20 +264,12 @@ def test_date_range_run_degrades_when_sprints_unavailable(
     scope_id = _create_board_scope(api_client, connection_id, _BOARD_CAPABILITIES)
     team_id = _create_jira_team(api_client, connection_id, scope_id, "scrum", sprint_length_days=14)
 
-    response = api_client.post(
-        "/api/reports/run",
-        json={
-            "connector": "jira",
-            "team_profile_id": team_id,
-            "window_type": "date_range",
-            "start": _RANGE_START,
-            "end": _RANGE_END,
-        },
+    report = _run_report(
+        api_client, team_id, window_type="date_range", start=_RANGE_START, end=_RANGE_END
     )
-    assert response.status_code == 200
-    assert response.json()["status"] == "succeeded"
+    assert report["status"] == "succeeded"
 
-    notes = response.json()["signal_pack_snapshot"]["partial_data_notes"]
+    notes = report["signal_pack_snapshot"]["partial_data_notes"]
     assert any(note["source"] == "sprints" for note in notes)
 
     # No prior linkage exists here, so the new work item must be written without unresolved
@@ -344,12 +300,7 @@ def test_date_range_degraded_run_preserves_existing_sprint_links(
         "em_radar_api.connector_registry._connector_types",
         lambda: [JiraTestConnector],
     )
-    assert (
-        api_client.post(
-            "/api/reports/run", json={"connector": "jira", "team_profile_id": team_id}
-        ).status_code
-        == 200
-    )
+    _run_report(api_client, team_id)
     with session_factory() as session:
         sprint = session.exec(
             select(SprintTable).where(
@@ -368,17 +319,7 @@ def test_date_range_degraded_run_preserves_existing_sprint_links(
         "em_radar_api.connector_registry._connector_types",
         lambda: [_SprintEndpointUnavailableConnector],
     )
-    degraded = api_client.post(
-        "/api/reports/run",
-        json={
-            "connector": "jira",
-            "team_profile_id": team_id,
-            "window_type": "date_range",
-            "start": _RANGE_START,
-            "end": _RANGE_END,
-        },
-    )
-    assert degraded.status_code == 200
+    _run_report(api_client, team_id, window_type="date_range", start=_RANGE_START, end=_RANGE_END)
 
     with session_factory() as session:
         workitem = session.exec(
@@ -406,13 +347,10 @@ def test_healthy_run_without_sprints_reconciles_sprint_links(
     scope_id = _create_board_scope(api_client, connection_id, _BOARD_CAPABILITIES)
     team_id = _create_jira_team(api_client, connection_id, scope_id, "kanban")
 
-    response = api_client.post(
-        "/api/reports/run", json={"connector": "jira", "team_profile_id": team_id}
-    )
-    assert response.status_code == 200
-    assert response.json()["status"] == "succeeded"
+    report = _run_report(api_client, team_id)
+    assert report["status"] == "succeeded"
 
-    notes = response.json()["signal_pack_snapshot"]["partial_data_notes"]
+    notes = report["signal_pack_snapshot"]["partial_data_notes"]
     assert all(note["source"] != "sprints" for note in notes)
 
     with session_factory() as session:
@@ -439,12 +377,14 @@ def test_no_active_sprint_default_run_closes_connector(
     scope_id = _create_board_scope(api_client, connection_id, _BOARD_CAPABILITIES)
     team_id = _create_jira_team(api_client, connection_id, scope_id, "scrum", sprint_length_days=14)
 
-    response = api_client.post(
+    job_resp = api_client.post(
         "/api/reports/run", json={"connector": "jira", "team_profile_id": team_id}
     )
+    assert job_resp.status_code == 202
+    job = api_client.get(f"/api/reports/jobs/{job_resp.json()['id']}").json()
 
-    assert response.status_code == 422
-    assert "no active sprint" in response.json()["detail"]
+    assert job["status"] == "failed"
+    assert "no active sprint" in job["error"]
     assert _ClosableNoActiveSprintConnector.close_calls == 1
 
 
@@ -465,19 +405,15 @@ def test_naive_date_range_treated_as_utc(
     scope_id = _create_board_scope(api_client, connection_id, _BOARD_CAPABILITIES)
     team_id = _create_jira_team(api_client, connection_id, scope_id, "scrum", sprint_length_days=14)
 
-    response = api_client.post(
-        "/api/reports/run",
-        json={
-            "connector": "jira",
-            "team_profile_id": team_id,
-            "window_type": "date_range",
-            "start": _RANGE_START_NO_TZ,
-            "end": _RANGE_END_NO_TZ,
-        },
+    report = _run_report(
+        api_client,
+        team_id,
+        window_type="date_range",
+        start=_RANGE_START_NO_TZ,
+        end=_RANGE_END_NO_TZ,
     )
-    assert response.status_code == 200
 
-    window = _persisted_window(session_factory, response.json()["id"])
+    window = _persisted_window(session_factory, report["id"])
     assert window.window_type == WindowType.DATE_RANGE
     assert window.start == _RANGE_START_NAIVE
     assert window.end == _RANGE_END_NAIVE
@@ -489,14 +425,14 @@ def test_naive_date_range_treated_as_utc(
         {"window_type": "date_range", "start": _RANGE_START},
         {"window_type": "date_range", "start": _RANGE_END, "end": _RANGE_START},
         {"window_type": "date_range", "start": _RANGE_START, "end": _RANGE_START},
-        {"window_type": "sprint"},
+        {"window_type": "date_range", "start": _RANGE_START, "end": _RANGE_END, "sprint_external_id": "30000"},
         {"start": _RANGE_START, "end": _RANGE_END},
     ],
     ids=[
         "missing-end",
         "start-after-end",
         "start-equals-end",
-        "explicit-sprint-rejected",
+        "sprint-external-id-on-date-range-rejected",
         "stray-start-end-without-window-type",
     ],
 )
@@ -505,7 +441,7 @@ def test_invalid_window_request_returns_422(
     window_payload: dict[str, str],
 ) -> None:
     """Malformed window requests are rejected with 422 at request validation, before any team
-    lookup: bad date_range bounds, explicit sprint selection, and stray start/end."""
+    lookup: bad date_range bounds, sprint_external_id on non-sprint window, and stray start/end."""
     response = api_client.post(
         "/api/reports/run",
         json={"connector": "jira", "team_profile_id": str(uuid4()), **window_payload},

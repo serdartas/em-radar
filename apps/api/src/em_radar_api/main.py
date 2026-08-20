@@ -17,12 +17,13 @@ from em_radar_api.routers.connectors import router as connectors_router
 from em_radar_api.routers.health import router as health_router
 from em_radar_api.routers.reports import router as reports_router
 from em_radar_api.routers.scopes import router as scopes_router
+from em_radar_api.routers.settings import router as settings_router
 from em_radar_api.routers.signal_config_groups import router as signal_config_groups_router
 from em_radar_api.routers.signal_definitions import router as signal_definitions_router
 from em_radar_api.routers.signal_pack import router as signal_pack_router
 from em_radar_api.routers.source_connections import router as source_connections_router
 from em_radar_api.routers.teams import router as teams_router
-from em_radar_api.startup import seed_default_signal_group
+from em_radar_api.startup import recover_interrupted_jobs, seed_default_signal_group
 from em_radar_core.http_client import configure_log_scrubbing
 
 
@@ -55,6 +56,7 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         del app
+        recover_interrupted_jobs(app_session_factory)
         seed_default_signal_group(app_session_factory)
         yield
 
@@ -63,6 +65,7 @@ def create_app(
     app.include_router(health_router, prefix="/api")
     app.include_router(reports_router, prefix="/api")
     app.include_router(scopes_router, prefix="/api")
+    app.include_router(settings_router, prefix="/api")
     app.include_router(signal_config_groups_router, prefix="/api")
     app.include_router(signal_definitions_router, prefix="/api")
     app.include_router(signal_pack_router, prefix="/api")

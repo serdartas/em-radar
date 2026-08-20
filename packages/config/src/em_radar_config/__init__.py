@@ -27,6 +27,7 @@ from em_radar_config.validation import (
     PackValidationWarning,
     apply_pack_defaults,
     load_signal_pack,
+    rules_to_expression,
 )
 
 __all__ = [
@@ -51,5 +52,6 @@ __all__ = [
     "instantiate_jira_signal_template",
     "load_signal_pack",
     "restore_jira_signal_template",
+    "rules_to_expression",
     "seed_jira_signal_templates",
 ]

@@ -33,6 +33,7 @@ from test_source_connection_routes import (
     _create_board_scope,
     _create_jira_connection,
     _create_jira_team,
+    _run_report,
 )
 
 _BOARD_CAPABILITIES = ["sprint", "statuses", "labels"]
@@ -167,12 +168,13 @@ def test_no_source_returns_422(api_client: TestClient, monkeypatch) -> None:
         json={"name": "No source team", "connection_ids": [connection_id]},
     ).json()["id"]
 
-    response = api_client.post(
+    job_resp = api_client.post(
         "/api/reports/run", json={"connector": "jira", "team_profile_id": team_id}
     )
-
-    assert response.status_code == 422
-    assert "no source" in response.json()["detail"]
+    assert job_resp.status_code == 202
+    job = api_client.get(f"/api/reports/jobs/{job_resp.json()['id']}").json()
+    assert job["status"] == "failed"
+    assert "no source" in job["error"]
 
 
 def test_board_only_runs_wi_signals_skips_mr_signals(api_client: TestClient, monkeypatch) -> None:
@@ -195,12 +197,9 @@ def test_board_only_runs_wi_signals_skips_mr_signals(api_client: TestClient, mon
         group_ids=[group],
     )
 
-    response = api_client.post(
-        "/api/reports/run", json={"connector": "jira", "team_profile_id": team_id}
-    )
+    report = _run_report(api_client, team_id)
 
-    assert response.status_code == 200
-    snapshot = response.json()["signal_pack_snapshot"]
+    snapshot = report["signal_pack_snapshot"]
     skipped_ids = {s["id"] for s in snapshot["skipped_signals"]}
 
     assert mr_signal in skipped_ids, "MR signal should be skipped when no code source"
@@ -230,12 +229,9 @@ def test_code_only_runs_mr_signals_skips_wi_signals(api_client: TestClient, monk
         },
     ).json()["id"]
 
-    response = api_client.post(
-        "/api/reports/run", json={"connector": "jira", "team_profile_id": team_id}
-    )
+    report = _run_report(api_client, team_id)
 
-    assert response.status_code == 200
-    snapshot = response.json()["signal_pack_snapshot"]
+    snapshot = report["signal_pack_snapshot"]
     skipped_ids = {s["id"] for s in snapshot["skipped_signals"]}
 
     assert wi_signal in skipped_ids, "WI signal should be skipped when no board source"
@@ -270,12 +266,9 @@ def test_both_sources_no_signals_skipped(api_client: TestClient, monkeypatch) ->
         },
     ).json()["id"]
 
-    response = api_client.post(
-        "/api/reports/run", json={"connector": "jira", "team_profile_id": team_id}
-    )
+    report = _run_report(api_client, team_id)
 
-    assert response.status_code == 200
-    snapshot = response.json()["signal_pack_snapshot"]
+    snapshot = report["signal_pack_snapshot"]
     assert snapshot["skipped_signals"] == [], (
         "No signals should be skipped when both sources present"
     )
@@ -315,12 +308,9 @@ def test_kanban_run_adds_window_gate_skip_for_sprint_only_signal(
         group_ids=[group],
     )
 
-    response = api_client.post(
-        "/api/reports/run", json={"connector": "jira", "team_profile_id": team_id}
-    )
+    report = _run_report(api_client, team_id)
 
-    assert response.status_code == 200
-    snapshot = response.json()["signal_pack_snapshot"]
+    snapshot = report["signal_pack_snapshot"]
     skipped_ids = {s["id"] for s in snapshot["skipped_signals"]}
     assert sprint_signal_id in skipped_ids, "repeated-carry-over must be gated on date-range run"
     skip_entry = next(s for s in snapshot["skipped_signals"] if s["id"] == sprint_signal_id)

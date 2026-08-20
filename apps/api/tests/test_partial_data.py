@@ -38,6 +38,7 @@ from test_source_connection_routes import (
     _create_board_scope,
     _create_jira_connection,
     _create_jira_team,
+    _run_report,
 )
 
 _REPO_ID = UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
@@ -152,12 +153,8 @@ def test_transient_code_source_error_produces_partial_data_note(
         },
     ).json()["id"]
 
-    response = api_client.post(
-        "/api/reports/run", json={"connector": "jira", "team_profile_id": team_id}
-    )
+    report = _run_report(api_client, team_id)
 
-    assert response.status_code == 200
-    report = response.json()
     assert report["status"] == "succeeded"
     notes = report["signal_pack_snapshot"]["partial_data_notes"]
     assert len(notes) == 1
@@ -188,13 +185,10 @@ def test_rate_limited_code_source_produces_partial_data_note(
         },
     ).json()["id"]
 
-    response = api_client.post(
-        "/api/reports/run", json={"connector": "jira", "team_profile_id": team_id}
-    )
+    report = _run_report(api_client, team_id)
 
-    assert response.status_code == 200
-    assert response.json()["status"] == "succeeded"
-    notes = response.json()["signal_pack_snapshot"]["partial_data_notes"]
+    assert report["status"] == "succeeded"
+    notes = report["signal_pack_snapshot"]["partial_data_notes"]
     assert any("code" == n["source"] for n in notes)
 
 
@@ -221,12 +215,13 @@ def test_non_typed_connector_error_is_still_fatal(
         },
     ).json()["id"]
 
-    response = api_client.post(
+    job_resp = api_client.post(
         "/api/reports/run", json={"connector": "jira", "team_profile_id": team_id}
     )
-
-    assert response.status_code == 502, (
-        "ConnectorDataError must propagate as 502, not be swallowed into a partial-data note"
+    assert job_resp.status_code == 202
+    job = api_client.get(f"/api/reports/jobs/{job_resp.json()['id']}").json()
+    assert job["status"] == "failed", (
+        "ConnectorDataError must cause job failure, not be swallowed into a partial-data note"
     )
 
 
@@ -251,12 +246,8 @@ def test_board_only_team_all_sources_failed_marks_report_failed(
         },
     ).json()["id"]
 
-    response = api_client.post(
-        "/api/reports/run", json={"connector": "jira", "team_profile_id": team_id}
-    )
+    report = _run_report(api_client, team_id)
 
-    assert response.status_code == 200
-    report = response.json()
     assert report["status"] == "failed", (
         "board-only team with failing board source must be marked FAILED, not SUCCEEDED"
     )
@@ -281,12 +272,8 @@ def test_code_only_team_all_sources_failed_marks_report_failed(
         },
     ).json()["id"]
 
-    response = api_client.post(
-        "/api/reports/run", json={"connector": "jira", "team_profile_id": team_id}
-    )
+    report = _run_report(api_client, team_id)
 
-    assert response.status_code == 200
-    report = response.json()
     assert report["status"] == "failed", (
         "code-only team with failing code source must be marked FAILED, not SUCCEEDED"
     )
@@ -305,9 +292,6 @@ def test_no_partial_data_note_when_all_sources_succeed(
     scope_id = _create_board_scope(api_client, jira_id, ["sprint", "statuses", "labels"])
     team_id = _create_jira_team(api_client, jira_id, scope_id, "scrum", sprint_length_days=14)
 
-    response = api_client.post(
-        "/api/reports/run", json={"connector": "jira", "team_profile_id": team_id}
-    )
+    report = _run_report(api_client, team_id)
 
-    assert response.status_code == 200
-    assert response.json()["signal_pack_snapshot"].get("partial_data_notes", []) == []
+    assert report["signal_pack_snapshot"].get("partial_data_notes", []) == []
