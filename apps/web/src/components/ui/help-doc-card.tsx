@@ -21,7 +21,7 @@ function HelpDocCard({ children, className, title }: HelpDocCardProps) {
     >
       <BookOpen aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-blue-500" />
       <div>
-        <p className="font-medium">{title}</p>
+        <h2 className="font-medium">{title}</h2>
         {children && <div className="mt-1 text-blue-800">{children}</div>}
       </div>
     </div>
