@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import base64
+import hashlib
+import time
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from typing import ClassVar, Literal, cast
@@ -46,6 +48,9 @@ from em_radar_core.models import (
 
 CLIENT_FACTORY: Callable[..., httpx.AsyncClient] = httpx.AsyncClient
 PAGE_SIZE = 50
+# 5-minute TTL keeps field metadata reasonably fresh without repeated Jira round-trips.
+_FIELD_CACHE_TTL = 300.0
+_field_discovery_cache: dict[str, tuple[list["JiraFieldInfo"], float]] = {}
 _NAMESPACE = UUID("1b6514a2-8027-43f2-a820-c771c419ca33")
 _STORY_POINTS_FIELD = "customfield_10016"
 _SPRINT_FIELD = "customfield_10020"
@@ -89,6 +94,13 @@ class JiraConnectorConfig(BaseModel):
     field_mapping: JiraFieldMappingConfig = Field(default_factory=JiraFieldMappingConfig)
 
 
+class JiraFieldInfo(BaseModel):
+    id: str
+    name: str
+    custom: bool
+    field_type: str | None = None
+
+
 class JiraConnector:
     name: ClassVar[str] = "jira"
     display_name: ClassVar[str] = "Jira (Cloud or Server)"
@@ -125,6 +137,26 @@ class JiraConnector:
             user_display_name=_display_name(user_payload),
             permissions=_permissions(permissions_payload),
         )
+
+    async def discover_fields(self) -> list[JiraFieldInfo]:
+        cache_key = _field_cache_key(self.config)
+        cached = _field_discovery_cache.get(cache_key)
+        if cached is not None and time.monotonic() < cached[1]:
+            return cached[0]
+        try:
+            payloads = await self._request_json_list("rest/api/3/field")
+        except ConnectorNotFoundError:
+            payloads = await self._request_json_list("rest/api/2/field")
+        fields = sorted(
+            (_field_info_from_payload(p) for p in payloads),
+            key=lambda f: f.name.lower(),
+        )
+        now = time.monotonic()
+        expired = [k for k, (_, expiry) in _field_discovery_cache.items() if expiry <= now]
+        for k in expired:
+            del _field_discovery_cache[k]
+        _field_discovery_cache[cache_key] = (fields, now + _FIELD_CACHE_TTL)
+        return fields
 
     @classmethod
     def describe_capabilities(cls) -> Capabilities:
@@ -661,6 +693,23 @@ def _is_last_changelog_page(payload: Mapping[str, object], next_start_at: int) -
         return len(_payload_histories(payload)) < max_results
 
     return len(_payload_histories(payload)) < PAGE_SIZE
+
+
+def _field_cache_key(config: JiraConnectorConfig) -> str:
+    email = repr(config.auth_email)  # distinguishes None from "" and "user@example.com"
+    raw = f"{config.base_url}:{config.token.get_secret_value()}:{email}:{config.verify_tls}"
+    return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+
+def _field_info_from_payload(payload: Mapping[str, object]) -> JiraFieldInfo:
+    field_id = _optional_str(payload, "id") or ""
+    name = _optional_str(payload, "name") or field_id
+    custom = bool(payload.get("custom"))
+    schema = payload.get("schema")
+    field_type: str | None = None
+    if isinstance(schema, Mapping):
+        field_type = _optional_str(schema, "type")
+    return JiraFieldInfo(id=field_id, name=name, custom=custom, field_type=field_type)
 
 
 def _project_from_payload(payload: Mapping[str, object], base_url: str) -> Project:
