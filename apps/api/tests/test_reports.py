@@ -312,7 +312,6 @@ def test_write_lock_not_held_during_connector_io(api_client: TestClient, monkeyp
     endpoints are not serialized behind a long-running report fetch.
     """
     lock_state_during_io: list[bool] = []
-    # Track whether another thread can acquire the lock during connector I/O (non-blocking).
     lock_acquirable_during_io: list[bool] = []
 
     from em_radar_core.models import EvaluationWindow
