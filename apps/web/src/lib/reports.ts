@@ -129,19 +129,30 @@ export async function runJiraSprintReport(
   })
 }
 
+export interface SprintOption {
+  id: string
+  external_id: string
+  name: string
+  state: string
+  start_date: string | null
+  end_date: string | null
+}
+
+export async function getTeamSprints(teamId: string): Promise<SprintOption[]> {
+  return apiFetch<SprintOption[]>(`/teams/${teamId}/sprints`)
+}
+
 export async function enqueueTeamReport(
   teamProfileId: string,
   window?: { start: string; end: string },
+  sprintExternalId?: string,
 ): Promise<ReportJob> {
-  const body = window
-    ? {
-        connector: "jira",
-        team_profile_id: teamProfileId,
-        window_type: "date_range",
-        start: window.start,
-        end: window.end,
-      }
-    : { connector: "jira", team_profile_id: teamProfileId }
+  let body: Record<string, unknown> = { connector: "jira", team_profile_id: teamProfileId }
+  if (window) {
+    body = { ...body, window_type: "date_range", start: window.start, end: window.end }
+  } else if (sprintExternalId) {
+    body = { ...body, window_type: "sprint", sprint_external_id: sprintExternalId }
+  }
   return apiFetch<ReportJob>("/reports/run", {
     method: "POST",
     body: JSON.stringify(body),

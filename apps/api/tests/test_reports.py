@@ -1,8 +1,14 @@
 from collections.abc import AsyncIterator
+from uuid import UUID
 
+import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.orm import sessionmaker
+from sqlmodel import Session
 
 from em_radar_api.db import _write_lock
+from em_radar_api.tables import EvaluationWindowTable, ReportTable
+from em_radar_core.models import WindowType
 from test_source_connection_routes import (
     JiraTestConnector,
     _create_board_scope,
@@ -350,3 +356,129 @@ def test_write_lock_not_held_during_connector_io(api_client: TestClient, monkeyp
     assert all(lock_acquirable_during_io), (
         "concurrent writer could not acquire _write_lock during connector I/O"
     )
+
+
+# ---------------------------------------------------------------------------
+# Sprint window tests (M8.3-04)
+# ---------------------------------------------------------------------------
+
+
+def _get_window(sf: sessionmaker[Session], report_id: str) -> EvaluationWindowTable:
+    with sf() as session:
+        report = session.get(ReportTable, UUID(report_id))
+        assert report is not None
+        window = session.get(EvaluationWindowTable, report.evaluation_window_id)
+        assert window is not None
+        return window
+
+
+def test_sprint_window_type_accepted_and_uses_active_sprint(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """window_type=sprint without sprint_external_id uses the board's active sprint."""
+    _use_jira_connector(monkeypatch)
+    connection_id = _create_jira_connection(api_client)
+    scope_id = _create_board_scope(api_client, connection_id, _BOARD_CAPABILITIES)
+    team_id = _create_jira_team(api_client, connection_id, scope_id, "scrum", sprint_length_days=14)
+
+    resp = api_client.post(
+        "/api/reports/run",
+        json={"connector": "jira", "team_profile_id": team_id, "window_type": "sprint"},
+    )
+
+    assert resp.status_code == 202
+    job_id = resp.json()["id"]
+    job = api_client.get(f"/api/reports/jobs/{job_id}").json()
+    assert job["status"] == "done", f"job failed: {job.get('error')}"
+    window = _get_window(session_factory, job["report_id"])
+    assert window.window_type is WindowType.SPRINT
+
+
+def test_sprint_window_with_explicit_sprint_external_id(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """window_type=sprint with sprint_external_id resolves to the specified sprint."""
+    _use_jira_connector(monkeypatch)
+    connection_id = _create_jira_connection(api_client)
+    scope_id = _create_board_scope(api_client, connection_id, _BOARD_CAPABILITIES)
+    team_id = _create_jira_team(api_client, connection_id, scope_id, "scrum", sprint_length_days=14)
+
+    # The JiraTestConnector has a sprint with external_id="30000".
+    resp = api_client.post(
+        "/api/reports/run",
+        json={
+            "connector": "jira",
+            "team_profile_id": team_id,
+            "window_type": "sprint",
+            "sprint_external_id": "30000",
+        },
+    )
+
+    assert resp.status_code == 202
+    job_id = resp.json()["id"]
+    job = api_client.get(f"/api/reports/jobs/{job_id}").json()
+    assert job["status"] == "done", f"job failed: {job.get('error')}"
+    window = _get_window(session_factory, job["report_id"])
+    assert window.window_type is WindowType.SPRINT
+
+
+def test_sprint_external_id_not_found_returns_failed_job(
+    api_client: TestClient, monkeypatch
+) -> None:
+    """A sprint_external_id that doesn't exist on the board results in a failed job."""
+    _use_jira_connector(monkeypatch)
+    connection_id = _create_jira_connection(api_client)
+    scope_id = _create_board_scope(api_client, connection_id, _BOARD_CAPABILITIES)
+    team_id = _create_jira_team(api_client, connection_id, scope_id, "scrum", sprint_length_days=14)
+
+    resp = api_client.post(
+        "/api/reports/run",
+        json={
+            "connector": "jira",
+            "team_profile_id": team_id,
+            "window_type": "sprint",
+            "sprint_external_id": "99999",
+        },
+    )
+
+    assert resp.status_code == 202
+    job_id = resp.json()["id"]
+    job = api_client.get(f"/api/reports/jobs/{job_id}").json()
+    assert job["status"] == "failed"
+    assert "99999" in job["error"]
+
+
+def test_team_sprints_endpoint_returns_board_sprints(api_client: TestClient, monkeypatch) -> None:
+    """GET /api/teams/{id}/sprints returns the board's sprints."""
+    _use_jira_connector(monkeypatch)
+    connection_id = _create_jira_connection(api_client)
+    scope_id = _create_board_scope(api_client, connection_id, _BOARD_CAPABILITIES)
+    team_id = _create_jira_team(api_client, connection_id, scope_id, "scrum", sprint_length_days=14)
+
+    resp = api_client.get(f"/api/teams/{team_id}/sprints")
+
+    assert resp.status_code == 200
+    sprints = resp.json()
+    assert len(sprints) >= 1
+    assert sprints[0]["external_id"] == "30000"
+    assert sprints[0]["name"] == "Platform Sprint 12"
+    assert sprints[0]["state"] == "active"
+
+
+def test_team_sprints_no_board_scope_returns_empty(api_client: TestClient, monkeypatch) -> None:
+    """GET /api/teams/{id}/sprints returns [] for a team without a board scope."""
+    _use_jira_connector(monkeypatch)
+    connection_id = _create_jira_connection(api_client)
+    team_id = api_client.post(
+        "/api/teams",
+        json={"name": "No scope team", "connection_ids": [connection_id]},
+    ).json()["id"]
+
+    resp = api_client.get(f"/api/teams/{team_id}/sprints")
+
+    assert resp.status_code == 200
+    assert resp.json() == []

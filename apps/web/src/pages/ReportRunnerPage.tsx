@@ -13,6 +13,7 @@ import {
   enqueueTeamReport,
   formatTimestamp,
   getJob,
+  getTeamSprints,
   listJobs,
   type ReportJob,
 } from "@/lib/reports"
@@ -23,6 +24,7 @@ type WindowMode = "date_range" | "sprint"
 interface TeamRunInput {
   teamIds: string[]
   window?: { start: string; end: string }
+  sprintExternalId?: string
 }
 
 const JOB_POLL_MS = 3000
@@ -55,12 +57,22 @@ export function ReportRunnerPage() {
   const [windowMode, setWindowMode] = useState<WindowMode>("sprint")
   const [startDate, setStartDate] = useState("")
   const [endDate, setEndDate] = useState("")
+  const [selectedSprintExternalId, setSelectedSprintExternalId] = useState("")
   const [dateError, setDateError] = useState<string | null>(null)
   const [enqueueError, setEnqueueError] = useState<string | null>(null)
   // IDs of jobs we enqueued in this session; cleared once they reach terminal state.
   const [pendingJobIds, setPendingJobIds] = useState<string[]>([])
 
   const teams = teamsQuery.data ?? []
+
+  // Fetch sprints for the picker when exactly one team is selected in sprint mode.
+  const sprintFetchTeamId =
+    windowMode === "sprint" && selectedTeamIds.length === 1 ? selectedTeamIds[0] : null
+  const sprintsQuery = useQuery({
+    queryKey: ["team-sprints", sprintFetchTeamId],
+    queryFn: () => getTeamSprints(sprintFetchTeamId!),
+    enabled: sprintFetchTeamId !== null,
+  })
 
   // Display list: poll the jobs endpoint and refresh while any listed job is non-terminal.
   const jobsQuery = useQuery({
@@ -120,9 +132,9 @@ export function ReportRunnerPage() {
   }, [pendingJobIds, pendingJobQueries, enqueueError, navigate, queryClient])
 
   const teamRun = useMutation({
-    mutationFn: async ({ teamIds, window }: TeamRunInput): Promise<ReportJob[]> => {
+    mutationFn: async ({ teamIds, window, sprintExternalId }: TeamRunInput): Promise<ReportJob[]> => {
       const results = await Promise.allSettled(
-        teamIds.map((id) => enqueueTeamReport(id, window)),
+        teamIds.map((id) => enqueueTeamReport(id, window, sprintExternalId)),
       )
       const accepted: ReportJob[] = []
       const errors: string[] = []
@@ -164,7 +176,10 @@ export function ReportRunnerPage() {
     setDateError(null)
     setEnqueueError(null)
     if (windowMode === "sprint") {
-      teamRun.mutate({ teamIds: selectedTeamIds })
+      teamRun.mutate({
+        teamIds: selectedTeamIds,
+        sprintExternalId: selectedSprintExternalId || undefined,
+      })
       return
     }
     if (!startDate || !endDate) {
@@ -245,9 +260,28 @@ export function ReportRunnerPage() {
               </Select>
             </div>
             {windowMode === "sprint" ? (
-              <p className="text-xs text-slate-500">
-                Runs each team&apos;s active sprint. Kanban teams use their default rolling window.
-              </p>
+              selectedTeamIds.length === 1 ? (
+                <div className="space-y-1">
+                  <Label htmlFor="sprint-pick">Sprint</Label>
+                  <Select
+                    className="sm:max-w-xs"
+                    id="sprint-pick"
+                    onChange={(event) => setSelectedSprintExternalId(event.target.value)}
+                    value={selectedSprintExternalId}
+                  >
+                    <option value="">Active sprint (default)</option>
+                    {(sprintsQuery.data ?? []).map((sprint) => (
+                      <option key={sprint.external_id} value={sprint.external_id}>
+                        {sprint.name}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+              ) : (
+                <p className="text-xs text-slate-500">
+                  Runs each team&apos;s active sprint. Kanban teams use their default rolling window.
+                </p>
+              )
             ) : (
               <div className="flex flex-col gap-3 sm:flex-row">
                 <div className="space-y-1">

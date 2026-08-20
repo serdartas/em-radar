@@ -123,6 +123,7 @@ describe("ReportRunnerPage", () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const url = typeof input === "string" ? input : input.toString()
       if (url.endsWith("/api/teams")) return Promise.resolve(jsonResponse([team]))
+      if (url.includes("/api/teams/team-1/sprints")) return Promise.resolve(jsonResponse([]))
       if (url.endsWith("/api/reports/run")) return Promise.resolve(jsonResponse(doneJob))
       if (url.includes("/api/reports/jobs/")) return Promise.resolve(jsonResponse(doneJob))
       if (url.endsWith("/api/reports/jobs")) return Promise.resolve(jsonResponse([doneJob]))
@@ -347,10 +348,61 @@ describe("ReportRunnerPage", () => {
     expect(screen.getByText("no active sprint")).toBeInTheDocument()
   })
 
+  it("shows a sprint picker for a single team and sends sprint_external_id in the run request", async () => {
+    const sprints = [
+      {
+        id: "sprint-db-1",
+        external_id: "30000",
+        name: "Platform Sprint 12",
+        state: "active",
+        start_date: null,
+        end_date: null,
+      },
+    ]
+
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = typeof input === "string" ? input : input.toString()
+      if (url.endsWith("/api/teams")) return Promise.resolve(jsonResponse([team]))
+      if (url.includes("/api/teams/team-1/sprints")) return Promise.resolve(jsonResponse(sprints))
+      if (url.endsWith("/api/reports/run")) return Promise.resolve(jsonResponse(doneJob))
+      if (url.includes("/api/reports/jobs/")) return Promise.resolve(jsonResponse(doneJob))
+      if (url.endsWith("/api/reports/jobs")) return Promise.resolve(jsonResponse([doneJob]))
+      if (url.endsWith("/api/reports/report-1")) return Promise.resolve(jsonResponse(report))
+      throw new Error(`unexpected fetch: ${url}`)
+    })
+
+    renderApp()
+
+    fireEvent.click(await screen.findByLabelText("Platform"))
+    const sprintSelect = await screen.findByLabelText("Sprint")
+    expect(sprintSelect).toBeInTheDocument()
+    // Wait for sprint options to load from the mocked API before selecting.
+    await screen.findByText("Platform Sprint 12")
+    fireEvent.change(sprintSelect, { target: { value: "30000" } })
+    fireEvent.click(screen.getByRole("button", { name: "Run team reports" }))
+
+    expect(await screen.findByText("PLAT-2 stale for 12 days")).toBeInTheDocument()
+    expect(
+      fetchMock.mock.calls.some(
+        ([url, requestInit]) =>
+          String(url).endsWith("/api/reports/run") &&
+          requestInit?.method === "POST" &&
+          String(requestInit?.body) ===
+            JSON.stringify({
+              connector: "jira",
+              team_profile_id: "team-1",
+              window_type: "sprint",
+              sprint_external_id: "30000",
+            }),
+      ),
+    ).toBe(true)
+  })
+
   it("does not show a mutation error alert when enqueue fails (dead error branch removed)", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const url = typeof input === "string" ? input : input.toString()
       if (url.endsWith("/api/teams")) return Promise.resolve(jsonResponse([team]))
+      if (url.includes("/api/teams/team-1/sprints")) return Promise.resolve(jsonResponse([]))
       if (url.endsWith("/api/reports/jobs")) return Promise.resolve(jsonResponse([]))
       if (url.endsWith("/api/reports/run"))
         return Promise.resolve(jsonResponse({ detail: "Internal server error" }, 500))

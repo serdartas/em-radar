@@ -80,6 +80,7 @@ from em_radar_api.repositories.source_connections import (
     get_source_connection,
     instantiate_connector,
 )
+from em_radar_api.routers.source_connections import SprintResponse
 from em_radar_api.scope_definitions import ScopeDefinitionTable, ScopeType
 from em_radar_api.signal_config_groups import SignalConfigGroupTable
 from em_radar_api.signal_definitions import SignalDefinitionTable
@@ -122,16 +123,14 @@ class ReportRunRequest(BaseModel):
     window_type: WindowType | None = None
     start: datetime | None = None
     end: datetime | None = None
+    sprint_external_id: str | None = None
 
     @model_validator(mode="after")
     def validate_connector_scope(self) -> Self:
         if self.connector == "jira" and self.team_profile_id is None:
             raise ValueError("jira reports require a team_profile_id")
-        if self.window_type is WindowType.SPRINT:
-            raise ValueError(
-                "explicit sprint selection is not supported here; "
-                "sprint windows use the team's working-mode default"
-            )
+        if self.sprint_external_id is not None and self.window_type is not WindowType.SPRINT:
+            raise ValueError("sprint_external_id requires window_type=sprint")
         if self.window_type is WindowType.DATE_RANGE:
             if self.start is None or self.end is None:
                 raise ValueError("date_range windows require both start and end")
@@ -139,7 +138,9 @@ class ReportRunRequest(BaseModel):
             self.end = _ensure_utc(self.end)
             if self.start >= self.end:
                 raise ValueError("date_range start must be before end")
-        elif self.start is not None or self.end is not None:
+        elif self.window_type is not WindowType.SPRINT and (
+            self.start is not None or self.end is not None
+        ):
             raise ValueError("start/end are only valid with window_type=date_range")
         return self
 
@@ -290,7 +291,12 @@ async def run_report(
     session.commit()
     session.refresh(job)
     background_tasks.add_task(
-        _run_report_job, job.id, request.team_profile_id, requested_window, sf
+        _run_report_job,
+        job.id,
+        request.team_profile_id,
+        requested_window,
+        sf,
+        request.sprint_external_id,
     )
     return ReportJobResponse.from_job(job)
 
@@ -331,11 +337,59 @@ def get_report_job(
     return ReportJobResponse.from_job(job)
 
 
+@router.get("/teams/{team_id}/sprints", response_model=list[SprintResponse])
+async def list_team_sprints(
+    team_id: UUID,
+    session: Session = Depends(get_session),
+) -> list[SprintResponse]:
+    """Return available sprints for the team's board, fetched live from the connector.
+
+    Active sprint is listed first, then closed sprints newest-first, then future sprints.
+    Returns an empty list if the team has no board scope or the board has no sprints.
+    Returns 404 if the team does not exist, 400 if the board scope uses a non-Jira connection.
+    """
+    team_row = session.get(TeamProfileTable, team_id)
+    if team_row is None:
+        raise HTTPException(status_code=404, detail="team not found")
+    board_scope = _team_board_scope(session, team_row)
+    if board_scope is None:
+        return []
+    board_external_id = str(board_scope.external_ref.get("id"))
+    try:
+        connector = instantiate_connector(
+            session,
+            board_scope.connection_id,
+            lambda config: create_connector("jira", config),
+        )
+    except ConnectorConfigError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    if connector is None:
+        raise HTTPException(status_code=404, detail="connection not found")
+    if not isinstance(connector, WorkItemProvider):
+        raise HTTPException(status_code=400, detail="board scope does not support sprint listing")
+    try:
+        sprints = await connector.list_sprints(board_external_id)
+    except ConnectorError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    finally:
+        await connector.close()
+    # Active first, then closed newest-first by end_date, then future sprints.
+    sprints.sort(
+        key=lambda s: (
+            0 if s.state is SprintState.ACTIVE else (1 if s.state.value == "closed" else 2),
+            -(s.end_date.timestamp() if s.end_date else 0) if s.state.value == "closed" else 0,
+            s.name,
+        )
+    )
+    return [SprintResponse.from_sprint(s) for s in sprints]
+
+
 async def _run_report_job(
     job_id: UUID,
     team_profile_id: UUID,
     requested_window: EvaluationWindow | None,
     sf: sessionmaker[Session],
+    sprint_external_id: str | None = None,
 ) -> None:
     # Phase 1: mark running — hold write lock only for the DB write, then release.
     with write_session(sf) as session:
@@ -350,7 +404,9 @@ async def _run_report_job(
     # Phase 2: connector I/O — no write lock held during network calls.
     try:
         with sf() as session:
-            result = await _run_team_report(team_profile_id, session, requested_window)
+            result = await _run_team_report(
+                team_profile_id, session, requested_window, sprint_external_id
+            )
         report_id = result.id
         if result.status == ReportStatus.FAILED:
             error_msg = result.error or "Report evaluation failed"
@@ -411,6 +467,7 @@ async def _run_team_report(
     team_profile_id: UUID,
     session: Session,
     requested_window: EvaluationWindow | None = None,
+    sprint_external_id: str | None = None,
 ) -> ReportDetailResponse:
     started_at = datetime.now(timezone.utc)
     team_row = session.get(TeamProfileTable, team_profile_id)
@@ -446,8 +503,15 @@ async def _run_team_report(
             # sprints instead of failing/emptying the board, so the range report never *depends*
             # on the Agile endpoint (REQ-F-051); a default run still needs sprints to derive its
             # active-sprint window and propagates the failure as before.
+            # sprints_optional only when an explicit date-range is requested; sprint windows
+            # (explicit or default) always need sprints to derive or validate the window.
             board_meta = await _fetch_board_metadata(
-                session, board_scope, sprints_optional=requested_window is not None
+                session,
+                board_scope,
+                sprints_optional=(
+                    requested_window is not None
+                    and requested_window.window_type is WindowType.DATE_RANGE
+                ),
             )
         except (ConnectorRateLimitedError, ConnectorTransientError, ConnectorAuthError) as error:
             partial_data_notes.append(
@@ -465,14 +529,17 @@ async def _run_team_report(
         )
 
     # An explicit date-range request wins over working-mode derivation and bypasses sprint
-    # selection (so a scrum team can run an ad-hoc range without an active sprint). Otherwise
-    # derive the default window from the team's working mode (flows §6): with a board it is the
-    # active sprint (scrum) or a rolling range (kanban); without one it falls back to a date
-    # range (sprints=None) for both working modes.
+    # selection (so a scrum team can run an ad-hoc range without an active sprint). An explicit
+    # sprint_external_id resolves to a specific sprint window. Otherwise derive the default
+    # window from the team's working mode (flows §6): with a board it is the active sprint
+    # (scrum) or a rolling range (kanban); without one it falls back to a date range.
     try:
-        window = requested_window or _default_evaluation_window(
-            team, board_meta.sprints if board_meta is not None else None, started_at
-        )
+        if sprint_external_id is not None and board_meta is not None:
+            window = _sprint_window_by_external_id(sprint_external_id, board_meta.sprints, team.id)
+        else:
+            window = requested_window or _default_evaluation_window(
+                team, board_meta.sprints if board_meta is not None else None, started_at
+            )
     except HTTPException:
         # Default derivation can 422 (scrum board with no active sprint). The board connector
         # opened in Phase 1 is normally closed by the Phase 2 workitem fetch, which never runs
@@ -1034,6 +1101,29 @@ def _default_evaluation_window(
         window_type=WindowType.SPRINT,
         sprint_id=active_sprint.id,
         team_profile_id=team.id,
+    )
+
+
+def _sprint_window_by_external_id(
+    external_id: str,
+    sprints: list[Sprint],
+    team_profile_id: UUID,
+) -> EvaluationWindow:
+    """Build a sprint window from a user-selected sprint external ID.
+
+    Matches against the sprints returned by the connector in this run; raises 422
+    if the sprint is not found on the board (it may have been closed or deleted).
+    """
+    selected = next((s for s in sprints if s.external_id == external_id), None)
+    if selected is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"sprint '{external_id}' not found on board",
+        )
+    return EvaluationWindow(
+        window_type=WindowType.SPRINT,
+        sprint_id=selected.id,
+        team_profile_id=team_profile_id,
     )
 
 
