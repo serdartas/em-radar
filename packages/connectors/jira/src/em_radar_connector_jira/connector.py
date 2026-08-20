@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from typing import ClassVar, Literal, cast
@@ -46,6 +47,8 @@ from em_radar_core.models import (
 
 CLIENT_FACTORY: Callable[..., httpx.AsyncClient] = httpx.AsyncClient
 PAGE_SIZE = 50
+# Module-level cache: key is sha256(base_url + token)[:16]; survives across request-scoped connector instances.
+_field_discovery_cache: dict[str, list["JiraFieldInfo"]] = {}
 _NAMESPACE = UUID("1b6514a2-8027-43f2-a820-c771c419ca33")
 _STORY_POINTS_FIELD = "customfield_10016"
 _SPRINT_FIELD = "customfield_10020"
@@ -119,7 +122,6 @@ class JiraConnector:
         )
         self._inline_changelogs: dict[str, list[Mapping[str, object]]] = {}
         self._issue_keys: dict[str, str] = {}
-        self._fields_cache: list[JiraFieldInfo] | None = None
 
     async def test_connection(self) -> ConnectionTestResult:
         user_payload = await self._request_json("rest/api/2/myself")
@@ -135,14 +137,18 @@ class JiraConnector:
         )
 
     async def discover_fields(self) -> list[JiraFieldInfo]:
-        if self._fields_cache is not None:
-            return self._fields_cache
-        payloads = await self._request_json_list("rest/api/3/field")
+        cache_key = _field_cache_key(self.config)
+        if cache_key in _field_discovery_cache:
+            return _field_discovery_cache[cache_key]
+        try:
+            payloads = await self._request_json_list("rest/api/3/field")
+        except ConnectorNotFoundError:
+            payloads = await self._request_json_list("rest/api/2/field")
         fields = sorted(
             (_field_info_from_payload(p) for p in payloads),
             key=lambda f: f.name.lower(),
         )
-        self._fields_cache = fields
+        _field_discovery_cache[cache_key] = fields
         return fields
 
     @classmethod
@@ -680,6 +686,11 @@ def _is_last_changelog_page(payload: Mapping[str, object], next_start_at: int) -
         return len(_payload_histories(payload)) < max_results
 
     return len(_payload_histories(payload)) < PAGE_SIZE
+
+
+def _field_cache_key(config: JiraConnectorConfig) -> str:
+    raw = f"{config.base_url}:{config.token.get_secret_value()}"
+    return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
 def _field_info_from_payload(payload: Mapping[str, object]) -> JiraFieldInfo:

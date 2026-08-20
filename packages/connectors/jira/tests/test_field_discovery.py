@@ -47,6 +47,11 @@ def _client_factory_for(
     return factory
 
 
+@pytest.fixture(autouse=True)
+def clear_field_cache() -> None:
+    jira_connector_module._field_discovery_cache.clear()
+
+
 def test_discover_fields_returns_normalized_sorted_list(monkeypatch: pytest.MonkeyPatch) -> None:
     call_count = 0
 
@@ -79,7 +84,7 @@ def test_discover_fields_returns_normalized_sorted_list(monkeypatch: pytest.Monk
     asyncio.run(run())
 
 
-def test_discover_fields_caches_result(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_discover_fields_caches_result_across_instances(monkeypatch: pytest.MonkeyPatch) -> None:
     call_count = 0
 
     async def run() -> None:
@@ -93,16 +98,46 @@ def test_discover_fields_caches_result(monkeypatch: pytest.MonkeyPatch) -> None:
             raise AssertionError(f"unexpected path: {request.url.path}")
 
         monkeypatch.setattr(jira_connector_module, "CLIENT_FACTORY", _client_factory_for(handler))
+        config = {"base_url": "https://jira.example.com", "token": "tok", "auth_email": "u@x.com"}
+        connector1 = JiraConnector(config)
+        connector2 = JiraConnector(config)
+
+        first = await connector1.discover_fields()
+        await connector1.close()
+        second = await connector2.discover_fields()
+        await connector2.close()
+
+        assert first == second
+        assert call_count == 1
+
+    asyncio.run(run())
+
+
+def test_discover_fields_falls_back_to_v2_for_server(monkeypatch: pytest.MonkeyPatch) -> None:
+    call_count_v2 = 0
+
+    async def run() -> None:
+        nonlocal call_count_v2
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal call_count_v2
+            if request.url.path == "/rest/api/3/field":
+                return httpx.Response(404)
+            if request.url.path == "/rest/api/2/field":
+                call_count_v2 += 1
+                return httpx.Response(200, json=_FIELD_PAYLOAD)
+            raise AssertionError(f"unexpected path: {request.url.path}")
+
+        monkeypatch.setattr(jira_connector_module, "CLIENT_FACTORY", _client_factory_for(handler))
         connector = JiraConnector(
-            {"base_url": "https://jira.example.com", "token": "tok", "auth_email": "u@x.com"}
+            {"base_url": "https://jira.server.example.com", "token": "srv-tok"}
         )
 
-        first = await connector.discover_fields()
-        second = await connector.discover_fields()
+        fields = await connector.discover_fields()
         await connector.close()
 
-        assert first is second
-        assert call_count == 1
+        assert len(fields) > 0
+        assert call_count_v2 == 1
 
     asyncio.run(run())
 
@@ -139,7 +174,7 @@ def test_discover_fields_includes_type_info(monkeypatch: pytest.MonkeyPatch) -> 
 
         monkeypatch.setattr(jira_connector_module, "CLIENT_FACTORY", _client_factory_for(handler))
         connector = JiraConnector(
-            {"base_url": "https://jira.example.com", "token": "tok", "auth_email": "u@x.com"}
+            {"base_url": "https://jira.example.com", "token": "type-tok", "auth_email": "u@x.com"}
         )
         fields = await connector.discover_fields()
         await connector.close()
