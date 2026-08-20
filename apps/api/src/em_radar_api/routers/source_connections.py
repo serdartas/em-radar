@@ -250,7 +250,7 @@ async def list_jira_fields(
     connection_id: UUID,
     session: Session = Depends(get_session),
 ) -> list[JiraFieldInfo]:
-    connector = _jira_field_connector(session, connection_id)
+    connector = await _jira_field_connector(session, connection_id)
     try:
         return await connector.discover_fields()
     except ConnectorError as error:
@@ -280,7 +280,7 @@ async def _test_connector_instance(connector: ConnectorBase) -> ConnectionTestRe
         await connector.close()
 
 
-def _jira_field_connector(session: Session, connection_id: UUID) -> "FieldDiscoveryConnector":
+async def _jira_field_connector(session: Session, connection_id: UUID) -> "FieldDiscoveryConnector":
     connection = get_source_connection(session, connection_id)
     if connection is None:
         raise _connection_not_found()
@@ -303,6 +303,7 @@ def _jira_field_connector(session: Session, connection_id: UUID) -> "FieldDiscov
     if connector is None:
         raise _connection_not_found()
     if not isinstance(connector, FieldDiscoveryConnector):
+        await connector.close()
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="connection does not support Jira field discovery",

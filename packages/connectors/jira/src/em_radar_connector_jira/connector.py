@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import time
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from typing import ClassVar, Literal, cast
@@ -47,8 +48,10 @@ from em_radar_core.models import (
 
 CLIENT_FACTORY: Callable[..., httpx.AsyncClient] = httpx.AsyncClient
 PAGE_SIZE = 50
-# Module-level cache: key is sha256(base_url + token)[:16]; survives across request-scoped connector instances.
-_field_discovery_cache: dict[str, list["JiraFieldInfo"]] = {}
+# Module-level cache keyed by sha256(base_url + token + auth_email)[:16] → (fields, monotonic_expiry).
+# 5-minute TTL keeps data reasonably fresh without repeated Jira round-trips.
+_FIELD_CACHE_TTL = 300.0
+_field_discovery_cache: dict[str, tuple[list["JiraFieldInfo"], float]] = {}
 _NAMESPACE = UUID("1b6514a2-8027-43f2-a820-c771c419ca33")
 _STORY_POINTS_FIELD = "customfield_10016"
 _SPRINT_FIELD = "customfield_10020"
@@ -138,8 +141,9 @@ class JiraConnector:
 
     async def discover_fields(self) -> list[JiraFieldInfo]:
         cache_key = _field_cache_key(self.config)
-        if cache_key in _field_discovery_cache:
-            return _field_discovery_cache[cache_key]
+        cached = _field_discovery_cache.get(cache_key)
+        if cached is not None and time.monotonic() < cached[1]:
+            return cached[0]
         try:
             payloads = await self._request_json_list("rest/api/3/field")
         except ConnectorNotFoundError:
@@ -148,7 +152,7 @@ class JiraConnector:
             (_field_info_from_payload(p) for p in payloads),
             key=lambda f: f.name.lower(),
         )
-        _field_discovery_cache[cache_key] = fields
+        _field_discovery_cache[cache_key] = (fields, time.monotonic() + _FIELD_CACHE_TTL)
         return fields
 
     @classmethod
@@ -689,7 +693,7 @@ def _is_last_changelog_page(payload: Mapping[str, object], next_start_at: int) -
 
 
 def _field_cache_key(config: JiraConnectorConfig) -> str:
-    raw = f"{config.base_url}:{config.token.get_secret_value()}"
+    raw = f"{config.base_url}:{config.token.get_secret_value()}:{config.auth_email or ''}"
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
