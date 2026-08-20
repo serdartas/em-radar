@@ -52,19 +52,19 @@ describe("GitLabHelpPage", () => {
     expect(screen.getAllByText("read_api").length).toBeGreaterThan(0)
   })
 
-  it("renders the PAT section via HelpDocCard (title is a paragraph, not a heading)", () => {
+  it("renders the PAT section via HelpDocCard as an h2 heading", () => {
     render(
       <MemoryRouter>
         <GitLabHelpPage />
       </MemoryRouter>,
     )
 
-    // HelpDocCard renders its title as <p class="font-medium">, not as an <h2>
+    // HelpDocCard renders its title as <h2> for heading navigation
     expect(
-      screen.getByText("Personal access token - minimum scope read_api"),
+      screen.getByRole("heading", {
+        level: 2,
+        name: "Personal access token - minimum scope read_api",
+      }),
     ).toBeInTheDocument()
-    expect(
-      screen.queryByRole("heading", { name: "Personal access token - minimum scope read_api" }),
-    ).toBeNull()
   })
 })
