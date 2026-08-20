@@ -312,17 +312,23 @@ def test_write_lock_not_held_during_connector_io(api_client: TestClient, monkeyp
     endpoints are not serialized behind a long-running report fetch.
     """
     lock_state_during_io: list[bool] = []
+    lock_acquirable_during_io: list[bool] = []
 
     from em_radar_core.models import EvaluationWindow
 
     class _LockCheckingConnector(JiraTestConnector):
-        """Records whether _write_lock is free when fetch_workitems is called."""
+        """Records write-lock state when fetch_workitems is called."""
 
         async def fetch_workitems(  # type: ignore[override]
             self, scope: object, window: EvaluationWindow
         ) -> AsyncIterator[object]:
             lock_state_during_io.append(_write_lock.locked())
-            # Delegate to the real implementation to produce normal output.
+            # A non-blocking acquire succeeds iff the lock is free, proving a concurrent
+            # writer (e.g. create-connection, edit-signal) would not be serialized here.
+            acquired = _write_lock.acquire(blocking=False)
+            lock_acquirable_during_io.append(acquired)
+            if acquired:
+                _write_lock.release()
             async for item in super().fetch_workitems(scope, window):  # type: ignore[misc]
                 yield item
 
@@ -340,4 +346,7 @@ def test_write_lock_not_held_during_connector_io(api_client: TestClient, monkeyp
     assert lock_state_during_io, "fetch_workitems was never called"
     assert not any(lock_state_during_io), (
         "_write_lock was held during connector I/O; lock must be released before fetch"
+    )
+    assert all(lock_acquirable_during_io), (
+        "concurrent writer could not acquire _write_lock during connector I/O"
     )
