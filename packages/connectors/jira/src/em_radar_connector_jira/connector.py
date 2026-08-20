@@ -693,7 +693,8 @@ def _is_last_changelog_page(payload: Mapping[str, object], next_start_at: int) -
 
 
 def _field_cache_key(config: JiraConnectorConfig) -> str:
-    raw = f"{config.base_url}:{config.token.get_secret_value()}:{config.auth_email or ''}:{config.verify_tls}"
+    email = repr(config.auth_email)  # distinguishes None from "" and "user@example.com"
+    raw = f"{config.base_url}:{config.token.get_secret_value()}:{email}:{config.verify_tls}"
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
