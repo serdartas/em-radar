@@ -88,17 +88,38 @@ export function ReportRunnerPage() {
       }
       // On failure: stay on runner so the user sees the failed job in the list.
     } else {
-      navigate("/reports/results")
+      // Multi-team: only navigate away when all jobs succeeded; on any failure
+      // stay on the runner page so the user can see which teams failed.
+      if (pendingResults.every((j) => j.status === "done")) {
+        navigate("/reports/results")
+      }
     }
   }, [jobs, pendingJobIds, navigate])
 
   const teamRun = useMutation({
-    mutationFn: async ({ teamIds, window }: TeamRunInput): Promise<ReportJob[]> =>
-      Promise.all(teamIds.map((id) => enqueueTeamReport(id, window))),
+    mutationFn: async ({ teamIds, window }: TeamRunInput): Promise<ReportJob[]> => {
+      const results = await Promise.allSettled(
+        teamIds.map((id) => enqueueTeamReport(id, window)),
+      )
+      const accepted: ReportJob[] = []
+      const errors: string[] = []
+      for (const r of results) {
+        if (r.status === "fulfilled") {
+          accepted.push(r.value)
+        } else {
+          errors.push(apiErrorMessage(r.reason, "Failed to enqueue a report run."))
+        }
+      }
+      if (errors.length > 0) {
+        setEnqueueError(errors.join(" "))
+      }
+      return accepted
+    },
     onSuccess: (enqueuedJobs: ReportJob[]) => {
-      setEnqueueError(null)
       void queryClient.invalidateQueries({ queryKey: ["report-jobs"] })
-      setPendingJobIds(enqueuedJobs.map((j) => j.id))
+      if (enqueuedJobs.length > 0) {
+        setPendingJobIds(enqueuedJobs.map((j) => j.id))
+      }
     },
     onError: (err: unknown) => {
       setEnqueueError(apiErrorMessage(err, "Failed to start the report run. Please try again."))

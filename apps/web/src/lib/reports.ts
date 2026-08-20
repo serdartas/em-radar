@@ -170,7 +170,11 @@ export async function runTeamReport(
   window?: { start: string; end: string },
 ): Promise<ReportJob> {
   const job = await enqueueTeamReport(teamProfileId, window)
-  return pollJobUntilTerminal(job)
+  const terminal = await pollJobUntilTerminal(job)
+  if (terminal.status === "failed") {
+    throw new Error(terminal.error ?? "Report job failed")
+  }
+  return terminal
 }
 
 export async function listReports(): Promise<ReportSummary[]> {

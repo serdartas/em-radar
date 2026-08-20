@@ -299,11 +299,24 @@ async def run_report(
 def list_report_jobs(
     session: Session = Depends(get_session),
 ) -> list[ReportJobResponse]:
-    jobs = session.exec(
+    # Always return ALL non-terminal jobs so the frontend can poll pending IDs to completion,
+    # then append the N most-recent terminal jobs for the "recent runs" display.
+    non_terminal = session.exec(
         select(ReportJobTable)
+        .where(ReportJobTable.status.in_(["queued", "running"]))  # type: ignore[union-attr]
+        .order_by(ReportJobTable.enqueued_at.desc())  # type: ignore[arg-type]
+    ).all()
+    terminal = session.exec(
+        select(ReportJobTable)
+        .where(ReportJobTable.status.in_(["done", "failed"]))  # type: ignore[union-attr]
         .order_by(ReportJobTable.enqueued_at.desc())  # type: ignore[arg-type]
         .limit(_RECENT_JOBS_LIMIT)
     ).all()
+    jobs = sorted(
+        list(non_terminal) + list(terminal),
+        key=lambda j: j.enqueued_at,
+        reverse=True,
+    )
     return [ReportJobResponse.from_job(job) for job in jobs]
 
 
