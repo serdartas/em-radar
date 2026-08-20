@@ -1,5 +1,8 @@
+from collections.abc import AsyncIterator
+
 from fastapi.testclient import TestClient
 
+from em_radar_api.db import _write_lock
 from test_source_connection_routes import (
     JiraTestConnector,
     _create_board_scope,
@@ -299,3 +302,42 @@ def test_done_job_links_to_report(api_client: TestClient, monkeypatch) -> None:
     report = api_client.get(f"/api/reports/{job['report_id']}")
     assert report.status_code == 200
     assert report.json()["status"] == "succeeded"
+
+
+def test_write_lock_not_held_during_connector_io(api_client: TestClient, monkeypatch) -> None:
+    """AUDIT-7 / M8.3-03: _write_lock must be released before connector I/O begins.
+
+    The background job uses write_session() only for the DB write phases (mark running,
+    persist result). Connector fetch calls run outside that context manager, so other write
+    endpoints are not serialized behind a long-running report fetch.
+    """
+    lock_state_during_io: list[bool] = []
+
+    from em_radar_core.models import EvaluationWindow
+
+    class _LockCheckingConnector(JiraTestConnector):
+        """Records whether _write_lock is free when fetch_workitems is called."""
+
+        async def fetch_workitems(  # type: ignore[override]
+            self, scope: object, window: EvaluationWindow
+        ) -> AsyncIterator[object]:
+            lock_state_during_io.append(_write_lock.locked())
+            # Delegate to the real implementation to produce normal output.
+            async for item in super().fetch_workitems(scope, window):  # type: ignore[misc]
+                yield item
+
+    monkeypatch.setattr(
+        "em_radar_api.connector_registry._connector_types",
+        lambda: [_LockCheckingConnector],
+    )
+
+    connection_id = _create_jira_connection(api_client)
+    scope_id = _create_board_scope(api_client, connection_id, _BOARD_CAPABILITIES)
+    team_id = _create_jira_team(api_client, connection_id, scope_id, "scrum", sprint_length_days=14)
+
+    _run_report(api_client, team_id)
+
+    assert lock_state_during_io, "fetch_workitems was never called"
+    assert not any(lock_state_during_io), (
+        "_write_lock was held during connector I/O; lock must be released before fetch"
+    )
