@@ -26,6 +26,7 @@ from em_radar_api.repositories.canonical import persist_fetch
 from em_radar_api.tables import (
     BoardTable,
     ProjectTable,
+    ReportJobTable,
     ReportTable,
     SignalFindingTable,
     SprintTable,
@@ -357,6 +358,25 @@ def _create_minimal_report(
     return report.id
 
 
+def _create_minimal_job(
+    session_factory: sessionmaker[Session],
+    team_id: UUID,
+    report_id: UUID | None = None,
+) -> UUID:
+    """Directly insert a minimal ReportJobTable row for testing."""
+    job = ReportJobTable(
+        id=uuid4(),
+        team_profile_id=team_id,
+        status="done",
+        enqueued_at=datetime(2026, 7, 1, tzinfo=UTC).replace(tzinfo=None),
+        report_id=report_id,
+    )
+    with session_factory() as session:
+        session.add(job)
+        session.commit()
+    return job.id
+
+
 def test_delete_all_report_history(
     api_client: TestClient,
     session_factory: sessionmaker[Session],
@@ -365,8 +385,9 @@ def test_delete_all_report_history(
     scope_id = _create_scope(api_client, conn_id)
     team_id = UUID(_create_team(api_client, conn_id, scope_id))
 
+    report_id = _create_minimal_report(session_factory, team_id)
     _create_minimal_report(session_factory, team_id)
-    _create_minimal_report(session_factory, team_id)
+    _create_minimal_job(session_factory, team_id, report_id)
 
     reports_before = api_client.get("/api/reports").json()
     assert len(reports_before) == 2
@@ -379,6 +400,7 @@ def test_delete_all_report_history(
         assert session.exec(select(ReportTable)).first() is None
         assert session.exec(select(EvaluationWindowTable)).first() is None
         assert session.exec(select(SignalFindingTable)).first() is None
+        assert session.exec(select(ReportJobTable)).first() is None
 
 
 def test_delete_report_history_per_team(
@@ -405,12 +427,19 @@ def test_delete_report_history_per_team(
 
     _create_minimal_report(session_factory, team_a_id)
     report_b_id = _create_minimal_report(session_factory, team_b_id)
+    _create_minimal_job(session_factory, team_a_id)
+    _create_minimal_job(session_factory, team_b_id)
 
     assert api_client.delete(f"/api/reports?team_id={team_a_id}").status_code == 204
 
     remaining = api_client.get("/api/reports").json()
     assert len(remaining) == 1
     assert remaining[0]["id"] == str(report_b_id)
+
+    with session_factory() as session:
+        jobs = list(session.exec(select(ReportJobTable)))
+        assert len(jobs) == 1
+        assert jobs[0].team_profile_id == team_b_id
 
 
 def test_delete_report_history_unknown_team_is_noop(api_client: TestClient) -> None:

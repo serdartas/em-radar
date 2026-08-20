@@ -1185,9 +1185,12 @@ def _code_fetch_window(
         sprint_end = window_sprint.complete_date
         end = sprint_end if sprint_end is not None and sprint_end < started_at else started_at
         if window_sprint.start_date is not None:
+            # Clamp start to end for future sprints whose start_date is after the report
+            # snapshot time; without the clamp, start > end produces a reversed window.
+            start = min(window_sprint.start_date, end)
             return EvaluationWindow(
                 window_type=WindowType.DATE_RANGE,
-                start=window_sprint.start_date,
+                start=start,
                 end=end,
                 team_profile_id=window.team_profile_id,
             )

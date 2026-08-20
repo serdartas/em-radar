@@ -43,6 +43,7 @@ _BOARD_CAPABILITIES = ["sprint", "statuses", "labels"]
 
 _SPRINT_START = datetime(2026, 6, 1, tzinfo=UTC)
 _SPRINT_END = datetime(2026, 6, 14, tzinfo=UTC)
+_FUTURE_SPRINT_START = datetime(2026, 7, 1, tzinfo=UTC)  # after _REPORT_STARTED_AT
 
 _REPO_ID = UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
 _MR_AUTHOR_ID = UUID("c3d4e5f6-a7b8-9012-cdef-123456789012")
@@ -80,6 +81,24 @@ class _JiraWithUndatedSprintConnector(JiraTestConnector):
                 board_id="54111f22-2a3a-4cb4-8c8a-4fc0942dba49",
                 name="Platform Sprint 12",
                 state=SprintState.ACTIVE,
+            )
+        ]
+
+
+class _JiraWithFutureSprintConnector(JiraTestConnector):
+    """Jira fake whose board has a single future sprint with start_date after the report snapshot."""
+
+    async def list_sprints(self, board_id: str) -> list[Sprint]:
+        assert board_id == "20000"
+        return [
+            Sprint(
+                id="45cdfd02-9cde-4c65-a618-7728fc9fb495",
+                source=Source.JIRA,
+                external_id="30000",
+                board_id="54111f22-2a3a-4cb4-8c8a-4fc0942dba49",
+                name="Platform Sprint 13",
+                state=SprintState.FUTURE,
+                start_date=_FUTURE_SPRINT_START,
             )
         ]
 
@@ -212,6 +231,52 @@ def test_sprint_without_dates_uses_fallback_lookback_window(
     mr_window = _RecordingMRConnector.received_windows[0]
     assert mr_window.window_type == WindowType.DATE_RANGE
     assert mr_window.start == _REPORT_STARTED_AT - timedelta(days=14)
+    assert mr_window.end == _REPORT_STARTED_AT
+
+
+def test_future_sprint_code_window_is_clamped_to_report_time(
+    api_client: TestClient, monkeypatch
+) -> None:
+    """Selected future sprint (start_date > started_at): window is clamped to start=end=started_at
+    so the MR provider receives a valid (empty) range instead of a reversed window."""
+    monkeypatch.setattr(
+        "em_radar_api.connector_registry._connector_types",
+        lambda: [_JiraWithFutureSprintConnector, _RecordingMRConnector],
+    )
+    monkeypatch.setattr("em_radar_api.routers.reports.datetime", FrozenReportDateTime)
+
+    jira_id = _create_jira_connection(api_client)
+    scope_id = _create_board_scope(api_client, jira_id, _BOARD_CAPABILITIES)
+    gitlab_id = _create_gitlab_connection(api_client)
+    team_id = api_client.post(
+        "/api/teams",
+        json={
+            "name": "Scrum future sprint",
+            "connection_ids": [jira_id],
+            "scope_ids": [scope_id],
+            "code_connection_id": gitlab_id,
+            "working_mode": "scrum",
+            "sprint_length_days": 14,
+        },
+    ).json()["id"]
+
+    resp = api_client.post(
+        "/api/reports/run",
+        json={
+            "connector": "jira",
+            "team_profile_id": team_id,
+            "window_type": "sprint",
+            "sprint_external_id": "30000",
+        },
+    )
+    assert resp.status_code == 202
+    job = api_client.get(f"/api/reports/jobs/{resp.json()['id']}").json()
+    assert job["status"] == "done", f"job failed: {job.get('error')}"
+
+    assert len(_RecordingMRConnector.received_windows) == 1
+    mr_window = _RecordingMRConnector.received_windows[0]
+    assert mr_window.window_type == WindowType.DATE_RANGE
+    assert mr_window.start == _REPORT_STARTED_AT
     assert mr_window.end == _REPORT_STARTED_AT
 
 
