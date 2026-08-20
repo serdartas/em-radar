@@ -20,11 +20,28 @@ function renderPage() {
   )
 }
 
-function mockFetch(connectionsResponse: unknown = [], deleteStatus = 204) {
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+function mockFetch(
+  connectionsResponse: unknown = [],
+  deleteStatus = 204,
+  settingsResponse: { telemetry_enabled: boolean } = { telemetry_enabled: false },
+) {
+  return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input)
     const method = (init?.method ?? "GET").toUpperCase()
 
+    if (method === "GET" && url.includes("/api/settings")) {
+      return new Response(JSON.stringify(settingsResponse), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    }
+    if (method === "PATCH" && url.includes("/api/settings")) {
+      const body = JSON.parse(init?.body as string) as { telemetry_enabled: boolean }
+      return new Response(JSON.stringify({ telemetry_enabled: body.telemetry_enabled }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    }
     if (method === "GET" && url.includes("/connections")) {
       return new Response(JSON.stringify(connectionsResponse), {
         status: 200,
@@ -50,12 +67,43 @@ describe("SettingsPrivacyPage", () => {
     expect(screen.getByText(/never leave this machine/)).toBeInTheDocument()
   })
 
-  it("defaults the telemetry toggle to off", () => {
+  it("defaults the telemetry toggle to off", async () => {
     mockFetch()
     renderPage()
 
-    const toggle = screen.getByRole("switch", { name: "Enable anonymous telemetry" })
+    const toggle = await screen.findByRole("switch", { name: "Enable anonymous telemetry" })
     expect(toggle).toHaveAttribute("aria-checked", "false")
+  })
+
+  it("reflects the persisted telemetry value from the API", async () => {
+    mockFetch([], 204, { telemetry_enabled: true })
+    renderPage()
+
+    await waitFor(() =>
+      expect(screen.getByRole("switch", { name: "Enable anonymous telemetry" })).toHaveAttribute(
+        "aria-checked",
+        "true",
+      ),
+    )
+  })
+
+  it("PATCHes the settings endpoint when the toggle changes", async () => {
+    const fetchSpy = mockFetch()
+    renderPage()
+
+    const toggle = await screen.findByRole("switch", { name: "Enable anonymous telemetry" })
+    fireEvent.click(toggle)
+
+    await waitFor(() => {
+      const patchCalls = fetchSpy.mock.calls.filter(
+        ([, init]) => (init?.method ?? "GET").toUpperCase() === "PATCH",
+      )
+      expect(patchCalls.length).toBeGreaterThan(0)
+      const body = JSON.parse(patchCalls[0][1]?.body as string) as {
+        telemetry_enabled: boolean
+      }
+      expect(body.telemetry_enabled).toBe(true)
+    })
   })
 
   it("gates destructive actions behind a confirmation affordance", () => {
@@ -83,6 +131,12 @@ describe("SettingsPrivacyPage", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = String(input)
       const method = (init?.method ?? "GET").toUpperCase()
+      if (method === "GET" && url.includes("/api/settings")) {
+        return new Response(JSON.stringify({ telemetry_enabled: false }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        })
+      }
       if (method === "GET" && url.includes("/connections")) {
         return new Response(JSON.stringify([]), {
           status: 200,

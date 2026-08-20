@@ -16,6 +16,7 @@ import {
   listConnections,
 } from "@/lib/connections"
 import { deleteReportHistory } from "@/lib/reports"
+import { getSettings, updateSettings } from "@/lib/settings"
 
 const GUARANTEES = [
   "Your source data, reports, and tokens are stored locally in EM Radar's database and never leave this machine.",
@@ -24,7 +25,16 @@ const GUARANTEES = [
 ]
 
 export function SettingsPrivacyPage() {
-  const [telemetryEnabled, setTelemetryEnabled] = useState(false)
+  const queryClient = useQueryClient()
+  const settingsQuery = useQuery({ queryKey: ["settings"], queryFn: getSettings })
+  const telemetryEnabled = settingsQuery.data?.telemetry_enabled ?? false
+
+  const telemetryMutation = useMutation({
+    mutationFn: (value: boolean) => updateSettings({ telemetry_enabled: value }),
+    onSuccess: (data) => {
+      queryClient.setQueryData(["settings"], data)
+    },
+  })
 
   return (
     <section aria-labelledby="page-title" className="space-y-8">
@@ -71,8 +81,9 @@ export function SettingsPrivacyPage() {
           <Switch
             aria-label="Enable anonymous telemetry"
             checked={telemetryEnabled}
+            disabled={telemetryMutation.isPending}
             id="telemetry-toggle"
-            onCheckedChange={setTelemetryEnabled}
+            onCheckedChange={(value) => telemetryMutation.mutate(value)}
           />
         </CardContent>
       </Card>
