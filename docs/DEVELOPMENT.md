@@ -200,6 +200,18 @@ uv run alembic -c ../../alembic.ini upgrade head
 On the next API start, default signal configs are re-seeded from
 `packages/config/defaults/default-pack.yaml`.
 
+### 5.3.1 Customising the default signal pack
+
+The shipped default signals live in
+[`packages/config/defaults/default-pack.yaml`](../packages/config/defaults/default-pack.yaml).
+Edit that file to change thresholds, add signals, or modify the "Default signals" group.
+
+Seeding is **one-shot and idempotent**: `startup.py` only imports the pack when no
+"Default signals" group exists.  Changes take effect on a fresh database — wipe it as
+above and restart the API.  See
+[`packages/config/defaults/README.md`](../packages/config/defaults/README.md) for full
+details.
+
 ### 5.4 Full reset in Docker (volume wipe)
 
 The in-container database lives at `/data/em-radar.db`, persisted in the `emradar-data`
