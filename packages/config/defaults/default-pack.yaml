@@ -2,6 +2,7 @@ apiVersion: emradar.dev/v1
 kind: SignalPack
 metadata:
   name: default-signals
+  version: 1.0.0
   description: Default EM Radar signal pack - 7 Jira work-item signals and 5 GitLab merge-request signals.
 spec:
   export_type: private_backup

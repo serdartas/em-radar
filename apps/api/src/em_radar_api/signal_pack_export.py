@@ -17,6 +17,8 @@ from em_radar_config import (
     SignalPackSpec,
 )
 
+PACK_VERSION = "0.1.0"
+
 
 def export_signal_groups_pack(
     groups: list[SignalConfigGroupRead],
@@ -61,6 +63,7 @@ def export_signal_groups_pack(
         kind="SignalPack",
         metadata=PackMetadata(
             name=name or default_name,
+            version=PACK_VERSION,
             description=description,
         ),
         spec=SignalPackSpec(

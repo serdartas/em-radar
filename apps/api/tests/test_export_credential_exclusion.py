@@ -154,7 +154,7 @@ apiVersion: emradar.dev/v1
 kind: SignalPack
 metadata:
   name: forbidden-content-pack
-
+  version: 1.0.0
   description: A pack embedding forbidden content.
 """
 

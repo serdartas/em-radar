@@ -54,6 +54,7 @@ class FieldMappings(PackModel):
 
 class PackMetadata(PackModel):
     name: str
+    version: str
     description: str
     author: str | None = None
     license: str | None = None

@@ -10,7 +10,7 @@ apiVersion: emradar.dev/v1
 kind: SignalPack
 metadata:
   name: test-pack
-
+  version: 1.0.0
   description: Test pack for round-trip verification.
 spec:
   signals:

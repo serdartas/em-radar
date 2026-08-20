@@ -124,7 +124,7 @@ apiVersion: emradar.dev/v1
 kind: SignalPack
 metadata:
   name: broken-pack
-
+  version: 1.0.0
   description: References a signal that is not defined.
 spec:
   export_type: private_backup
