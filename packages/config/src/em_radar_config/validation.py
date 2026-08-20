@@ -243,6 +243,7 @@ def rules_to_expression(rules: list[dict[str, object]]) -> dict[str, object]:
     return {"type": "group", "operator": group_operator, "conditions": conditions}
 
 
+
 def _resolve_signal_expression(signal: SignalEntry) -> dict[str, object] | None:
     """Convert rules list to expression dict, or return expression directly."""
     if signal.rules is not None:
