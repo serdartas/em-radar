@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
 import { Select } from "@/components/ui/select"
+import { apiErrorMessage } from "@/lib/api"
 import { enqueueTeamReport, formatTimestamp, listJobs, type ReportJob } from "@/lib/reports"
 import { listTeams, teamHasNoSources } from "@/lib/teams"
 
@@ -36,6 +37,10 @@ const STATUS_LABEL: Record<ReportJob["status"], string> = {
   failed: "Failed",
 }
 
+function isTerminal(status: ReportJob["status"]): boolean {
+  return status === "done" || status === "failed"
+}
+
 export function ReportRunnerPage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
@@ -45,40 +50,58 @@ export function ReportRunnerPage() {
   const [startDate, setStartDate] = useState("")
   const [endDate, setEndDate] = useState("")
   const [dateError, setDateError] = useState<string | null>(null)
-  const [singlePendingJobId, setSinglePendingJobId] = useState<string | null>(null)
+  const [enqueueError, setEnqueueError] = useState<string | null>(null)
+  // IDs of jobs we enqueued in this session; cleared once they reach terminal state.
+  const [pendingJobIds, setPendingJobIds] = useState<string[]>([])
 
   const teams = teamsQuery.data ?? []
 
   const jobsQuery = useQuery({
     queryKey: ["report-jobs"],
     queryFn: listJobs,
-    refetchInterval: singlePendingJobId ? JOB_POLL_MS : false,
+    // Poll when we have pending jobs OR when the initial list shows non-terminal jobs.
+    refetchInterval: (query) => {
+      const data = query.state.data
+      const hasPending = pendingJobIds.length > 0
+      const hasRunning = data?.some((j: ReportJob) => !isTerminal(j.status)) ?? false
+      return hasPending || hasRunning ? JOB_POLL_MS : false
+    },
   })
   const jobs = useMemo(() => jobsQuery.data ?? [], [jobsQuery.data])
 
-  // Navigate when a single-team job reaches a terminal state.
+  // Navigate when all enqueued pending jobs reach terminal states.
   useEffect(() => {
-    if (!singlePendingJobId) return
-    const job = jobs.find((j) => j.id === singlePendingJobId)
-    if (!job) return
-    if (job.status === "done" && job.report_id) {
-      setSinglePendingJobId(null)
-      navigate(`/reports/results/${job.report_id}`)
-    } else if (job.status === "failed") {
-      setSinglePendingJobId(null)
+    if (pendingJobIds.length === 0) return
+    const pendingResults = pendingJobIds
+      .map((id) => jobs.find((j) => j.id === id))
+      .filter((j): j is ReportJob => j !== undefined)
+
+    if (pendingResults.length !== pendingJobIds.length) return // jobs not yet in list
+    if (!pendingResults.every((j) => isTerminal(j.status))) return // still running
+
+    setPendingJobIds([])
+
+    if (pendingResults.length === 1) {
+      const job = pendingResults[0]
+      if (job.status === "done" && job.report_id) {
+        navigate(`/reports/results/${job.report_id}`)
+      }
+      // On failure: stay on runner so the user sees the failed job in the list.
+    } else {
+      navigate("/reports/results")
     }
-  }, [jobs, singlePendingJobId, navigate])
+  }, [jobs, pendingJobIds, navigate])
 
   const teamRun = useMutation({
     mutationFn: async ({ teamIds, window }: TeamRunInput): Promise<ReportJob[]> =>
       Promise.all(teamIds.map((id) => enqueueTeamReport(id, window))),
     onSuccess: (enqueuedJobs: ReportJob[]) => {
+      setEnqueueError(null)
       void queryClient.invalidateQueries({ queryKey: ["report-jobs"] })
-      if (enqueuedJobs.length === 1) {
-        setSinglePendingJobId(enqueuedJobs[0].id)
-      } else {
-        navigate("/reports/results")
-      }
+      setPendingJobIds(enqueuedJobs.map((j) => j.id))
+    },
+    onError: (err: unknown) => {
+      setEnqueueError(apiErrorMessage(err, "Failed to start the report run. Please try again."))
     },
   })
 
@@ -94,6 +117,7 @@ export function ReportRunnerPage() {
 
   function handleRun() {
     setDateError(null)
+    setEnqueueError(null)
     if (windowMode === "sprint") {
       teamRun.mutate({ teamIds: selectedTeamIds })
       return
@@ -216,6 +240,11 @@ export function ReportRunnerPage() {
       </Card>
 
       <div aria-live="polite" className="space-y-4">
+        {enqueueError && (
+          <p className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-700" role="alert">
+            {enqueueError}
+          </p>
+        )}
         {jobs.length > 0 && (
           <Card>
             <CardContent className="p-4">

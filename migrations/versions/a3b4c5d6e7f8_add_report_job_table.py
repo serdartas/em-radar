@@ -31,8 +31,8 @@ def upgrade() -> None:
         sa.Column("window_type", sa.String(), nullable=True),
         sa.Column("window_start", sa.DateTime(), nullable=True),
         sa.Column("window_end", sa.DateTime(), nullable=True),
-        sa.ForeignKeyConstraint(["report_id"], ["report.id"]),
-        sa.ForeignKeyConstraint(["team_profile_id"], ["team_profile.id"]),
+        sa.ForeignKeyConstraint(["report_id"], ["report.id"], ondelete="SET NULL"),
+        sa.ForeignKeyConstraint(["team_profile_id"], ["team_profile.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )
 

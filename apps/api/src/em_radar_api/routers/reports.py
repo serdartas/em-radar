@@ -267,6 +267,8 @@ async def run_report(
     sf: sessionmaker[Session] = Depends(get_session_factory),
 ) -> ReportJobResponse:
     assert request.team_profile_id is not None  # enforced by model validator
+    if not session.get(TeamProfileTable, request.team_profile_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
     requested_window: EvaluationWindow | None = None
     if request.window_type is WindowType.DATE_RANGE:
         requested_window = EvaluationWindow(

@@ -3,7 +3,8 @@
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import UniqueConstraint
+import sqlalchemy as sa
+from sqlalchemy import Column, ForeignKey, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 from em_radar_api.models.signal_pack_history import SignalPackHistory  # noqa: F401
@@ -158,12 +159,19 @@ class ReportJobTable(SQLModel, table=True):
     __tablename__ = "report_job"
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
-    team_profile_id: UUID = Field(foreign_key="team_profile.id")
+    team_profile_id: UUID = Field(
+        sa_column=Column(
+            sa.Uuid(), ForeignKey("team_profile.id", ondelete="CASCADE"), nullable=False
+        )
+    )
     status: str  # queued | running | done | failed
     enqueued_at: datetime
     started_at: datetime | None = None
     finished_at: datetime | None = None
-    report_id: UUID | None = Field(default=None, foreign_key="report.id")
+    report_id: UUID | None = Field(
+        default=None,
+        sa_column=Column(sa.Uuid(), ForeignKey("report.id", ondelete="SET NULL"), nullable=True),
+    )
     error: str | None = None
     window_type: str | None = None
     window_start: datetime | None = None

@@ -152,8 +152,26 @@ export async function listJobs(): Promise<ReportJob[]> {
   return apiFetch<ReportJob[]>("/reports/jobs")
 }
 
-/** @deprecated Use enqueueTeamReport — kept for DashboardPage and SetupPage callers. */
-export const runTeamReport = enqueueTeamReport
+async function pollJobUntilTerminal(job: ReportJob): Promise<ReportJob> {
+  let current = job
+  while (current.status === "queued" || current.status === "running") {
+    await new Promise<void>((r) => setTimeout(r, 1000))
+    current = await apiFetch<ReportJob>(`/reports/jobs/${current.id}`)
+  }
+  return current
+}
+
+/**
+ * Enqueue a team report and poll until it reaches a terminal state.
+ * Kept for DashboardPage and SetupPage which need the completed state before proceeding.
+ */
+export async function runTeamReport(
+  teamProfileId: string,
+  window?: { start: string; end: string },
+): Promise<ReportJob> {
+  const job = await enqueueTeamReport(teamProfileId, window)
+  return pollJobUntilTerminal(job)
+}
 
 export async function listReports(): Promise<ReportSummary[]> {
   return apiFetch<ReportSummary[]>("/reports")
