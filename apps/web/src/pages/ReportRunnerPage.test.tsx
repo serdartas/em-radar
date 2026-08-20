@@ -124,6 +124,7 @@ describe("ReportRunnerPage", () => {
       const url = typeof input === "string" ? input : input.toString()
       if (url.endsWith("/api/teams")) return Promise.resolve(jsonResponse([team]))
       if (url.endsWith("/api/reports/run")) return Promise.resolve(jsonResponse(doneJob))
+      if (url.includes("/api/reports/jobs/")) return Promise.resolve(jsonResponse(doneJob))
       if (url.endsWith("/api/reports/jobs")) return Promise.resolve(jsonResponse([doneJob]))
       if (url.endsWith("/api/reports/report-1")) return Promise.resolve(jsonResponse(report))
       throw new Error(`unexpected fetch: ${url}`)
@@ -170,6 +171,7 @@ describe("ReportRunnerPage", () => {
       const url = typeof input === "string" ? input : input.toString()
       if (url.endsWith("/api/teams")) return Promise.resolve(jsonResponse([team]))
       if (url.endsWith("/api/reports/run")) return Promise.resolve(jsonResponse(doneJob))
+      if (url.includes("/api/reports/jobs/")) return Promise.resolve(jsonResponse(doneJob))
       if (url.endsWith("/api/reports/jobs")) return Promise.resolve(jsonResponse([doneJob]))
       if (url.endsWith("/api/reports/report-1")) return Promise.resolve(jsonResponse(report))
       throw new Error(`unexpected fetch: ${url}`)
@@ -206,6 +208,7 @@ describe("ReportRunnerPage", () => {
       const url = typeof input === "string" ? input : input.toString()
       if (url.endsWith("/api/teams")) return Promise.resolve(jsonResponse([team]))
       if (url.endsWith("/api/reports/run")) return Promise.resolve(jsonResponse(doneJob))
+      if (url.includes("/api/reports/jobs/")) return Promise.resolve(jsonResponse(doneJob))
       if (url.endsWith("/api/reports/jobs")) return Promise.resolve(jsonResponse([doneJob]))
       if (url.endsWith("/api/reports/report-1")) return Promise.resolve(jsonResponse(report))
       throw new Error(`unexpected fetch: ${url}`)
@@ -286,11 +289,17 @@ describe("ReportRunnerPage", () => {
     const teamBeta = { ...team, id: "team-2", name: "Beta" }
     const jobAlpha = { ...doneJob, id: "job-a", team_profile_id: "team-1" }
     const jobBeta = { ...doneJob, id: "job-b", team_profile_id: "team-2", report_id: "report-2" }
+    let postCount = 0
 
-    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
       const url = typeof input === "string" ? input : input.toString()
       if (url.endsWith("/api/teams")) return Promise.resolve(jsonResponse([teamAlpha, teamBeta]))
-      if (url.endsWith("/api/reports/run")) return Promise.resolve(jsonResponse(jobAlpha))
+      if (url.endsWith("/api/reports/run") && init?.method === "POST") {
+        postCount++
+        return Promise.resolve(jsonResponse(postCount === 1 ? jobAlpha : jobBeta))
+      }
+      if (url.endsWith("/api/reports/jobs/job-a")) return Promise.resolve(jsonResponse(jobAlpha))
+      if (url.endsWith("/api/reports/jobs/job-b")) return Promise.resolve(jsonResponse(jobBeta))
       if (url.endsWith("/api/reports/jobs")) return Promise.resolve(jsonResponse([jobAlpha, jobBeta]))
       if (url.endsWith("/api/reports")) return Promise.resolve(jsonResponse([]))
       throw new Error(`unexpected fetch: ${url}`)

@@ -62,7 +62,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlmodel import Session, select
 
 
-from em_radar_api.db import get_session, get_session_factory, get_write_session
+from em_radar_api.db import get_session, get_session_factory, get_write_session, write_session
 from em_radar_api.report_export import build_report_markdown, build_sectioned_report
 from em_radar_api.connector_registry import create_connector, get_connector_capabilities
 from em_radar_api.repositories.canonical import persist_fetch
@@ -337,7 +337,8 @@ async def _run_report_job(
     requested_window: EvaluationWindow | None,
     sf: sessionmaker[Session],
 ) -> None:
-    with sf() as session:
+    # Phase 1: mark running — hold write lock only for the DB write, then release.
+    with write_session(sf) as session:
         job = session.get(ReportJobTable, job_id)
         if job is None:
             return
@@ -346,18 +347,24 @@ async def _run_report_job(
         session.add(job)
         session.commit()
 
+    # Phase 2: connector I/O — no write lock held during network calls.
     try:
         with sf() as session:
             result = await _run_team_report(team_profile_id, session, requested_window)
         report_id = result.id
-        error_msg = None
-        final_status = "done"
+        if result.status == ReportStatus.FAILED:
+            error_msg = result.error or "Report evaluation failed"
+            final_status = "failed"
+        else:
+            error_msg = None
+            final_status = "done"
     except Exception as exc:
         report_id = None
         error_msg = str(exc)
         final_status = "failed"
 
-    with sf() as session:
+    # Phase 3: persist outcome — hold write lock only for the DB write.
+    with write_session(sf) as session:
         job = session.get(ReportJobTable, job_id)
         if job is None:
             return

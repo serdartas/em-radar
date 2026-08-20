@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useEffect, useMemo, useState } from "react"
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useNavigate } from "react-router-dom"
 
 import { Button } from "@/components/ui/button"
@@ -9,7 +9,13 @@ import { Card, CardContent } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
 import { Select } from "@/components/ui/select"
 import { apiErrorMessage } from "@/lib/api"
-import { enqueueTeamReport, formatTimestamp, listJobs, type ReportJob } from "@/lib/reports"
+import {
+  enqueueTeamReport,
+  formatTimestamp,
+  getJob,
+  listJobs,
+  type ReportJob,
+} from "@/lib/reports"
 import { listTeams, teamHasNoSources } from "@/lib/teams"
 
 type WindowMode = "date_range" | "sprint"
@@ -56,45 +62,62 @@ export function ReportRunnerPage() {
 
   const teams = teamsQuery.data ?? []
 
+  // Display list: poll the jobs endpoint and refresh while any listed job is non-terminal.
   const jobsQuery = useQuery({
     queryKey: ["report-jobs"],
     queryFn: listJobs,
-    // Poll when we have pending jobs OR when the initial list shows non-terminal jobs.
     refetchInterval: (query) => {
-      const data = query.state.data
-      const hasPending = pendingJobIds.length > 0
-      const hasRunning = data?.some((j: ReportJob) => !isTerminal(j.status)) ?? false
-      return hasPending || hasRunning ? JOB_POLL_MS : false
+      const hasRunning = query.state.data?.some((j: ReportJob) => !isTerminal(j.status)) ?? false
+      return hasRunning ? JOB_POLL_MS : false
     },
   })
   const jobs = useMemo(() => jobsQuery.data ?? [], [jobsQuery.data])
 
-  // Navigate when all enqueued pending jobs reach terminal states.
+  // Per-job polling for pending IDs — each job is fetched individually so that batches
+  // larger than the list endpoint's terminal limit are still tracked to completion.
+  const pendingJobQueries = useQueries({
+    queries: pendingJobIds.map((id) => ({
+      queryKey: ["report-job", id] as const,
+      queryFn: () => getJob(id),
+      refetchInterval: (query: { state: { data: ReportJob | undefined } }) =>
+        isTerminal(query.state.data?.status ?? "queued") ? false : JOB_POLL_MS,
+    })),
+  })
+
+  // Navigate when all pending per-job queries reach terminal states.
   useEffect(() => {
     if (pendingJobIds.length === 0) return
-    const pendingResults = pendingJobIds
-      .map((id) => jobs.find((j) => j.id === id))
+    const settled = pendingJobQueries
+      .map((q) => q.data)
       .filter((j): j is ReportJob => j !== undefined)
 
-    if (pendingResults.length !== pendingJobIds.length) return // jobs not yet in list
-    if (!pendingResults.every((j) => isTerminal(j.status))) return // still running
+    if (settled.length !== pendingJobIds.length) return // not all fetched yet
+    if (!settled.every((j) => isTerminal(j.status))) return // still running
+
+    // Don't navigate if there are outstanding enqueue errors — keep the user on
+    // the runner page so they can see both the error and any completed jobs.
+    if (enqueueError) {
+      setPendingJobIds([])
+      void queryClient.invalidateQueries({ queryKey: ["report-jobs"] })
+      return
+    }
 
     setPendingJobIds([])
+    void queryClient.invalidateQueries({ queryKey: ["report-jobs"] })
 
-    if (pendingResults.length === 1) {
-      const job = pendingResults[0]
+    if (settled.length === 1) {
+      const job = settled[0]
       if (job.status === "done" && job.report_id) {
         navigate(`/reports/results/${job.report_id}`)
       }
-      // On failure: stay on runner so the user sees the failed job in the list.
+      // On failure: stay on runner so the user sees the failed job.
     } else {
-      // Multi-team: only navigate away when all jobs succeeded; on any failure
-      // stay on the runner page so the user can see which teams failed.
-      if (pendingResults.every((j) => j.status === "done")) {
+      // Multi-team: only navigate when all succeeded; on any failure stay on runner.
+      if (settled.every((j) => j.status === "done")) {
         navigate("/reports/results")
       }
     }
-  }, [jobs, pendingJobIds, navigate])
+  }, [pendingJobIds, pendingJobQueries, enqueueError, navigate, queryClient])
 
   const teamRun = useMutation({
     mutationFn: async ({ teamIds, window }: TeamRunInput): Promise<ReportJob[]> => {
@@ -118,7 +141,8 @@ export function ReportRunnerPage() {
     onSuccess: (enqueuedJobs: ReportJob[]) => {
       void queryClient.invalidateQueries({ queryKey: ["report-jobs"] })
       if (enqueuedJobs.length > 0) {
-        setPendingJobIds(enqueuedJobs.map((j) => j.id))
+        const newIds = enqueuedJobs.map((j) => j.id)
+        setPendingJobIds((prev) => [...prev, ...newIds])
       }
     },
     onError: (err: unknown) => {
@@ -271,11 +295,15 @@ export function ReportRunnerPage() {
             <CardContent className="p-4">
               <h2 className="mb-3 text-lg font-semibold">Running / recent</h2>
               <ul className="space-y-2 text-sm" aria-label="report jobs">
-                {jobs.map((job) => (
+                {jobs.map((job) => {
+                  const teamName =
+                    teams.find((t) => t.id === job.team_profile_id)?.name ?? job.team_profile_id
+                  return (
                   <li
                     key={job.id}
                     className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md border px-3 py-2"
                   >
+                    <span className="font-medium text-slate-800">{teamName}</span>
                     <span
                       className={`font-medium ${job.status === "failed" ? "text-red-700" : job.status === "done" ? "text-green-700" : "text-slate-700"}`}
                     >
@@ -306,7 +334,8 @@ export function ReportRunnerPage() {
                       <span className="ml-auto text-xs text-red-600">{job.error}</span>
                     )}
                   </li>
-                ))}
+                  )
+                })}
               </ul>
             </CardContent>
           </Card>

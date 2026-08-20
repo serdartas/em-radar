@@ -22,7 +22,7 @@ from em_radar_api.routers.signal_definitions import router as signal_definitions
 from em_radar_api.routers.signal_pack import router as signal_pack_router
 from em_radar_api.routers.source_connections import router as source_connections_router
 from em_radar_api.routers.teams import router as teams_router
-from em_radar_api.startup import seed_default_signal_group
+from em_radar_api.startup import recover_interrupted_jobs, seed_default_signal_group
 from em_radar_core.http_client import configure_log_scrubbing
 
 
@@ -55,6 +55,7 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         del app
+        recover_interrupted_jobs(app_session_factory)
         seed_default_signal_group(app_session_factory)
         yield
 

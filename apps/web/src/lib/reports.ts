@@ -152,6 +152,10 @@ export async function listJobs(): Promise<ReportJob[]> {
   return apiFetch<ReportJob[]>("/reports/jobs")
 }
 
+export async function getJob(jobId: string): Promise<ReportJob> {
+  return apiFetch<ReportJob>(`/reports/jobs/${jobId}`)
+}
+
 async function pollJobUntilTerminal(job: ReportJob): Promise<ReportJob> {
   let current = job
   while (current.status === "queued" || current.status === "running") {

@@ -329,7 +329,7 @@ def _run_report(api_client: TestClient, team_profile_id: str, **extra: object) -
     job_id = resp.json()["id"]
     job = api_client.get(f"/api/reports/jobs/{job_id}").json()
     assert job["status"] in ("done", "failed"), f"job not terminal: {job}"
-    if job["status"] == "done" and job.get("report_id"):
+    if job.get("report_id"):
         return api_client.get(f"/api/reports/{job['report_id']}").json()
     return job
 
