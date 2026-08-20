@@ -16,6 +16,7 @@ import {
   listConnections,
 } from "@/lib/connections"
 import { deleteReportHistory } from "@/lib/reports"
+import { getSettings, updateSettings } from "@/lib/settings"
 
 const GUARANTEES = [
   "Your source data, reports, and tokens are stored locally in EM Radar's database and never leave this machine.",
@@ -24,7 +25,16 @@ const GUARANTEES = [
 ]
 
 export function SettingsPrivacyPage() {
-  const [telemetryEnabled, setTelemetryEnabled] = useState(false)
+  const queryClient = useQueryClient()
+  const settingsQuery = useQuery({ queryKey: ["settings"], queryFn: getSettings })
+  const telemetryEnabled = settingsQuery.data?.telemetry_enabled ?? false
+
+  const telemetryMutation = useMutation({
+    mutationFn: (value: boolean) => updateSettings({ telemetry_enabled: value }),
+    onSuccess: (data) => {
+      queryClient.setQueryData(["settings"], data)
+    },
+  })
 
   return (
     <section aria-labelledby="page-title" className="space-y-8">
@@ -60,20 +70,28 @@ export function SettingsPrivacyPage() {
         <CardHeader>
           <h2 className="text-lg font-semibold">Telemetry</h2>
         </CardHeader>
-        <CardContent className="flex items-start justify-between gap-4">
-          <div>
-            <Label htmlFor="telemetry-toggle">Enable anonymous telemetry</Label>
-            <p className="mt-1 text-sm text-slate-600">
-              Off by default. When enabled, EM Radar may send anonymous, non-identifying usage
-              metrics. No source data or tokens are ever included.
-            </p>
+        <CardContent className="space-y-3">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <Label htmlFor="telemetry-toggle">Enable anonymous telemetry</Label>
+              <p className="mt-1 text-sm text-slate-600">
+                Off by default. When enabled, EM Radar may send anonymous, non-identifying usage
+                metrics. No source data or tokens are ever included.
+              </p>
+            </div>
+            <Switch
+              aria-label="Enable anonymous telemetry"
+              checked={telemetryEnabled}
+              disabled={!settingsQuery.isSuccess || telemetryMutation.isPending}
+              id="telemetry-toggle"
+              onCheckedChange={(value) => telemetryMutation.mutate(value)}
+            />
           </div>
-          <Switch
-            aria-label="Enable anonymous telemetry"
-            checked={telemetryEnabled}
-            id="telemetry-toggle"
-            onCheckedChange={setTelemetryEnabled}
-          />
+          {settingsQuery.isError && (
+            <p className="text-sm text-red-600" role="alert">
+              Could not load settings. Reload the page to try again.
+            </p>
+          )}
         </CardContent>
       </Card>
 
