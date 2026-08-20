@@ -90,6 +90,19 @@ export function extractPartialDataNotes(snapshot: unknown): PartialDataNote[] {
   )
 }
 
+export type JobStatus = "done" | "failed" | "queued" | "running"
+
+export interface ReportJob {
+  id: string
+  team_profile_id: string
+  status: JobStatus
+  enqueued_at: string
+  started_at: string | null
+  finished_at: string | null
+  report_id: string | null
+  error: string | null
+}
+
 export interface JiraSprintReportRequest {
   connectionId: string
   projectExternalId: string
@@ -116,10 +129,10 @@ export async function runJiraSprintReport(
   })
 }
 
-export async function runTeamReport(
+export async function enqueueTeamReport(
   teamProfileId: string,
   window?: { start: string; end: string },
-): Promise<ReportDetail> {
+): Promise<ReportJob> {
   const body = window
     ? {
         connector: "jira",
@@ -129,10 +142,43 @@ export async function runTeamReport(
         end: window.end,
       }
     : { connector: "jira", team_profile_id: teamProfileId }
-  return apiFetch<ReportDetail>("/reports/run", {
+  return apiFetch<ReportJob>("/reports/run", {
     method: "POST",
     body: JSON.stringify(body),
   })
+}
+
+export async function listJobs(): Promise<ReportJob[]> {
+  return apiFetch<ReportJob[]>("/reports/jobs")
+}
+
+export async function getJob(jobId: string): Promise<ReportJob> {
+  return apiFetch<ReportJob>(`/reports/jobs/${jobId}`)
+}
+
+async function pollJobUntilTerminal(job: ReportJob): Promise<ReportJob> {
+  let current = job
+  while (current.status === "queued" || current.status === "running") {
+    await new Promise<void>((r) => setTimeout(r, 1000))
+    current = await apiFetch<ReportJob>(`/reports/jobs/${current.id}`)
+  }
+  return current
+}
+
+/**
+ * Enqueue a team report and poll until it reaches a terminal state.
+ * Kept for DashboardPage and SetupPage which need the completed state before proceeding.
+ */
+export async function runTeamReport(
+  teamProfileId: string,
+  window?: { start: string; end: string },
+): Promise<ReportJob> {
+  const job = await enqueueTeamReport(teamProfileId, window)
+  const terminal = await pollJobUntilTerminal(job)
+  if (terminal.status === "failed") {
+    throw new Error(terminal.error ?? "Report job failed")
+  }
+  return terminal
 }
 
 export async function listReports(): Promise<ReportSummary[]> {

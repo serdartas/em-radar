@@ -56,12 +56,13 @@ from em_radar_core.models import (
 )
 from em_radar_core.signals import SignalData
 from em_radar_normalizer import DEFAULT_WORKITEM_KEY_PATTERN, populate_merge_request_links
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response, status
 from pydantic import BaseModel, JsonValue, model_validator
+from sqlalchemy.orm import sessionmaker
 from sqlmodel import Session, select
 
 
-from em_radar_api.db import get_session, get_write_session
+from em_radar_api.db import get_session, get_session_factory, get_write_session, write_session
 from em_radar_api.report_export import build_report_markdown, build_sectioned_report
 from em_radar_api.connector_registry import create_connector, get_connector_capabilities
 from em_radar_api.repositories.canonical import persist_fetch
@@ -85,6 +86,7 @@ from em_radar_api.signal_definitions import SignalDefinitionTable
 from em_radar_api.source_connections import ConnectorName
 from em_radar_api.tables import (
     EvaluationWindowTable,
+    ReportJobTable,
     ReportTable,
     SignalFindingTable,
     SprintTable,
@@ -93,6 +95,7 @@ from em_radar_api.tables import (
 
 router = APIRouter()
 DEFAULT_KANBAN_REPORT_DAYS = 14
+_RECENT_JOBS_LIMIT = 20
 
 # Entity types whose signals require a code (VCS) source.  Everything else is treated as
 # a board (task-tracker) signal.  Both the connector-capability spelling (`merge_request`,
@@ -177,6 +180,21 @@ class SkipNoteResponse(BaseModel):
     reason: str
 
 
+class ReportJobResponse(BaseModel):
+    id: UUID
+    team_profile_id: UUID
+    status: str
+    enqueued_at: datetime
+    started_at: datetime | None
+    finished_at: datetime | None
+    report_id: UUID | None
+    error: str | None
+
+    @classmethod
+    def from_job(cls, job: ReportJobTable) -> "ReportJobResponse":
+        return cls.model_validate(job, from_attributes=True)
+
+
 class ReportSummaryResponse(BaseModel):
     id: UUID
     evaluation_window_id: UUID
@@ -241,12 +259,16 @@ class ReportDetailResponse(ReportSummaryResponse):
         )
 
 
-@router.post("/reports/run", response_model=ReportDetailResponse)
+@router.post("/reports/run", response_model=ReportJobResponse, status_code=status.HTTP_202_ACCEPTED)
 async def run_report(
     request: ReportRunRequest,
+    background_tasks: BackgroundTasks,
     session: Session = Depends(get_write_session),
-) -> ReportDetailResponse:
+    sf: sessionmaker[Session] = Depends(get_session_factory),
+) -> ReportJobResponse:
     assert request.team_profile_id is not None  # enforced by model validator
+    if not session.get(TeamProfileTable, request.team_profile_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
     requested_window: EvaluationWindow | None = None
     if request.window_type is WindowType.DATE_RANGE:
         requested_window = EvaluationWindow(
@@ -255,7 +277,103 @@ async def run_report(
             end=request.end,
             team_profile_id=request.team_profile_id,
         )
-    return await _run_team_report(request.team_profile_id, session, requested_window)
+    now = datetime.now(timezone.utc)
+    job = ReportJobTable(
+        team_profile_id=request.team_profile_id,
+        status="queued",
+        enqueued_at=now,
+        window_type=requested_window.window_type.value if requested_window else None,
+        window_start=requested_window.start if requested_window else None,
+        window_end=requested_window.end if requested_window else None,
+    )
+    session.add(job)
+    session.commit()
+    session.refresh(job)
+    background_tasks.add_task(
+        _run_report_job, job.id, request.team_profile_id, requested_window, sf
+    )
+    return ReportJobResponse.from_job(job)
+
+
+@router.get("/reports/jobs", response_model=list[ReportJobResponse])
+def list_report_jobs(
+    session: Session = Depends(get_session),
+) -> list[ReportJobResponse]:
+    # Always return ALL non-terminal jobs so the frontend can poll pending IDs to completion,
+    # then append the N most-recent terminal jobs for the "recent runs" display.
+    non_terminal = session.exec(
+        select(ReportJobTable)
+        .where(ReportJobTable.status.in_(["queued", "running"]))  # type: ignore[union-attr]
+        .order_by(ReportJobTable.enqueued_at.desc())  # type: ignore[arg-type]
+    ).all()
+    terminal = session.exec(
+        select(ReportJobTable)
+        .where(ReportJobTable.status.in_(["done", "failed"]))  # type: ignore[union-attr]
+        .order_by(ReportJobTable.enqueued_at.desc())  # type: ignore[arg-type]
+        .limit(_RECENT_JOBS_LIMIT)
+    ).all()
+    jobs = sorted(
+        list(non_terminal) + list(terminal),
+        key=lambda j: j.enqueued_at,
+        reverse=True,
+    )
+    return [ReportJobResponse.from_job(job) for job in jobs]
+
+
+@router.get("/reports/jobs/{job_id}", response_model=ReportJobResponse)
+def get_report_job(
+    job_id: UUID,
+    session: Session = Depends(get_session),
+) -> ReportJobResponse:
+    job = session.get(ReportJobTable, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    return ReportJobResponse.from_job(job)
+
+
+async def _run_report_job(
+    job_id: UUID,
+    team_profile_id: UUID,
+    requested_window: EvaluationWindow | None,
+    sf: sessionmaker[Session],
+) -> None:
+    # Phase 1: mark running — hold write lock only for the DB write, then release.
+    with write_session(sf) as session:
+        job = session.get(ReportJobTable, job_id)
+        if job is None:
+            return
+        job.status = "running"
+        job.started_at = datetime.now(timezone.utc)
+        session.add(job)
+        session.commit()
+
+    # Phase 2: connector I/O — no write lock held during network calls.
+    try:
+        with sf() as session:
+            result = await _run_team_report(team_profile_id, session, requested_window)
+        report_id = result.id
+        if result.status == ReportStatus.FAILED:
+            error_msg = result.error or "Report evaluation failed"
+            final_status = "failed"
+        else:
+            error_msg = None
+            final_status = "done"
+    except Exception as exc:
+        report_id = None
+        error_msg = str(exc)
+        final_status = "failed"
+
+    # Phase 3: persist outcome — hold write lock only for the DB write.
+    with write_session(sf) as session:
+        job = session.get(ReportJobTable, job_id)
+        if job is None:
+            return
+        job.status = final_status
+        job.finished_at = datetime.now(timezone.utc)
+        job.report_id = report_id
+        job.error = error_msg
+        session.add(job)
+        session.commit()
 
 
 @dataclass

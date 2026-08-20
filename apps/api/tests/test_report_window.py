@@ -33,6 +33,7 @@ from test_source_connection_routes import (
     _create_board_scope,
     _create_jira_connection,
     _create_jira_team,
+    _run_report,
 )
 
 _BOARD_CAPABILITIES = ["sprint", "statuses", "labels"]
@@ -83,12 +84,9 @@ def test_scrum_board_persists_active_sprint_window(
     scope_id = _create_board_scope(api_client, connection_id, _BOARD_CAPABILITIES)
     team_id = _create_jira_team(api_client, connection_id, scope_id, "scrum", sprint_length_days=14)
 
-    response = api_client.post(
-        "/api/reports/run", json={"connector": "jira", "team_profile_id": team_id}
-    )
-    assert response.status_code == 200
+    report = _run_report(api_client, team_id)
 
-    window = _persisted_window(session_factory, response.json()["id"])
+    window = _persisted_window(session_factory, report["id"])
     with session_factory() as session:
         active_sprint = session.exec(
             select(SprintTable).where(
@@ -118,12 +116,9 @@ def test_kanban_board_persists_date_range_window(
     scope_id = _create_board_scope(api_client, connection_id, _BOARD_CAPABILITIES)
     team_id = _create_jira_team(api_client, connection_id, scope_id, "kanban")
 
-    response = api_client.post(
-        "/api/reports/run", json={"connector": "jira", "team_profile_id": team_id}
-    )
-    assert response.status_code == 200
+    report = _run_report(api_client, team_id)
 
-    window = _persisted_window(session_factory, response.json()["id"])
+    window = _persisted_window(session_factory, report["id"])
     assert window.window_type == WindowType.DATE_RANGE
     assert window.sprint_id is None
     assert window.start == (_REPORT_STARTED_AT - timedelta(days=14)).replace(tzinfo=None)
@@ -154,12 +149,9 @@ def test_code_only_kanban_persists_date_range_window(
         },
     ).json()["id"]
 
-    response = api_client.post(
-        "/api/reports/run", json={"connector": "jira", "team_profile_id": team_id}
-    )
-    assert response.status_code == 200
+    report = _run_report(api_client, team_id)
 
-    window = _persisted_window(session_factory, response.json()["id"])
+    window = _persisted_window(session_factory, report["id"])
     assert window.window_type == WindowType.DATE_RANGE
     assert window.sprint_id is None
     assert window.start == (_REPORT_STARTED_AT - timedelta(days=14)).replace(tzinfo=None)
@@ -192,12 +184,9 @@ def test_code_only_scrum_persists_date_range_window(
         },
     ).json()["id"]
 
-    response = api_client.post(
-        "/api/reports/run", json={"connector": "jira", "team_profile_id": team_id}
-    )
-    assert response.status_code == 200
+    report = _run_report(api_client, team_id)
 
-    window = _persisted_window(session_factory, response.json()["id"])
+    window = _persisted_window(session_factory, report["id"])
     assert window.window_type == WindowType.DATE_RANGE
     assert window.sprint_id is None
     assert window.end == _REPORT_STARTED_AT.replace(tzinfo=None)
@@ -220,9 +209,10 @@ def test_scrum_board_no_active_sprint_returns_422(
     scope_id = _create_board_scope(api_client, connection_id, _BOARD_CAPABILITIES)
     team_id = _create_jira_team(api_client, connection_id, scope_id, "scrum", sprint_length_days=14)
 
-    response = api_client.post(
+    job_resp = api_client.post(
         "/api/reports/run", json={"connector": "jira", "team_profile_id": team_id}
     )
-
-    assert response.status_code == 422
-    assert "no active sprint" in response.json()["detail"]
+    assert job_resp.status_code == 202
+    job = api_client.get(f"/api/reports/jobs/{job_resp.json()['id']}").json()
+    assert job["status"] == "failed"
+    assert "no active sprint" in job["error"]

@@ -36,6 +36,7 @@ from test_source_connection_routes import (
     _REPORT_STARTED_AT,
     _create_board_scope,
     _create_jira_connection,
+    _run_report,
 )
 
 _BOARD_CAPABILITIES = ["sprint", "statuses", "labels"]
@@ -169,11 +170,8 @@ def test_scrum_sprint_window_is_converted_to_date_range_for_mr_fetch(
         },
     ).json()["id"]
 
-    response = api_client.post(
-        "/api/reports/run", json={"connector": "jira", "team_profile_id": team_id}
-    )
+    _run_report(api_client, team_id)
 
-    assert response.status_code == 200
     assert len(_RecordingMRConnector.received_windows) == 1
     mr_window = _RecordingMRConnector.received_windows[0]
     assert mr_window.window_type == WindowType.DATE_RANGE
@@ -208,11 +206,8 @@ def test_sprint_without_dates_uses_fallback_lookback_window(
         },
     ).json()["id"]
 
-    response = api_client.post(
-        "/api/reports/run", json={"connector": "jira", "team_profile_id": team_id}
-    )
+    _run_report(api_client, team_id)
 
-    assert response.status_code == 200
     assert len(_RecordingMRConnector.received_windows) == 1
     mr_window = _RecordingMRConnector.received_windows[0]
     assert mr_window.window_type == WindowType.DATE_RANGE
@@ -276,10 +271,7 @@ def test_report_run_populates_merge_request_workitem_links(
         },
     ).json()["id"]
 
-    response = api_client.post(
-        "/api/reports/run", json={"connector": "jira", "team_profile_id": team_id}
-    )
-    assert response.status_code == 200
+    _run_report(api_client, team_id)
 
     with session_factory() as session:
         workitem = session.exec(select(WorkItemTable).where(WorkItemTable.key == "PLAT-1")).one()
@@ -312,11 +304,8 @@ def test_date_range_window_passes_through_unchanged_to_mr_fetch(
         },
     ).json()["id"]
 
-    response = api_client.post(
-        "/api/reports/run", json={"connector": "jira", "team_profile_id": team_id}
-    )
+    _run_report(api_client, team_id)
 
-    assert response.status_code == 200
     assert len(_RecordingMRConnector.received_windows) == 1
     mr_window = _RecordingMRConnector.received_windows[0]
     assert mr_window.window_type == WindowType.DATE_RANGE
@@ -368,12 +357,8 @@ def test_findings_carry_scope_name(api_client: TestClient, monkeypatch) -> None:
         },
     ).json()["id"]
 
-    response = api_client.post(
-        "/api/reports/run", json={"connector": "jira", "team_profile_id": team_id}
-    )
-    assert response.status_code == 200
-    data = response.json()
-    findings = data["findings"]
+    report = _run_report(api_client, team_id)
+    findings = report["findings"]
     assert len(findings) > 0, "expected at least one finding from the in-progress work item"
     for finding in findings:
         assert finding["scope_name"] == "Platform Scrum"
@@ -423,12 +408,8 @@ def test_mr_findings_carry_scope_name(api_client: TestClient, monkeypatch) -> No
         },
     ).json()["id"]
 
-    response = api_client.post(
-        "/api/reports/run", json={"connector": "jira", "team_profile_id": team_id}
-    )
-    assert response.status_code == 200
-    data = response.json()
-    mr_findings = [f for f in data["findings"] if f["entity_type"] == "mergerequest"]
+    report = _run_report(api_client, team_id)
+    mr_findings = [f for f in report["findings"] if f["entity_type"] == "mergerequest"]
     assert len(mr_findings) > 0, "expected at least one MR finding from the open MR"
     for finding in mr_findings:
         assert finding["scope_name"] == "code"

@@ -7,11 +7,30 @@ from sqlmodel import Session, select
 
 from em_radar_api.signal_config_groups import SignalConfigGroupTable
 from em_radar_api.signal_pack_import import apply_signal_pack_import
+from em_radar_api.tables import ReportJobTable
 
 DEFAULT_PACK_PATH = (
     Path(__file__).parents[4] / "packages" / "config" / "defaults" / "default-pack.yaml"
 )
 DEFAULT_GROUP_NAME = "Default signals"
+
+
+def recover_interrupted_jobs(app_session_factory: sessionmaker[Session]) -> None:
+    """Mark any queued/running jobs from a previous server run as failed.
+
+    On restart those jobs will never complete, so the frontend would poll them forever.
+    """
+    with app_session_factory() as session:
+        stuck = session.exec(
+            select(ReportJobTable).where(ReportJobTable.status.in_(["queued", "running"]))  # type: ignore[union-attr]
+        ).all()
+        if not stuck:
+            return
+        for job in stuck:
+            job.status = "failed"
+            job.error = "Interrupted: server restarted"
+            session.add(job)
+        session.commit()
 
 
 def seed_default_signal_group(app_session_factory: sessionmaker[Session]) -> None:
