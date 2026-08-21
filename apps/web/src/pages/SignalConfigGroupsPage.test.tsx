@@ -80,6 +80,30 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+describe("SignalConfigGroupsPage — create form", () => {
+  it("uses InlineCreateRow with shared Input (h-9 class) for the new-group form", async () => {
+    mockApi()
+    renderPage()
+
+    // The label and input are wired via InlineCreateRow using the shared Input component.
+    // The shared Input renders with h-9; a raw <input className="w-64 ..."> would not.
+    const input = await screen.findByLabelText("New group name")
+    expect(input.tagName).toBe("INPUT")
+    expect(input).toHaveClass("h-9")
+
+    // Input must NOT be disabled when empty — the user needs to be able to type.
+    // (Pre-fix: disabled was forwarded to the Input too, blocking the first keystroke.)
+    expect(input).not.toBeDisabled()
+
+    // The create button IS disabled when the input is empty
+    expect(screen.getByRole("button", { name: "Create group" })).toBeDisabled()
+
+    // Typing a name enables the button
+    fireEvent.change(input, { target: { value: "Backend signals" } })
+    expect(screen.getByRole("button", { name: "Create group" })).not.toBeDisabled()
+  })
+})
+
 describe("SignalConfigGroupsPage", () => {
   it("creates a group and adds a signal to it", async () => {
     const fetchMock = mockApi()

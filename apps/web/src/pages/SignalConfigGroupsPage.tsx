@@ -5,6 +5,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
+import { FormRow } from "@/components/ui/form-row"
+import { Input } from "@/components/ui/input"
+import { InlineCreateRow } from "@/components/ui/inline-create-row"
 import { Label } from "@/components/ui/label"
 import { Select } from "@/components/ui/select"
 import {
@@ -55,22 +58,16 @@ export function SignalConfigGroupsPage() {
       </header>
 
       <Card>
-        <CardContent className="flex flex-wrap items-end gap-3 p-4">
-          <div className="space-y-1.5">
-            <Label htmlFor="group-name">New group name</Label>
-            <input
-              className="w-64 rounded-md border px-3 py-2 text-sm"
-              id="group-name"
-              onChange={(event) => setName(event.target.value)}
-              value={name}
-            />
-          </div>
-          <Button
-            disabled={createMutation.isPending || name.trim().length === 0}
-            onClick={() => createMutation.mutate({ name: name.trim() })}
-          >
-            {createMutation.isPending ? "Creating..." : "Create group"}
-          </Button>
+        <CardContent className="p-4">
+          <InlineCreateRow
+            actionLabel={createMutation.isPending ? "Creating..." : "Create group"}
+            disabled={createMutation.isPending}
+            inputId="group-name"
+            label="New group name"
+            onChange={setName}
+            onAction={() => createMutation.mutate({ name: name.trim() })}
+            value={name}
+          />
         </CardContent>
       </Card>
 
@@ -116,30 +113,31 @@ function GroupCard({
   return (
     <Card>
       <CardContent className="space-y-4 p-4">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div className="space-y-1.5">
-            <Label htmlFor={`rename-${group.id}`}>Group name</Label>
-            <input
-              className="w-64 rounded-md border px-3 py-2 text-sm"
-              id={`rename-${group.id}`}
-              onChange={(event) => setRenameValue(event.target.value)}
-              value={renameValue}
-            />
-          </div>
-          <div className="flex gap-2">
-            <Button
-              disabled={renameValue.trim().length === 0 || renameValue.trim() === group.name}
-              onClick={() => renameMutation.mutate(renameValue.trim())}
-              size="sm"
-              variant="outline"
-            >
-              Rename
-            </Button>
-            <Button onClick={() => deleteMutation.mutate()} size="sm" variant="outline">
-              Delete group
-            </Button>
-          </div>
-        </div>
+        <FormRow
+          action={
+            <div className="flex gap-2">
+              <Button
+                disabled={renameValue.trim().length === 0 || renameValue.trim() === group.name}
+                onClick={() => renameMutation.mutate(renameValue.trim())}
+                size="sm"
+                variant="outline"
+              >
+                Rename
+              </Button>
+              <Button onClick={() => deleteMutation.mutate()} size="sm" variant="outline">
+                Delete group
+              </Button>
+            </div>
+          }
+          htmlFor={`rename-${group.id}`}
+          label="Group name"
+        >
+          <Input
+            id={`rename-${group.id}`}
+            onChange={(event) => setRenameValue(event.target.value)}
+            value={renameValue}
+          />
+        </FormRow>
 
         <div>
           <h3 className="text-sm font-medium text-slate-700">Signals in this group</h3>
