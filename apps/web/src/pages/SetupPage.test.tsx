@@ -558,6 +558,28 @@ describe("SetupPage wizard navigation (M8.5-05)", () => {
     expect(within(rail).queryByRole("button", { name: /Sources/ })).not.toBeInTheDocument()
   })
 
+  it("Sources pill is non-interactive after Add another team clears the current team", async () => {
+    // Regression for: furthestStep stays at "sources" after Add another team, making the
+    // Sources pill a clickable button that opens SourcesStep with team === null ("Loading team...").
+    readOnlyMock([storedTeam("team-1", "Payments")])
+    saveWizardProgress({ step: "sources", currentTeamId: "team-1", furthestStep: "sources", completed: false })
+    renderWizard()
+
+    await screen.findByRole("heading", { name: /Attach sources for Payments/ })
+
+    // Click "Add another team" — clears currentTeamId and resets furthestStep to "team".
+    fireEvent.click(screen.getByRole("button", { name: "Add another team" }))
+
+    await screen.findByRole("heading", { name: "Create a team" })
+
+    const rail = screen.getByRole("list", { name: "Setup progress" })
+
+    // Sources pill must NOT be a button: no team is selected so navigating there is unsafe.
+    expect(within(rail).queryByRole("button", { name: /Sources/ })).not.toBeInTheDocument()
+    // Team pill is the current step, not a button.
+    expect(within(rail).queryByRole("button", { name: /Team/ })).not.toBeInTheDocument()
+  })
+
   it("persisted furthestStep round-trips: completed pills stay clickable after remount", async () => {
     // Simulate: wizard was at gitlab with furthestStep = "gitlab", then browser is closed and
     // reopened. The remount must read furthestStep from storage so Ticketing pill is still a button.

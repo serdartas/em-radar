@@ -162,7 +162,12 @@ export function SetupPage() {
         </p>
       </header>
 
-      <WizardProgress current={step} furthestStep={furthestStep} onGoToStep={goToStep} />
+      <WizardProgress
+        current={step}
+        furthestStep={furthestStep}
+        onGoToStep={goToStep}
+        sourcesReachable={currentTeamId !== null}
+      />
 
       {!initialized && <p className="text-sm text-slate-500">Loading setup...</p>}
 
@@ -213,8 +218,11 @@ export function SetupPage() {
           groups={groups}
           jiraConnections={jiraConnections}
           onAddAnother={() => {
+            // Starting a fresh team context: Sources is no longer reachable until a new
+            // team is created, so reset the high-water mark back to "team".
             setCurrentTeamId(null)
-            goToStep("team")
+            setStep("team")
+            setFurthestStep("team")
           }}
           onBack={() => goToStep("team")}
           onFinish={() => finishMutation.mutate()}
@@ -233,10 +241,14 @@ function WizardProgress({
   current,
   furthestStep,
   onGoToStep,
+  sourcesReachable,
 }: {
   current: Step
   furthestStep: Step
   onGoToStep: (step: Step) => void
+  /** False when currentTeamId is null; prevents the Sources pill from being
+   *  interactive even if furthestStep covers it, avoiding a null-team render. */
+  sourcesReachable: boolean
 }) {
   const currentIndex = STEP_ORDER.indexOf(current)
   const furthestIndex = STEP_ORDER.indexOf(furthestStep)
@@ -245,10 +257,11 @@ function WizardProgress({
     <ol aria-label="Setup progress" className="flex flex-wrap gap-2 text-xs">
       {STEP_ORDER.map((step, index) => {
         const isCurrent = index === currentIndex
-        // A step is "done" (previously entered, clickable) when its index is at or before the
-        // furthest step reached AND it is not the current step. This is driven by the persisted
-        // high-water mark, so pills remain interactive after back-navigation.
-        const isDone = !isCurrent && index <= furthestIndex
+        // A step is "done" (previously entered, clickable) when its index is at or before
+        // the furthest step reached AND it is not the current step. The Sources step also
+        // requires a selected team so clicking it never opens SourcesStep with team === null.
+        const isStepReachable = step !== "sources" || sourcesReachable
+        const isDone = !isCurrent && index <= furthestIndex && isStepReachable
         const label = `${index + 1}. ${STEP_LABELS[step]}`
 
         if (isCurrent) {
