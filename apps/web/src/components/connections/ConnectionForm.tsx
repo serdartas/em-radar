@@ -6,6 +6,10 @@ import { Link } from "react-router-dom"
 
 import { SchemaForm } from "@/components/SchemaForm"
 import { TestResult } from "@/components/connections/TestResult"
+import {
+  type FieldMappingValues,
+  JiraFieldMappingSection,
+} from "@/components/connections/JiraFieldMappingSection"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -207,9 +211,25 @@ export function ConnectionForm({
               idPrefix="connection"
               onChange={changeField}
               schema={selectedConnector.config_schema}
+              skipKeys={selectedConnector.name === "jira" ? JIRA_SKIP_KEYS : undefined}
               values={values}
             />
           )}
+
+          {selectedConnector?.name === "jira" && (() => {
+            const { storyPointsDefault, acHeadingDefault } = jiraFieldMappingDefaults(
+              selectedConnector.config_schema,
+            )
+            return (
+              <JiraFieldMappingSection
+                acHeadingDefault={acHeadingDefault}
+                connectionId={editing?.id}
+                fieldMappingValues={toFieldMappingValues(values.field_mapping)}
+                onFieldMappingChange={(next) => changeField("field_mapping", next)}
+                storyPointsDefault={storyPointsDefault}
+              />
+            )
+          })()}
 
           <TestResult error={testMutation.error} result={testMutation.data} />
 
@@ -252,6 +272,54 @@ export function ConnectionForm({
   )
 }
 
+/** Fields rendered by the purpose-built JiraFieldMappingSection — skip them in SchemaForm. */
+const JIRA_SKIP_KEYS = new Set(["field_mapping"])
+
+// Module-level fallbacks used only when the schema lookup returns undefined.
+const SP_FIELD_DEFAULT_FALLBACK = "customfield_10016"
+const AC_HEADING_DEFAULT_FALLBACK = "### Acceptance Criteria"
+
+/**
+ * Extract story_points and acceptance_criteria_heading defaults from the connector's
+ * config_schema. Resolves the field_mapping $ref into its $defs entry and reads
+ * the `default` values. Falls back to known Jira defaults if the schema is missing them.
+ */
+function jiraFieldMappingDefaults(schema: JsonSchema): {
+  storyPointsDefault: string
+  acHeadingDefault: string
+} {
+  const ref = schema.properties?.field_mapping?.$ref
+  const defKey = ref?.replace(/^#\/\$defs\//, "")
+  const def = defKey !== undefined ? schema.$defs?.[defKey] : undefined
+  const props = def?.properties
+  return {
+    storyPointsDefault:
+      (props?.story_points?.default as string | undefined) ?? SP_FIELD_DEFAULT_FALLBACK,
+    acHeadingDefault:
+      (props?.acceptance_criteria_heading?.default as string | undefined) ??
+      AC_HEADING_DEFAULT_FALLBACK,
+  }
+}
+
+function toFieldMappingValues(raw: unknown): FieldMappingValues | undefined {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    return undefined
+  }
+  const obj = raw as Record<string, unknown>
+  return {
+    story_points: typeof obj.story_points === "string" ? obj.story_points : undefined,
+    acceptance_criteria:
+      typeof obj.acceptance_criteria === "string" || obj.acceptance_criteria === null
+        ? (obj.acceptance_criteria as string | null)
+        : undefined,
+    acceptance_criteria_heading:
+      typeof obj.acceptance_criteria_heading === "string" ||
+      obj.acceptance_criteria_heading === null
+        ? (obj.acceptance_criteria_heading as string | null)
+        : undefined,
+  }
+}
+
 const JIRA_FIELD_HELP: Record<string, ReactNode> = {
   base_url: (
     <p>
@@ -285,26 +353,6 @@ const JIRA_FIELD_HELP: Record<string, ReactNode> = {
       Cloud and any instance with a valid certificate. Only turn it off for a self-hosted server
       that uses a self-signed or internal certificate. Doing so is less secure.
     </p>
-  ),
-  field_mapping: (
-    <>
-      <p>
-        Advanced. Maps EM Radar concepts to your Jira fields so signals can read story points,
-        epics, acceptance criteria, and blocked state.
-      </p>
-      <p className="mt-1.5">
-        <strong>How to use:</strong> for Story points and Epic link, enter the Jira custom-field ID
-        (like <code className="rounded bg-blue-100 px-1">customfield_10016</code>), which you can
-        find in Jira under Settings → Issues → Custom fields. For Blocked label and Blocked status,
-        enter the exact label text and status name your team uses (e.g.{" "}
-        <code className="rounded bg-blue-100 px-1">blocked</code> /{" "}
-        <code className="rounded bg-blue-100 px-1">Blocked</code>). Leave a field blank to turn that
-        mapping off.
-      </p>
-      <p className="mt-1.5">
-        The defaults match a standard Jira setup. Change a value only if your instance differs.
-      </p>
-    </>
   ),
 }
 

@@ -129,3 +129,14 @@ export async function listJiraSprints(
     `/connections/${connectionId}/boards/${encodeURIComponent(boardExternalId)}/sprints`,
   )
 }
+
+export interface JiraFieldInfo {
+  id: string
+  name: string
+  custom: boolean
+  field_type: string | null
+}
+
+export async function listJiraFields(connectionId: string): Promise<JiraFieldInfo[]> {
+  return apiFetch<JiraFieldInfo[]>(`/connections/${connectionId}/jira/fields`)
+}

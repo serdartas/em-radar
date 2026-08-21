@@ -66,7 +66,8 @@ describe("SchemaForm — nested object via $ref", () => {
       />,
     )
 
-    expect(screen.getByRole("group", { name: "JiraFieldMappingConfig" })).toBeInTheDocument()
+    // fieldLabel strips the trailing "Config" and splits PascalCase
+    expect(screen.getByRole("group", { name: "Jira Field Mapping" })).toBeInTheDocument()
     expect(screen.getByLabelText("Story Points")).toBeInTheDocument()
     expect(screen.getByLabelText("Epic Link")).toBeInTheDocument()
     expect(screen.getByLabelText("Blocked Label")).toBeInTheDocument()
@@ -149,7 +150,7 @@ describe("SchemaForm — nested object via $ref", () => {
       />,
     )
 
-    const input = screen.queryByRole("textbox", { name: "JiraFieldMappingConfig" })
+    const input = screen.queryByRole("textbox", { name: "Jira Field Mapping" })
     expect(input).not.toBeInTheDocument()
   })
 })
