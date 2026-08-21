@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 
 import { Button } from "@/components/ui/button"
+import { Combobox } from "@/components/ui/combobox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select } from "@/components/ui/select"
@@ -12,6 +13,8 @@ import {
   listJiraBoards,
   listJiraProjects,
   listJiraSprints,
+  type JiraBoard,
+  type JiraProject,
   type JiraSprint,
   type SourceConnection,
 } from "@/lib/connections"
@@ -19,9 +22,12 @@ import { createScope, type ScopeDefinition } from "@/lib/scopes"
 import { updateTeam, type TeamProfile, type TeamProfileUpdate, type WorkingMode } from "@/lib/teams"
 import { TEAM_SOURCE_MUTATION_KEY, TEAMS_KEY } from "@/lib/teamSetup"
 
-export const DEFAULT_SPRINT_DAYS = 14
+const DEFAULT_SPRINT_DAYS = 14
 
-export function sprintLengthFromSprints(sprints: JiraSprint[]): number | null {
+// Boards dropdown shows this many items on focus/click; all boards remain searchable by typing.
+const BOARDS_ON_FOCUS = 5
+
+function sprintLengthFromSprints(sprints: JiraSprint[]): number | null {
   const lengths = sprints
     .filter((sprint) => sprint.state === "active" || sprint.state === "closed")
     .map((sprint) => {
@@ -35,6 +41,57 @@ export function sprintLengthFromSprints(sprints: JiraSprint[]): number | null {
     .sort((a, b) => a - b)
   if (lengths.length === 0) return null
   return lengths[Math.floor(lengths.length / 2)]
+}
+
+interface ProjectPickerProps {
+  id?: string
+  isLoading: boolean
+  onSelect: (externalId: string) => void
+  projects: JiraProject[]
+  value: string
+}
+
+export function ProjectPicker({ id, isLoading, onSelect, projects, value }: ProjectPickerProps) {
+  const options = useMemo(
+    () => projects.map((p) => ({ value: p.external_id, label: `${p.key} - ${p.name}` })),
+    [projects],
+  )
+  return (
+    <Combobox
+      id={id}
+      inputLabel="Project"
+      onSelect={onSelect}
+      options={options}
+      placeholder={isLoading ? "Loading projects..." : "Type to search projects"}
+      value={value || undefined}
+    />
+  )
+}
+
+interface BoardPickerProps {
+  boards: JiraBoard[]
+  id?: string
+  isLoading: boolean
+  onSelect: (externalId: string) => void
+  value: string
+}
+
+export function BoardPicker({ boards, id, isLoading, onSelect, value }: BoardPickerProps) {
+  const options = useMemo(
+    () => boards.map((b) => ({ value: b.external_id, label: b.name })),
+    [boards],
+  )
+  return (
+    <Combobox
+      id={id}
+      inputLabel="Board"
+      maxOnFocus={BOARDS_ON_FOCUS}
+      onSelect={onSelect}
+      options={options}
+      placeholder={isLoading ? "Loading boards..." : "Type to search boards"}
+      value={value || undefined}
+    />
+  )
 }
 
 export function TaskBoardPicker({
@@ -63,9 +120,7 @@ export function TaskBoardPicker({
   const userOverrodeModeRef = useRef(false)
 
   const [connId, setConnId] = useState("")
-  const [projectFilter, setProjectFilter] = useState("")
   const [selectedProjectExternalId, setSelectedProjectExternalId] = useState("")
-  const [boardFilter, setBoardFilter] = useState("")
   const [selectedBoardExternalId, setSelectedBoardExternalId] = useState("")
   const [workingMode, setWorkingMode] = useState<WorkingMode>("scrum")
   const [sprintLengthDays, setSprintLengthDays] = useState<number | null>(DEFAULT_SPRINT_DAYS)
@@ -92,25 +147,12 @@ export function TaskBoardPicker({
   const boards = useMemo(() => boardsQuery.data ?? [], [boardsQuery.data])
   const sprints = useMemo(() => sprintsQuery.data ?? [], [sprintsQuery.data])
 
-  const filteredProjects = useMemo(() => {
-    const q = projectFilter.toLowerCase()
-    return projects.filter(
-      (p) => p.name.toLowerCase().includes(q) || p.key.toLowerCase().includes(q),
-    )
-  }, [projects, projectFilter])
-
-  const filteredBoards = useMemo(() => {
-    const q = boardFilter.toLowerCase()
-    return boards.filter((b) => b.name.toLowerCase().includes(q))
-  }, [boards, boardFilter])
-
   const selectedBoard = boards.find((b) => b.external_id === selectedBoardExternalId) ?? null
   const selectedProject = projects.find((p) => p.external_id === selectedProjectExternalId) ?? null
   const detectedSprintLength = useMemo(() => sprintLengthFromSprints(sprints), [sprints])
 
   useEffect(() => {
     setSelectedBoardExternalId("")
-    setBoardFilter("")
   }, [selectedProjectExternalId])
 
   useEffect(() => {
@@ -222,15 +264,14 @@ export function TaskBoardPicker({
           No Jira connections configured. Add one in Source Connections.
         </p>
       ) : (
-        <div className="space-y-3 rounded-md border p-3">
-          <div className="space-y-1.5">
+        <div className="space-y-4 rounded-md border p-4">
+          <div className="max-w-sm space-y-1.5">
             <Label htmlFor={`conn-${team.id}`}>Ticketing connection</Label>
             <Select
               id={`conn-${team.id}`}
               onChange={(event) => {
                 setConnId(event.target.value)
                 setSelectedProjectExternalId("")
-                setProjectFilter("")
               }}
               value={connId}
             >
@@ -244,59 +285,33 @@ export function TaskBoardPicker({
           </div>
 
           {connId !== "" && (
-            <div className="space-y-1.5">
+            <div className="max-w-sm space-y-1.5">
               <Label htmlFor={`project-${team.id}`}>Project</Label>
-              <Input
-                aria-label="Filter projects"
-                disabled={projectsQuery.isLoading}
-                onChange={(event) => setProjectFilter(event.target.value)}
-                placeholder="Filter projects..."
-                value={projectFilter}
-              />
-              <Select
-                disabled={projectsQuery.isLoading || projects.length === 0}
+              <ProjectPicker
                 id={`project-${team.id}`}
-                onChange={(event) => setSelectedProjectExternalId(event.target.value)}
+                isLoading={projectsQuery.isLoading}
+                onSelect={setSelectedProjectExternalId}
+                projects={projects}
                 value={selectedProjectExternalId}
-              >
-                <option value="">Select a project</option>
-                {filteredProjects.map((project) => (
-                  <option key={project.id} value={project.external_id}>
-                    {project.key} - {project.name}
-                  </option>
-                ))}
-              </Select>
+              />
             </div>
           )}
 
           {connId !== "" && selectedProjectExternalId !== "" && (
-            <div className="space-y-1.5">
+            <div className="max-w-sm space-y-1.5">
               <Label htmlFor={`board-${team.id}`}>Board</Label>
-              <Input
-                aria-label="Filter boards"
-                disabled={boardsQuery.isLoading}
-                onChange={(event) => setBoardFilter(event.target.value)}
-                placeholder="Filter boards..."
-                value={boardFilter}
-              />
-              <Select
-                disabled={boardsQuery.isLoading || boards.length === 0}
+              <BoardPicker
+                boards={boards}
                 id={`board-${team.id}`}
-                onChange={(event) => setSelectedBoardExternalId(event.target.value)}
+                isLoading={boardsQuery.isLoading}
+                onSelect={setSelectedBoardExternalId}
                 value={selectedBoardExternalId}
-              >
-                <option value="">Select a board</option>
-                {filteredBoards.map((board) => (
-                  <option key={board.id} value={board.external_id}>
-                    {board.name}
-                  </option>
-                ))}
-              </Select>
+              />
             </div>
           )}
 
           {selectedBoard && (
-            <div className="grid gap-4 rounded-md bg-slate-50 p-3 md:grid-cols-2">
+            <div className="max-w-sm grid gap-3 rounded-md bg-slate-50 p-3 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label htmlFor={`mode-${team.id}`}>Working mode</Label>
                 <Select

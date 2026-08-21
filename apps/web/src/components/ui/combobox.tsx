@@ -26,6 +26,13 @@ interface ComboboxProps {
   id?: string
   "aria-describedby"?: string
   "aria-labelledby"?: string
+  /**
+   * When set, limits the number of options shown on focus/open before the user
+   * starts typing. Once the user types, all matching options are shown regardless
+   * of this limit. Useful for long lists where showing a few "top" items on focus
+   * gives a quick preview without overwhelming the UI.
+   */
+  maxOnFocus?: number
 }
 
 function Combobox({
@@ -34,6 +41,7 @@ function Combobox({
   className,
   id,
   inputLabel,
+  maxOnFocus,
   onSelect,
   options,
   placeholder,
@@ -58,11 +66,13 @@ function Combobox({
   // When not editing, display the resolved label; while editing, show what the user typed.
   const inputDisplayValue = isEditing ? query : selectedLabel
 
-  // Show all options on (re)focus; filter only while the user is actively typing.
+  // Show options on (re)focus (limited by maxOnFocus when set); filter while typing.
   const filtered =
     isEditing && query.trim()
       ? options.filter((o) => o.label.toLowerCase().includes(query.toLowerCase()))
-      : options
+      : maxOnFocus !== undefined
+        ? options.slice(0, maxOnFocus)
+        : options
 
   // aria-expanded must track whether the popup is actually visible, not just
   // whether the component intends to open. When the filter matches nothing the

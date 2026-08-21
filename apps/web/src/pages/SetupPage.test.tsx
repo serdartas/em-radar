@@ -284,14 +284,17 @@ async function attachBoardSource() {
   fireEvent.change(await screen.findByRole("combobox", { name: "Ticketing connection" }), {
     target: { value: "conn-jira" },
   })
+
+  const projectCombobox = await screen.findByRole("combobox", { name: "Project" })
+  fireEvent.focus(projectCombobox)
   await screen.findByRole("option", { name: /Alpha Project/ })
-  fireEvent.change(screen.getByRole("combobox", { name: "Project" }), {
-    target: { value: "10001" },
-  })
+  fireEvent.mouseDown(screen.getByRole("option", { name: /Alpha Project/ }))
+
+  const boardCombobox = await screen.findByRole("combobox", { name: "Board" })
+  fireEvent.focus(boardCombobox)
   await screen.findByRole("option", { name: /Alpha Scrum Board/ })
-  fireEvent.change(screen.getByRole("combobox", { name: "Board" }), {
-    target: { value: "20001" },
-  })
+  fireEvent.mouseDown(screen.getByRole("option", { name: /Alpha Scrum Board/ }))
+
   await screen.findByRole("combobox", { name: "Working mode" })
   fireEvent.click(screen.getByRole("button", { name: "Save board source" }))
 }
