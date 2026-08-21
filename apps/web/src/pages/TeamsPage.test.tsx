@@ -633,6 +633,41 @@ describe("TeamsPage — task-board source picker", () => {
     })
   })
 
+  it("shows a Callout alert when the code-source update mutation fails", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = typeof input === "string" ? input : input.toString()
+      const method = init?.method ?? "GET"
+      if (url.endsWith("/api/teams") && method === "GET") {
+        return Promise.resolve(jsonResponse([team]))
+      }
+      if (url.endsWith("/api/scopes")) return Promise.resolve(jsonResponse([]))
+      if (url.endsWith("/api/signal-config-groups")) return Promise.resolve(jsonResponse(groups))
+      if (url.endsWith("/api/connectors")) return Promise.resolve(jsonResponse([mrConnector]))
+      if (url.endsWith("/api/connections") && method === "GET") {
+        return Promise.resolve(jsonResponse([gitlabConnection]))
+      }
+      if (url.includes("/api/teams/") && method === "PATCH") {
+        return Promise.resolve(
+          new Response(JSON.stringify({ detail: "server error" }), { status: 500 }),
+        )
+      }
+      throw new Error(`unexpected fetch: ${method} ${url}`)
+    })
+
+    renderPage()
+
+    await screen.findByText("Platform")
+    fireEvent.click(screen.getByRole("button", { name: "Edit Platform" }))
+
+    fireEvent.change(await screen.findByLabelText("Code source"), {
+      target: { value: "conn-gitlab" },
+    })
+
+    const alert = await screen.findByRole("alert")
+    expect(alert).toBeInTheDocument()
+    expect(alert.textContent).toMatch(/could not update the code source/i)
+  })
+
   it("detaches a code connection by selecting the empty option", async () => {
     const teamWithCode = { ...team, code_connection_id: "conn-gitlab" }
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {

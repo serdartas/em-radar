@@ -4,6 +4,7 @@ import { useState } from "react"
 import { useMutation, useQuery } from "@tanstack/react-query"
 
 import { Button } from "@/components/ui/button"
+import { Callout } from "@/components/ui/callout"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
@@ -26,22 +27,17 @@ function ExportCard() {
   const [exportType, setExportType] = useState<GroupExportType>("private_backup")
   const [selected, setSelected] = useState<string[]>([])
   const [copied, setCopied] = useState(false)
+  const [clipboardError, setClipboardError] = useState<string | null>(null)
   const exportMutation = useMutation({
     mutationFn: () => exportSignalGroupsPack(selected, exportType),
   })
 
   function toggle(groupId: string) {
     setCopied(false)
+    setClipboardError(null)
     setSelected((prev) =>
       prev.includes(groupId) ? prev.filter((id) => id !== groupId) : [...prev, groupId],
     )
-  }
-
-  async function copy() {
-    setCopied(false)
-    const yaml = await exportMutation.mutateAsync()
-    await navigator.clipboard?.writeText(yaml)
-    setCopied(true)
   }
 
   async function download() {
@@ -50,8 +46,28 @@ function ExportCard() {
     const anchor = document.createElement("a")
     anchor.href = url
     anchor.download = "signal-pack.yaml"
+    // Append to body so Firefox can initiate the download, then remove.
+    document.body.appendChild(anchor)
     anchor.click()
-    URL.revokeObjectURL(url)
+    document.body.removeChild(anchor)
+    // Defer revocation so the browser has time to begin the download.
+    setTimeout(() => URL.revokeObjectURL(url), 0)
+  }
+
+  async function copy() {
+    setCopied(false)
+    setClipboardError(null)
+    const yaml = await exportMutation.mutateAsync()
+    if (!navigator.clipboard) {
+      setClipboardError("Clipboard is not available in this browser.")
+      return
+    }
+    try {
+      await navigator.clipboard.writeText(yaml)
+      setCopied(true)
+    } catch {
+      setClipboardError("Could not copy to clipboard. Please try again.")
+    }
   }
 
   const groups = groupsQuery.data ?? []
@@ -107,6 +123,11 @@ function ExportCard() {
           <p className="text-sm text-green-700" role="status">
             Copied to clipboard.
           </p>
+        )}
+        {clipboardError && (
+          <Callout role="alert" variant="error">
+            {clipboardError}
+          </Callout>
         )}
         {exportMutation.isError && (
           <p className="text-sm text-red-700" role="alert">
