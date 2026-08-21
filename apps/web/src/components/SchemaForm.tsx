@@ -22,6 +22,8 @@ interface SchemaFormProps {
   idPrefix: string
   onChange: (key: string, value: unknown) => void
   fieldHelp?: Record<string, ReactNode>
+  /** Field keys to exclude from rendering (handled by a caller-supplied custom section). */
+  skipKeys?: ReadonlySet<string> | string[]
 }
 
 function toInputString(value: unknown): string {
@@ -34,12 +36,13 @@ function toInputString(value: unknown): string {
   return String(value)
 }
 
-export function SchemaForm({ fieldHelp, idPrefix, onChange, schema, values }: SchemaFormProps) {
-  const properties = Object.entries(schema.properties ?? {})
+export function SchemaForm({ fieldHelp, idPrefix, onChange, schema, skipKeys, values }: SchemaFormProps) {
+  const skip = new Set(skipKeys ?? [])
+  const properties = Object.entries(schema.properties ?? {}).filter(([key]) => !skip.has(key))
   const required = new Set(schema.required ?? [])
   const defs = schema.$defs ?? {}
 
-  if (properties.length === 0) {
+  if (properties.length === 0 && skip.size === 0) {
     return (
       <p className="text-sm text-slate-500">This connector needs no configuration.</p>
     )
