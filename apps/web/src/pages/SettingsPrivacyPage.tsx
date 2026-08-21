@@ -6,6 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 
 import { ConnectionDeleteConfirm } from "@/components/connections/ConnectionDeleteConfirm"
 import { Button } from "@/components/ui/button"
+import { Callout } from "@/components/ui/callout"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
@@ -83,14 +84,14 @@ export function SettingsPrivacyPage() {
             />
           </div>
           {settingsQuery.isError && (
-            <p className="text-sm text-red-600" role="alert">
+            <Callout role="alert" variant="error">
               Could not load settings. Reload the page to try again.
-            </p>
+            </Callout>
           )}
           {telemetryMutation.isError && (
-            <p className="text-sm text-red-600" role="alert">
+            <Callout role="alert" variant="error">
               Could not update the telemetry setting. Try again.
-            </p>
+            </Callout>
           )}
         </CardContent>
       </Card>
@@ -241,6 +242,11 @@ function DeleteReportHistoryAction() {
               Cancel
             </Button>
           </div>
+          {deleteMutation.isError && (
+            <Callout className="mt-3" role="alert" variant="error">
+              Could not delete report history. Please try again.
+            </Callout>
+          )}
         </div>
       )}
     </div>

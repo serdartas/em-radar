@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { useState } from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 
+import { Callout } from "@/components/ui/callout"
 import { Label } from "@/components/ui/label"
 import { Select } from "@/components/ui/select"
 import { type SourceConnection } from "@/lib/connections"
@@ -16,11 +18,17 @@ export function CodeSourcePicker({
   team: TeamProfile
 }) {
   const queryClient = useQueryClient()
+  const [error, setError] = useState<string | null>(null)
+
   const updateMutation = useMutation({
     mutationKey: TEAM_SOURCE_MUTATION_KEY,
     mutationFn: (connectionId: string | null) =>
       updateTeam(team.id, { code_connection_id: connectionId }),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: TEAMS_KEY }),
+    onSuccess: () => {
+      setError(null)
+      void queryClient.invalidateQueries({ queryKey: TEAMS_KEY })
+    },
+    onError: () => setError("Could not update the code source. Please try again."),
   })
 
   if (codeConnections.length === 0) {
@@ -38,8 +46,12 @@ export function CodeSourcePicker({
     <div className="space-y-1.5">
       <Label htmlFor={`code-source-${team.id}`}>Code source</Label>
       <Select
+        disabled={updateMutation.isPending}
         id={`code-source-${team.id}`}
-        onChange={(event) => updateMutation.mutate(event.target.value || null)}
+        onChange={(event) => {
+          setError(null)
+          updateMutation.mutate(event.target.value || null)
+        }}
         value={team.code_connection_id ?? ""}
       >
         <option value="">No code source</option>
@@ -49,6 +61,11 @@ export function CodeSourcePicker({
           </option>
         ))}
       </Select>
+      {error && (
+        <Callout role="alert" variant="error">
+          {error}
+        </Callout>
+      )}
     </div>
   )
 }

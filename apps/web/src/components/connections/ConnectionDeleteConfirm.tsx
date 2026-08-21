@@ -4,6 +4,7 @@ import { useState } from "react"
 import type { ReactNode } from "react"
 import { useMutation } from "@tanstack/react-query"
 
+import { Callout } from "@/components/ui/callout"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { ApiError } from "@/lib/api"
 import { type ConnectionConflict, deleteConnection } from "@/lib/connections"
@@ -85,16 +86,23 @@ function ConnectionDeleteConfirm({
   }
 
   return (
-    <ConfirmDialog
-      body={body}
-      className={className}
-      confirmLabel={confirmLabel}
-      onCancel={onCancel}
-      onConfirm={onConfirm}
-      pending={deleteMutation.isPending}
-      title={`Delete connection ${connectionName}`}
-      titleHidden
-    />
+    <>
+      <ConfirmDialog
+        body={body}
+        className={className}
+        confirmLabel={confirmLabel}
+        onCancel={onCancel}
+        onConfirm={onConfirm}
+        pending={deleteMutation.isPending}
+        title={`Delete connection ${connectionName}`}
+        titleHidden
+      />
+      {deleteMutation.isError && conflict === null && (
+        <Callout className="mt-2" role="alert" variant="error">
+          Could not delete the connection. Please try again.
+        </Callout>
+      )}
+    </>
   )
 }
 

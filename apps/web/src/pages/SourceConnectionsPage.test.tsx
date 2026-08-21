@@ -678,6 +678,20 @@ describe("SourceConnectionsPage", () => {
     expect(screen.getByRole("button", { name: "Delete" })).toBeInTheDocument()
   })
 
+  it("renders a Callout error when the delete mutation fails with a non-conflict error", async () => {
+    mockApiWithConnection(() =>
+      jsonResponse({ detail: "Internal server error" }, 500),
+    )
+    renderPage()
+
+    fireEvent.click(await screen.findByRole("button", { name: "Delete" }))
+    fireEvent.click(screen.getByRole("button", { name: "Confirm delete" }))
+
+    const alert = await screen.findByRole("alert")
+    expect(alert).toBeInTheDocument()
+    expect(alert.textContent).toMatch(/could not delete/i)
+  })
+
   it("moves focus into the first form field when the panel is revealed", async () => {
     mockApiWithConnection()
     renderPage()

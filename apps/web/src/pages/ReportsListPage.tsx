@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { Link, useLocation } from "react-router-dom"
 
@@ -43,8 +42,7 @@ export function ReportsListPage() {
   const location = useLocation()
 
   // Capture on mount so a subsequent re-render (e.g. after invalidateQueries) does not
-  // re-read a stale location.state. Clear from browser history so a manual refresh does
-  // not replay the note.
+  // re-read a stale location.state.
   const [failedTeams] = useState<string[]>(() => {
     const s = location.state
     if (
@@ -53,14 +51,19 @@ export function ReportsListPage() {
       "failedTeams" in s &&
       Array.isArray((s as Record<string, unknown>).failedTeams)
     ) {
-      const teams = ((s as Record<string, unknown>).failedTeams as unknown[]).filter(
+      return ((s as Record<string, unknown>).failedTeams as unknown[]).filter(
         (t): t is string => typeof t === "string",
       )
-      window.history.replaceState({}, "")
-      return teams
     }
     return []
   })
+
+  // Clear from browser history after mount so a manual refresh does not replay the note.
+  // Keeping this in a useEffect rather than the useState initializer avoids a side effect
+  // during render.
+  useEffect(() => {
+    window.history.replaceState({}, "")
+  }, [])
 
   return (
     <section aria-labelledby="page-title" className="space-y-6">

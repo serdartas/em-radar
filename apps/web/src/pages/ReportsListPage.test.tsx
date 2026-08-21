@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { cleanup, render, screen, within } from "@testing-library/react"
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
@@ -81,6 +81,37 @@ describe("ReportsListPage", () => {
     // Team Beta's 2026-06-02).
     const headings = screen.getAllByRole("heading", { level: 2 }).map((node) => node.textContent)
     expect(headings).toEqual(["Team Alpha", "Team Beta"])
+  })
+
+  // AUDIT-30: history.replaceState must be called in a useEffect, not during render.
+  it("AUDIT-30: consumes history failedTeams state and clears it via useEffect", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    )
+    const replaceStateSpy = vi.spyOn(window.history, "replaceState")
+
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter
+          initialEntries={[{ pathname: "/reports/results", state: { failedTeams: ["Team Alpha"] } }]}
+        >
+          <ReportsListPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    // The failed-teams banner should appear after mount.
+    const alert = await screen.findByRole("alert")
+    expect(alert.textContent).toMatch(/Team Alpha/)
+
+    // replaceState must have been called (via the useEffect, not during render).
+    await waitFor(() => {
+      expect(replaceStateSpy).toHaveBeenCalledWith({}, "")
+    })
   })
 
   it("falls back to Unknown team when a report has no team", async () => {
