@@ -137,10 +137,13 @@ export function JiraFieldMappingSection({
   const acCustomFieldId = useId()
   const spFieldSelectId = useId()
 
-  // Drive the Story Points toggle from independent local state so it is not a
-  // dead control on a new (unsaved) connection where no fields are discovered
-  // yet and story_points would otherwise remain "".
-  const [spToggled, setSpToggled] = useState(() => !!(fieldMappingValues?.story_points))
+  // spForcedOpen is true only while the user has clicked the switch ON without
+  // a value being present yet (e.g. unsaved connection, no discovered fields).
+  // It is reset to false when the switch is turned OFF or when a value arrives
+  // via props. This avoids the once-only initialiser problem: spEnabled is
+  // re-derived on every render so it stays in sync when fieldMappingValues
+  // changes due to add↔edit transitions without unmounting the component.
+  const [spForcedOpen, setSpForcedOpen] = useState(false)
 
   const { data: allFields = [] } = useQuery({
     queryKey: ["jiraFields", connectionId],
@@ -156,6 +159,11 @@ export function JiraFieldMappingSection({
   const storyPointsValue = fieldMappingValues?.story_points ?? ""
   const acCustomField = fieldMappingValues?.acceptance_criteria ?? null
   const acHeading = fieldMappingValues?.acceptance_criteria_heading ?? null
+
+  // spEnabled re-syncs from props on every render (mirrors AC derivation).
+  // It is true when a saved value exists in props OR the user has explicitly
+  // clicked the switch ON (spForcedOpen) to reveal the control before picking.
+  const spEnabled = storyPointsValue !== "" || spForcedOpen
 
   // AC enabled/mode are fully derived from props (AC always sets a non-null value on enable).
   const acEnabled = acCustomField !== null || acHeading !== null
@@ -178,7 +186,7 @@ export function JiraFieldMappingSection({
   // ── Story Points handlers ─────────────────────────────────────────────────
 
   function handleSpToggle(on: boolean) {
-    setSpToggled(on)
+    setSpForcedOpen(on)
     if (!on) {
       // Omit story_points so the backend default applies; never emit story_points: "".
       onFieldMappingChange({
@@ -251,7 +259,7 @@ export function JiraFieldMappingSection({
       <div className="space-y-6 pt-4">
         {/* Story Points */}
         <FieldMappingRow
-          enabled={spToggled}
+          enabled={spEnabled}
           label="Story Points"
           onEnabledChange={handleSpToggle}
           switchId={spSwitchId}

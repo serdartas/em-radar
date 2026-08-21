@@ -262,6 +262,39 @@ describe("JiraFieldMappingSection — Story Points", () => {
       ).toBe(true)
     })
   })
+
+  it("reflects a prop-loaded story_points value without unmounting (edit transition regression)", () => {
+    // Simulate SourceConnectionsPage keeping a single ConnectionForm mounted
+    // across add→edit transitions: props change but the component is NOT remounted.
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+
+    const { rerender } = render(
+      <QueryClientProvider client={qc}>
+        <JiraFieldMappingSection
+          fieldMappingValues={{}}
+          onFieldMappingChange={() => undefined}
+        />
+      </QueryClientProvider>,
+    )
+
+    // Initially "Not configured" (no SP value in props, spForcedOpen = false)
+    expect(screen.getAllByText("Not configured")).toHaveLength(2)
+
+    // Simulate the edit effect: ConnectionForm receives a different connection whose
+    // config has story_points set. Values are updated in place — no remount.
+    rerender(
+      <QueryClientProvider client={qc}>
+        <JiraFieldMappingSection
+          fieldMappingValues={{ story_points: "customfield_20000" }}
+          onFieldMappingChange={() => undefined}
+        />
+      </QueryClientProvider>,
+    )
+
+    // SP row must now show as enabled (value in props), not "Not configured"
+    expect(screen.getAllByText("Not configured")).toHaveLength(1) // only AC
+    expect(screen.getByRole("combobox", { name: "Story points field" })).toBeInTheDocument()
+  })
 })
 
 // ---------------------------------------------------------------------------
