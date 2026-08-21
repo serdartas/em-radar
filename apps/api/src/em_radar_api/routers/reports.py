@@ -1341,6 +1341,9 @@ def _team_signal_pack_snapshot(
                 "origin": definition.origin.value,
                 "template_key": definition.template_key,
                 "is_source_linking": is_source_linking_signal(definition),
+                "expression": definition.expression,
+                "severity": definition.report_settings.severity,
+                "message_template": definition.report_settings.message_template,
             }
             for definition in definitions
         ],

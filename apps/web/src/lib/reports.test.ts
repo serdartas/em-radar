@@ -91,7 +91,7 @@ describe("extractSnapshotSignals", () => {
     expect(extractSnapshotSignals({ signal_definitions: null })).toEqual([])
   })
 
-  it("filters out entries missing required string fields", () => {
+  it("filters out entries missing required string fields or with invalid template_key", () => {
     const snapshot = {
       signal_definitions: [
         {
@@ -102,9 +102,11 @@ describe("extractSnapshotSignals", () => {
           origin: "system_template",
           template_key: null,
         },
-        { id: "sig-2", name: "Missing entity_type", category: "c", origin: "o" },
-        { name: "Missing id", entity_type: "workitem", category: "c", origin: "o" },
-        { id: "sig-4", name: "Missing category", entity_type: "workitem", origin: "o" },
+        { id: "sig-2", name: "Missing entity_type", category: "c", origin: "o", template_key: null },
+        { name: "Missing id", entity_type: "workitem", category: "c", origin: "o", template_key: null },
+        { id: "sig-4", name: "Missing category", entity_type: "workitem", origin: "o", template_key: null },
+        // template_key is a number — invalid
+        { id: "sig-5", name: "Bad key", entity_type: "workitem", category: "c", origin: "o", template_key: 42 },
         null,
         "not an object",
         42,
@@ -132,6 +134,23 @@ describe("extractSnapshotSignals", () => {
         category: "sprint_health",
         origin: "user_created",
         template_key: null,
+      },
+    ]
+    expect(extractSnapshotSignals({ signal_definitions: defs })).toEqual(defs)
+  })
+
+  it("passes through optional extended fields (expression, severity, message_template)", () => {
+    const defs = [
+      {
+        id: "sig-x",
+        name: "Extended signal",
+        entity_type: "workitem",
+        category: "delivery_flow",
+        origin: "system_template",
+        template_key: null,
+        expression: { field: "days_blocked", op: "gt", value: 3 },
+        severity: "critical",
+        message_template: null,
       },
     ]
     expect(extractSnapshotSignals({ signal_definitions: defs })).toEqual(defs)

@@ -150,6 +150,17 @@ def test_snapshot_records_group_ids_and_signal_set(api_client: TestClient, monke
     assert snapshot["signal_config_group_ids"] == [group]
     assert [definition["id"] for definition in snapshot["signal_definitions"]] == [signal_id]
 
+    # Extended fields added in M8.5-04: expression, severity, message_template.
+    signal_entry = snapshot["signal_definitions"][0]
+    assert "expression" in signal_entry
+    assert signal_entry["expression"] == {
+        "type": "group",
+        "operator": "all",
+        "conditions": [{"field": "status_category", "operator": "is", "value": "in_progress"}],
+    }
+    assert signal_entry["severity"] == "warning"
+    assert signal_entry["message_template"] is None
+
 
 def test_report_history_exposes_team_identity(api_client: TestClient, monkeypatch) -> None:
     _use_jira_connector(monkeypatch)

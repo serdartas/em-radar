@@ -205,3 +205,124 @@ describe("SignalsChangedBanner disclosure", () => {
     expect(screen.queryByText("Blocked work item")).toBeNull()
   })
 })
+
+// ---------------------------------------------------------------------------
+// Extended fields: expression / severity / message_template
+// ---------------------------------------------------------------------------
+
+const snapshotWithExtended: SnapshotSignal = {
+  ...snapshotSignal,
+  expression: { field: "days_blocked", op: "gt", value: 3 },
+  severity: "critical",
+  message_template: null,
+}
+
+const currentWithExtended: SignalDefinition = {
+  ...matchingCurrentSignal,
+  expression: { field: "days_blocked", op: "gt", value: 3 },
+  report_settings: { severity: "critical", category: "delivery_flow", message_template: null },
+}
+
+describe("SignalsChangedBanner extended field detection", () => {
+  it("renders nothing when expression, severity, and message_template all match", () => {
+    const { container } = render(
+      <SignalsChangedBanner
+        currentSignals={[currentWithExtended]}
+        snapshotSignals={[snapshotWithExtended]}
+      />,
+    )
+    expect(container.firstChild).toBeNull()
+  })
+
+  it("renders banner when expression changed (rule edit)", () => {
+    const editedExpression: SignalDefinition = {
+      ...currentWithExtended,
+      expression: { field: "days_blocked", op: "gt", value: 7 },
+    }
+    render(
+      <SignalsChangedBanner
+        currentSignals={[editedExpression]}
+        snapshotSignals={[snapshotWithExtended]}
+      />,
+    )
+    expect(
+      screen.getByText(/configuration of some signals changed since this run/i),
+    ).toBeInTheDocument()
+  })
+
+  it("renders banner when severity changed", () => {
+    const editedSeverity: SignalDefinition = {
+      ...currentWithExtended,
+      report_settings: { severity: "warning", category: "delivery_flow", message_template: null },
+    }
+    render(
+      <SignalsChangedBanner
+        currentSignals={[editedSeverity]}
+        snapshotSignals={[snapshotWithExtended]}
+      />,
+    )
+    expect(
+      screen.getByText(/configuration of some signals changed since this run/i),
+    ).toBeInTheDocument()
+  })
+
+  it("renders banner when message_template changed", () => {
+    const editedTemplate: SignalDefinition = {
+      ...currentWithExtended,
+      report_settings: {
+        severity: "critical",
+        category: "delivery_flow",
+        message_template: "Custom message",
+      },
+    }
+    render(
+      <SignalsChangedBanner
+        currentSignals={[editedTemplate]}
+        snapshotSignals={[snapshotWithExtended]}
+      />,
+    )
+    expect(
+      screen.getByText(/configuration of some signals changed since this run/i),
+    ).toBeInTheDocument()
+  })
+
+  it("does NOT false-positive for legacy snapshot entries that lack extended fields", () => {
+    // snapshotSignal has no expression/severity/message_template — legacy format.
+    // currentWithExtended has those fields; they must be ignored for the legacy entry.
+    const { container } = render(
+      <SignalsChangedBanner
+        currentSignals={[currentWithExtended]}
+        snapshotSignals={[snapshotSignal]}
+      />,
+    )
+    expect(container.firstChild).toBeNull()
+  })
+
+  it("does NOT false-positive when expressions are deeply equal but different objects", () => {
+    const snapshotCopy: SnapshotSignal = {
+      ...snapshotWithExtended,
+      // Structurally identical expression but a new object reference
+      expression: { field: "days_blocked", op: "gt", value: 3 },
+    }
+    const { container } = render(
+      <SignalsChangedBanner
+        currentSignals={[currentWithExtended]}
+        snapshotSignals={[snapshotCopy]}
+      />,
+    )
+    expect(container.firstChild).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Accessibility: role="status" on the Callout
+// ---------------------------------------------------------------------------
+
+describe("SignalsChangedBanner accessibility", () => {
+  it("renders the callout with role=status for assistive tech announcement", () => {
+    render(
+      <SignalsChangedBanner currentSignals={[]} snapshotSignals={[snapshotSignal]} />,
+    )
+    expect(screen.getByRole("status")).toBeInTheDocument()
+  })
+})

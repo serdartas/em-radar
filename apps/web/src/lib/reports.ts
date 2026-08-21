@@ -101,6 +101,11 @@ export interface SnapshotSignal {
   category: string
   origin: string
   template_key: string | null
+  // Optional — present in snapshots written after M8.5-04 extended the pack.
+  // Absent in legacy snapshots; callers must guard with `!== undefined` before comparing.
+  expression?: unknown
+  severity?: string
+  message_template?: string | null
 }
 
 export function extractSnapshotSignals(snapshot: unknown): SnapshotSignal[] {
@@ -119,7 +124,8 @@ export function extractSnapshotSignals(snapshot: unknown): SnapshotSignal[] {
       typeof record.name === "string" &&
       typeof record.entity_type === "string" &&
       typeof record.category === "string" &&
-      typeof record.origin === "string"
+      typeof record.origin === "string" &&
+      (record.template_key === null || typeof record.template_key === "string")
     )
   })
 }

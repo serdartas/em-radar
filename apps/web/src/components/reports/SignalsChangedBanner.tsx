@@ -11,6 +11,13 @@ interface SignalsChangedBannerProps {
   currentSignals: SignalDefinition[]
 }
 
+// Deep-equal via JSON.stringify. Expressions are plain JSON objects serialized
+// deterministically by the backend (Python dict → JSON), so key order is stable
+// across snapshot and live API responses. This avoids adding a dependency.
+function deepEqual(a: unknown, b: unknown): boolean {
+  return JSON.stringify(a) === JSON.stringify(b)
+}
+
 function signalsChanged(
   snapshotSignals: SnapshotSignal[],
   currentSignals: SignalDefinition[],
@@ -20,13 +27,35 @@ function signalsChanged(
   return snapshotSignals.some((snapshot) => {
     const current = currentById.get(snapshot.id)
     if (!current) return true
-    return (
+    // Core identity fields — always present in every snapshot.
+    if (
       current.name !== snapshot.name ||
       current.entity_type !== snapshot.entity_type ||
       current.report_settings.category !== snapshot.category ||
       current.origin !== snapshot.origin ||
       current.template_key !== snapshot.template_key
-    )
+    ) {
+      return true
+    }
+    // Extended fields — only present in snapshots written after M8.5-04.
+    // Skip comparison when the snapshot entry lacks the field (legacy reports)
+    // to avoid false positives.
+    if (snapshot.expression !== undefined && !deepEqual(current.expression, snapshot.expression)) {
+      return true
+    }
+    if (
+      snapshot.severity !== undefined &&
+      current.report_settings.severity !== snapshot.severity
+    ) {
+      return true
+    }
+    if (
+      snapshot.message_template !== undefined &&
+      current.report_settings.message_template !== snapshot.message_template
+    ) {
+      return true
+    }
+    return false
   })
 }
 
@@ -39,7 +68,7 @@ export function SignalsChangedBanner({
   if (!signalsChanged(snapshotSignals, currentSignals)) return null
 
   return (
-    <Callout variant="warning">
+    <Callout role="status" variant="warning">
       <p>
         {"configuration of some signals changed since this run. "}
         <button
