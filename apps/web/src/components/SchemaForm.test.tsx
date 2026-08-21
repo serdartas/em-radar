@@ -1,18 +1,3 @@
-/**
- * NOTE: vitest cannot be executed in this project because esbuild is blocked
- * (see memory/no-esbuild.md). These tests are written to the correct vitest +
- * @testing-library/react API and will pass once a compatible test runner is
- * available (e.g. after replacing esbuild with @swc/core in the vite config).
- *
- * Manual verification checklist:
- *   1. Open the Jira connection form in the browser.
- *   2. Confirm that "Field Mapping" appears as a grouped fieldset, not a text input.
- *   3. Confirm that sub-fields (Story Points, Epic Link, …) are visible and editable.
- *   4. Edit "Story Points", save the connection, and confirm the PATCH/POST body
- *      contains field_mapping: { story_points: "<new value>", … } as a nested object.
- *   5. Switch to GitLab — confirm Base URL and Token render as flat text/password inputs.
- */
-
 import { cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
@@ -229,5 +214,78 @@ describe("SchemaForm — allOf single-branch resolution", () => {
     )
 
     expect(screen.getByLabelText("Token")).toHaveAttribute("type", "password")
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Required-field accessibility: required / aria-required on inputs (AUDIT-12)
+// ---------------------------------------------------------------------------
+
+describe("SchemaForm — required field attributes", () => {
+  it("a required text input has the required attribute", () => {
+    render(
+      <SchemaForm
+        idPrefix="conn"
+        onChange={() => undefined}
+        schema={gitlabSchema}
+        values={{}}
+      />,
+    )
+
+    expect(screen.getByLabelText("Base Url")).toHaveAttribute("required")
+    expect(screen.getByLabelText("Token")).toHaveAttribute("required")
+  })
+
+  it("a required text input has aria-required set to true", () => {
+    render(
+      <SchemaForm
+        idPrefix="conn"
+        onChange={() => undefined}
+        schema={gitlabSchema}
+        values={{}}
+      />,
+    )
+
+    expect(screen.getByLabelText("Base Url")).toHaveAttribute("aria-required", "true")
+    expect(screen.getByLabelText("Token")).toHaveAttribute("aria-required", "true")
+  })
+
+  it("a non-required field does not have the required attribute", () => {
+    const schema: JsonSchema = {
+      type: "object",
+      properties: {
+        notes: { type: "string", title: "Notes" },
+      },
+    }
+
+    render(
+      <SchemaForm
+        idPrefix="conn"
+        onChange={() => undefined}
+        schema={schema}
+        values={{}}
+      />,
+    )
+
+    expect(screen.getByLabelText("Notes")).not.toHaveAttribute("required")
+  })
+
+  it("the required * marker is accompanied by sr-only 'required' text for screen readers", () => {
+    render(
+      <SchemaForm
+        idPrefix="conn"
+        onChange={() => undefined}
+        schema={gitlabSchema}
+        values={{}}
+      />,
+    )
+
+    // The sr-only "required" span must exist (one per required field, but at least one)
+    const srSpans = screen.getAllByText("required")
+    expect(srSpans.length).toBeGreaterThan(0)
+    // Each sr-only span should have the sr-only class (Tailwind utility)
+    srSpans.forEach((span) => {
+      expect(span).toHaveClass("sr-only")
+    })
   })
 })

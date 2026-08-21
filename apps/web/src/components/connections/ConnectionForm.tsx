@@ -24,7 +24,7 @@ import {
   testConnectionDraft,
   updateConnection,
 } from "@/lib/connections"
-import { isSecret, type JsonSchema } from "@/lib/jsonSchema"
+import { isSecret, type JsonSchema, resolveProperty } from "@/lib/jsonSchema"
 
 function defaultValues(schema: JsonSchema): Record<string, unknown> {
   const values: Record<string, unknown> = {}
@@ -61,6 +61,30 @@ function writableValues(
   return next
 }
 
+/**
+ * Returns true when all schema-required fields have a non-blank value.
+ * In edit mode, secret fields (API tokens) may be left blank to keep the
+ * existing server-side value — they are excluded from the blank check.
+ */
+function requiredSchemaFieldsFilled(
+  schema: JsonSchema,
+  values: Record<string, unknown>,
+  isEditing: boolean,
+): boolean {
+  const defs = schema.$defs ?? {}
+  return (schema.required ?? []).every((key) => {
+    const raw = schema.properties?.[key]
+    if (!raw) return true
+    const property = resolveProperty(raw, defs)
+    // Tokens are intentionally blank in edit mode (preserved on the server).
+    if (isEditing && isSecret(property)) return true
+    const value = values[key]
+    if (value === undefined || value === null) return false
+    if (typeof value === "string" && value.trim() === "") return false
+    return true
+  })
+}
+
 interface ConnectionFormProps {
   connectors: Connector[]
   editing?: SourceConnection | null
@@ -78,9 +102,25 @@ export function ConnectionForm({
 }: ConnectionFormProps) {
   const queryClient = useQueryClient()
   const implementedNames = new Set(connectors.map((connector) => connector.name))
-  const [connectorName, setConnectorName] = useState("")
-  const [connectionName, setConnectionName] = useState("")
-  const [values, setValues] = useState<Record<string, unknown>>({})
+
+  // Initialise state synchronously from props so the form is ready on the first render.
+  // The useEffect still handles subsequent prop changes (e.g. switching connections or
+  // transitioning back to add mode on cancel).
+  const [connectorName, setConnectorName] = useState<string>(() => {
+    if (editing) return editing.connector_name
+    return lockConnectorName ?? SOURCE_TYPES.find((t) => implementedNames.has(t.name))?.name ?? ""
+  })
+  const [connectionName, setConnectionName] = useState<string>(() => editing?.name ?? "")
+  const [values, setValues] = useState<Record<string, unknown>>(() => {
+    if (editing) {
+      const connector = connectors.find((c) => c.name === editing.connector_name)
+      return connector ? editValues(connector.config_schema, editing.config) : editing.config
+    }
+    const addTarget =
+      lockConnectorName ?? SOURCE_TYPES.find((t) => implementedNames.has(t.name))?.name
+    const addConnector = addTarget ? connectors.find((c) => c.name === addTarget) : undefined
+    return addConnector ? defaultValues(addConnector.config_schema) : {}
+  })
 
   const testMutation = useMutation({ mutationFn: testConnectionDraft })
   const saveMutation = useMutation({
@@ -156,7 +196,10 @@ export function ConnectionForm({
   }
 
   const submitDisabled =
-    !selectedConnector || connectionName.trim() === "" || saveMutation.isPending
+    !selectedConnector ||
+    connectionName.trim() === "" ||
+    saveMutation.isPending ||
+    !requiredSchemaFieldsFilled(selectedConnector.config_schema, values, editing !== null)
 
   return (
     <Card>

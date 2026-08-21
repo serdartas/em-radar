@@ -44,7 +44,33 @@ const ISSUE_FIELDS: SignalField[] = [
     availability: null,
     entity_type: "issue",
   },
+  {
+    key: "days_open",
+    label: "Days Open",
+    type: "number",
+    operators: ["greater_than", "less_than", "between"],
+    values: [],
+    value_provider: null,
+    availability: null,
+    entity_type: "issue",
+  },
 ]
+
+const FIELDS_BY_ENTITY_WITH_DATE: Record<string, SignalField[]> = {
+  issue: [
+    ...ISSUE_FIELDS,
+    {
+      key: "due_date",
+      label: "Due Date",
+      type: "date",
+      operators: ["is", "between"],
+      values: [],
+      value_provider: null,
+      availability: null,
+      entity_type: "issue",
+    },
+  ],
+}
 
 const JIRA_CUSTOM_FIELDS: JiraFieldInfo[] = [
   { id: "customfield_10001", name: "Priority Score", custom: true, field_type: "number" },
@@ -421,6 +447,8 @@ describe("SignalForm — operator label correctness", () => {
       target: { value: "customfield_10004" },
     })
     fireEvent.change(screen.getByLabelText("Operator"), { target: { value: "does_not_contain" } })
+    // Array fields use a free-text input; a non-empty value is required to enable Save.
+    fireEvent.change(screen.getByLabelText("Value"), { target: { value: "backend" } })
     fireEvent.click(screen.getByRole("button", { name: "Save signal" }))
 
     expect(onSave).toHaveBeenCalledOnce()
@@ -785,5 +813,117 @@ describe("SignalForm — extended categories", () => {
     expect(categorySelect.value).toBe("custom_cat")
     const option = Array.from(categorySelect.options).find((o) => o.value === "custom_cat")
     expect(option).toBeTruthy()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Rule value validation (AUDIT-12)
+// ---------------------------------------------------------------------------
+
+describe("SignalForm — rule value validation", () => {
+  it("Save is disabled when an option-type custom field has an empty (blank) value", () => {
+    // customfield_10002 (Team, option) renders a free-text input with default ""
+    renderForm({ jiraCustomFields: JIRA_CUSTOM_FIELDS })
+
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "My signal" } })
+    fireEvent.change(screen.getByLabelText("Field"), { target: { value: "__custom__" } })
+    fireEvent.change(screen.getByLabelText("Jira field"), {
+      target: { value: "customfield_10002" },
+    })
+
+    expect(screen.getByRole("button", { name: "Save signal" })).toBeDisabled()
+  })
+
+  it("Save is enabled once the blank value is filled in", () => {
+    renderForm({ jiraCustomFields: JIRA_CUSTOM_FIELDS })
+
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "My signal" } })
+    fireEvent.change(screen.getByLabelText("Field"), { target: { value: "__custom__" } })
+    fireEvent.change(screen.getByLabelText("Jira field"), {
+      target: { value: "customfield_10002" },
+    })
+
+    // Still disabled with blank value
+    expect(screen.getByRole("button", { name: "Save signal" })).toBeDisabled()
+
+    fireEvent.change(screen.getByLabelText("Value"), { target: { value: "Backend" } })
+
+    expect(screen.getByRole("button", { name: "Save signal" })).not.toBeDisabled()
+  })
+
+  it("Save is disabled for between when lower > upper (numeric bounds)", () => {
+    // days_open supports between; default [0, 0] is valid, then we set lower > upper
+    renderForm({ fieldsByEntityType: { issue: ISSUE_FIELDS } })
+
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "My signal" } })
+    fireEvent.change(screen.getByLabelText("Field"), { target: { value: "days_open" } })
+    fireEvent.change(screen.getByLabelText("Operator"), { target: { value: "between" } })
+
+    // Default [0, 0] is valid: Save should be enabled
+    expect(screen.getByRole("button", { name: "Save signal" })).not.toBeDisabled()
+
+    // Set lower bound above upper bound
+    fireEvent.change(screen.getByLabelText("Lower bound"), { target: { value: "10" } })
+    fireEvent.change(screen.getByLabelText("Upper bound"), { target: { value: "3" } })
+
+    expect(screen.getByRole("button", { name: "Save signal" })).toBeDisabled()
+  })
+
+  it("Save is enabled once between bounds satisfy lower <= upper", () => {
+    renderForm({ fieldsByEntityType: { issue: ISSUE_FIELDS } })
+
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "My signal" } })
+    fireEvent.change(screen.getByLabelText("Field"), { target: { value: "days_open" } })
+    fireEvent.change(screen.getByLabelText("Operator"), { target: { value: "between" } })
+
+    fireEvent.change(screen.getByLabelText("Lower bound"), { target: { value: "5" } })
+    fireEvent.change(screen.getByLabelText("Upper bound"), { target: { value: "3" } })
+
+    // Disabled with lower > upper
+    expect(screen.getByRole("button", { name: "Save signal" })).toBeDisabled()
+
+    // Fix: set upper bound >= lower bound
+    fireEvent.change(screen.getByLabelText("Upper bound"), { target: { value: "10" } })
+
+    expect(screen.getByRole("button", { name: "Save signal" })).not.toBeDisabled()
+  })
+
+  it("Save is disabled when a date between rule has empty bounds", () => {
+    // date type between defaults to ["", ""], both empty => invalid
+    renderForm({ fieldsByEntityType: FIELDS_BY_ENTITY_WITH_DATE })
+
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "My signal" } })
+    fireEvent.change(screen.getByLabelText("Field"), { target: { value: "due_date" } })
+    fireEvent.change(screen.getByLabelText("Operator"), { target: { value: "between" } })
+
+    expect(screen.getByRole("button", { name: "Save signal" })).toBeDisabled()
+  })
+
+  it("no-value operators (is_empty) are always valid regardless of value", () => {
+    // status_category has no is_empty operator; use age_in_current_status which uses
+    // greater_than/less_than. Use a custom string field which has is_empty.
+    renderForm({ jiraCustomFields: JIRA_CUSTOM_FIELDS })
+
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "My signal" } })
+    fireEvent.change(screen.getByLabelText("Field"), { target: { value: "__custom__" } })
+    fireEvent.change(screen.getByLabelText("Jira field"), {
+      target: { value: "customfield_10003" }, // Notes — string, default is_empty
+    })
+
+    // is_empty is a no-value operator — Save must be enabled with no value input
+    expect(screen.queryByLabelText("Value")).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Save signal" })).not.toBeDisabled()
+  })
+
+  it("advanced-expression edit mode: Save is enabled even without touching rules", () => {
+    // The rule builder is replaced by a Callout; isAdvanced bypasses row validation.
+    const { onSave } = renderForm({
+      mode: "edit",
+      initialValue: makeDefinition({ name: "Nested signal", expression: NESTED_EXPRESSION }),
+    })
+
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }))
+
+    expect(onSave).toHaveBeenCalledOnce()
   })
 })

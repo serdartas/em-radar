@@ -115,7 +115,7 @@ function SchemaField({ defs, fieldId, help, name, onChange, property, required, 
   return (
     <div className="space-y-1.5">
       <FieldLabel help={help} htmlFor={fieldId} label={label} property={resolved} required={required} />
-      {renderControl({ fieldId, name, onChange, property: resolved, type, value })}
+      {renderControl({ fieldId, name, onChange, property: resolved, required, type, value })}
       {resolved.description && <p className="text-xs text-slate-500">{resolved.description}</p>}
     </div>
   )
@@ -190,9 +190,10 @@ function FieldLabel({ help, htmlFor, label, property, required }: FieldLabelProp
     <div className="flex items-center gap-1.5">
       <Label htmlFor={htmlFor}>{label}</Label>
       {required && (
-        <span aria-hidden="true" className="text-red-600">
-          *
-        </span>
+        <>
+          <span aria-hidden="true" className="text-red-600">*</span>
+          <span className="sr-only">required</span>
+        </>
       )}
       {isSecret(property) && (
         <span aria-hidden="true" className="text-xs font-normal text-slate-500">
@@ -211,14 +212,17 @@ interface ControlProps {
   type: ReturnType<typeof schemaType>
   value: unknown
   onChange: (key: string, value: unknown) => void
+  required?: boolean
 }
 
-function renderControl({ fieldId, name, onChange, property, type, value }: ControlProps) {
+function renderControl({ fieldId, name, onChange, property, required, type, value }: ControlProps) {
   if (property.enum) {
     return (
       <Select
+        aria-required={required}
         id={fieldId}
         onChange={(event) => onChange(name, event.target.value)}
+        required={required}
         value={toInputString(value)}
       >
         {property.enum.map((option) => (
@@ -233,11 +237,13 @@ function renderControl({ fieldId, name, onChange, property, type, value }: Contr
   if (type === "integer" || type === "number") {
     return (
       <Input
+        aria-required={required}
         id={fieldId}
         onChange={(event) => {
           const raw = event.target.value
           onChange(name, raw === "" ? null : Number(raw))
         }}
+        required={required}
         step={type === "integer" ? 1 : "any"}
         type="number"
         value={toInputString(value)}
@@ -248,6 +254,7 @@ function renderControl({ fieldId, name, onChange, property, type, value }: Contr
   if (type === "array") {
     return (
       <Input
+        aria-required={required}
         id={fieldId}
         onChange={(event) =>
           onChange(
@@ -259,6 +266,7 @@ function renderControl({ fieldId, name, onChange, property, type, value }: Contr
           )
         }
         placeholder="comma, separated, values"
+        required={required}
         value={toInputString(value)}
       />
     )
@@ -266,9 +274,11 @@ function renderControl({ fieldId, name, onChange, property, type, value }: Contr
 
   return (
     <Input
+      aria-required={required}
       autoComplete={isSecret(property) ? "new-password" : undefined}
       id={fieldId}
       onChange={(event) => onChange(name, event.target.value)}
+      required={required}
       type={isSecret(property) ? "password" : "text"}
       value={toInputString(value)}
     />

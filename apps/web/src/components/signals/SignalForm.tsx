@@ -172,7 +172,9 @@ export function SignalForm({
   // A row still on the sentinel means the user opened "Custom field" but hasn't
   // chosen a concrete field yet — block save so no sentinel leaks into the expression.
   const hasSentinelRow = !isAdvanced && rows.some((row) => row.field === CUSTOM_FIELD_KEY)
-  const canSave = name.trim().length > 0 && !pending && !hasSentinelRow
+  // Value-bearing rules must not have blank values; between ranges must have lower <= upper.
+  const rowsValid = isAdvanced || rows.every(isRowValid)
+  const canSave = name.trim().length > 0 && !pending && !hasSentinelRow && rowsValid
 
   const heading = mode === "edit" ? "Edit signal" : "Create signal"
   const buttonLabel = submitLabel ?? (mode === "edit" ? "Save changes" : "Save signal")
@@ -561,6 +563,28 @@ function isAdvancedExpression(expression: Record<string, unknown>): boolean {
   const conditions =
     (expression.conditions as Array<Record<string, unknown>> | undefined) ?? []
   return conditions.some((cond) => Array.isArray(cond.conditions) || !("field" in cond))
+}
+
+/**
+ * Returns true when a rule row has a valid value.
+ * - No-value operators (is_empty, is_not_empty) are always valid.
+ * - The `between` operator requires both bounds to be non-empty; for numeric bounds,
+ *   lower must not exceed upper; for date string bounds, the same check applies via
+ *   lexicographic comparison (valid for ISO 8601 dates).
+ * - All other value-bearing operators are invalid when the value is an empty string.
+ */
+function isRowValid(row: RuleRow): boolean {
+  if (NO_VALUE_OPERATORS.has(row.operator)) return true
+  if (row.field === CUSTOM_FIELD_KEY) return false
+  if (row.operator === "between") {
+    const pair = Array.isArray(row.value) ? row.value : [null, null]
+    const [lower, upper] = pair
+    if (lower === "" || upper === "") return false
+    if (typeof lower === "number" && typeof upper === "number") return lower <= upper
+    if (typeof lower === "string" && typeof upper === "string") return lower <= upper
+    return true
+  }
+  return row.value !== ""
 }
 
 /**
