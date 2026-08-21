@@ -131,7 +131,7 @@ function Combobox({
       <Input
         aria-activedescendant={activeOptionId}
         aria-autocomplete="list"
-        aria-controls={listboxId}
+        aria-controls={listboxVisible ? listboxId : undefined}
         aria-describedby={ariaDescribedby}
         aria-expanded={listboxVisible}
         aria-label={inputLabel}

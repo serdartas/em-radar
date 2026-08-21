@@ -93,6 +93,7 @@ function ConnectionDeleteConfirm({
       onConfirm={onConfirm}
       pending={deleteMutation.isPending}
       title={`Delete connection ${connectionName}`}
+      titleHidden
     />
   )
 }

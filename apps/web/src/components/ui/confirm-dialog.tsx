@@ -8,6 +8,8 @@ import { cn } from "@/lib/utils"
 
 interface ConfirmDialogProps {
   title: string
+  /** Keep `title` as the accessible name but omit the visible heading. */
+  titleHidden?: boolean
   body: ReactNode
   confirmLabel: string
   onConfirm: () => void
@@ -24,6 +26,7 @@ function ConfirmDialog({
   onConfirm,
   pending = false,
   title,
+  titleHidden = false,
 }: ConfirmDialogProps) {
   const bodyId = useId()
   // Ref lives on a wrapper so we don't need forwardRef on Button.
@@ -44,7 +47,7 @@ function ConfirmDialog({
       )}
       role="alertdialog"
     >
-      <p className="font-medium">{title}</p>
+      {!titleHidden && <p className="font-medium">{title}</p>}
       <div className="mt-1 text-amber-800" id={bodyId}>
         {body}
       </div>

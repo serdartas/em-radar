@@ -59,6 +59,21 @@ describe("ConfirmDialog", () => {
     expect(screen.getByRole("button", { name: "Confirm delete" })).toBeInTheDocument()
   })
 
+  it("omits the visible heading but keeps the accessible name when titleHidden", () => {
+    render(
+      <ConfirmDialog
+        body="This cannot be undone."
+        confirmLabel="Confirm delete"
+        onCancel={vi.fn()}
+        onConfirm={vi.fn()}
+        title="Delete item"
+        titleHidden
+      />,
+    )
+    expect(screen.getByRole("alertdialog", { name: "Confirm: Delete item" })).toBeInTheDocument()
+    expect(screen.queryByText("Delete item")).not.toBeInTheDocument()
+  })
+
   it("calls onConfirm when the confirm button is clicked", () => {
     const onConfirm = vi.fn()
     render(
@@ -402,6 +417,22 @@ describe("Combobox", () => {
     // No options match — listbox must be absent and aria-expanded must be false.
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument()
     expect(input).toHaveAttribute("aria-expanded", "false")
+  })
+
+  it("only sets aria-controls while the listbox is in the DOM", () => {
+    render(
+      <Combobox inputLabel="Fruit" onSelect={vi.fn()} options={options} placeholder="Pick..." />,
+    )
+    const input = screen.getByRole("combobox")
+    // Closed on mount: no dangling reference to a non-existent listbox.
+    expect(input).not.toHaveAttribute("aria-controls")
+
+    fireEvent.focus(input)
+    const listboxId = screen.getByRole("listbox").id
+    expect(input).toHaveAttribute("aria-controls", listboxId)
+
+    fireEvent.change(input, { target: { value: "zzz" } })
+    expect(input).not.toHaveAttribute("aria-controls")
   })
 
   it("calls scrollIntoView on the active option when navigating with keyboard", () => {
