@@ -669,4 +669,31 @@ describe("SourceConnectionsPage", () => {
     expect(screen.getByRole("button", { name: "Edit" })).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Delete" })).toBeInTheDocument()
   })
+
+  it("moves focus into the first form field when the panel is revealed", async () => {
+    mockApiWithConnection()
+    renderPage()
+
+    await screen.findByText("Jira Prod")
+    fireEvent.click(screen.getByRole("button", { name: "Add connection" }))
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/Connection name/)).toHaveFocus()
+    })
+  })
+
+  it("returns focus to the reveal button when the panel is cancelled", async () => {
+    mockApiWithConnection()
+    renderPage()
+
+    await screen.findByText("Jira Prod")
+    fireEvent.click(screen.getByRole("button", { name: "Add connection" }))
+    await screen.findByLabelText(/^Base URL/)
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }))
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Add connection" })).toHaveFocus()
+    })
+  })
 })
