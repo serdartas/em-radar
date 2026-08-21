@@ -1194,9 +1194,13 @@ def _code_fetch_window(
                 end=end,
                 team_profile_id=window.team_profile_id,
             )
+        # No start_date: fall back to a 14-day lookback ending at the sprint's window end.
+        # Anchoring on `end` (the completion date for closed sprints) keeps start <= end;
+        # anchoring on started_at would push start past a much older complete_date, producing
+        # a reversed window that silently excludes every terminal merge request.
         return EvaluationWindow(
             window_type=WindowType.DATE_RANGE,
-            start=started_at - timedelta(days=DEFAULT_KANBAN_REPORT_DAYS),
+            start=end - timedelta(days=DEFAULT_KANBAN_REPORT_DAYS),
             end=end,
             team_profile_id=window.team_profile_id,
         )

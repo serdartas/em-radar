@@ -442,6 +442,28 @@ def test_delete_report_history_per_team(
         assert jobs[0].team_profile_id == team_b_id
 
 
+def test_delete_report_history_removes_job_without_window(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+) -> None:
+    """A report that failed before persisting an evaluation window leaves a job row but no window.
+    Per-team deletion must still remove that job row rather than short-circuiting on empty windows."""
+    conn_id = _create_jira_connection(api_client)
+    scope_id = _create_scope(api_client, conn_id)
+    team_id = UUID(_create_team(api_client, conn_id, scope_id))
+
+    _create_minimal_job(session_factory, team_id)
+
+    with session_factory() as session:
+        assert session.exec(select(EvaluationWindowTable)).first() is None
+        assert session.exec(select(ReportJobTable)).first() is not None
+
+    assert api_client.delete(f"/api/reports?team_id={team_id}").status_code == 204
+
+    with session_factory() as session:
+        assert session.exec(select(ReportJobTable)).first() is None
+
+
 def test_delete_report_history_unknown_team_is_noop(api_client: TestClient) -> None:
     assert api_client.delete(f"/api/reports?team_id={uuid4()}").status_code == 204
 

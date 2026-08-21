@@ -37,4 +37,15 @@ describe("JiraHelpPage", () => {
     expect(screen.getAllByText(/Browse Projects/).length).toBeGreaterThan(0)
     expect(screen.getByText(/EM Radar never writes to Jira/)).toBeInTheDocument()
   })
+
+  it("renders the Jira Cloud token section via HelpDocCard as an h2 heading", () => {
+    render(
+      <MemoryRouter>
+        <JiraHelpPage />
+      </MemoryRouter>,
+    )
+
+    // HelpDocCard renders its title as <h2> for heading navigation
+    expect(screen.getByRole("heading", { level: 2, name: "Jira Cloud - API token" })).toBeInTheDocument()
+  })
 })

@@ -46,12 +46,18 @@ def get_findings(session: Session, report_id: UUID) -> list[SignalFindingTable]:
 
 def delete_reports_for_team(session: Session, team_id: UUID) -> None:
     """Delete all reports, findings, evaluation windows, and job rows for a team."""
+    # Delete job rows first: a report that failed before persisting an evaluation window
+    # (no source, unresolvable sprint) leaves a ReportJobTable row but no window, so this
+    # must run even when the team has no windows.
+    session.exec(delete(ReportJobTable).where(ReportJobTable.team_profile_id == team_id))
+
     window_ids: list[UUID] = list(
         session.exec(
             select(EvaluationWindowTable.id).where(EvaluationWindowTable.team_profile_id == team_id)
         )
     )
     if not window_ids:
+        session.commit()
         return
 
     report_ids: list[UUID] = list(
@@ -62,9 +68,6 @@ def delete_reports_for_team(session: Session, team_id: UUID) -> None:
     session.exec(delete(ReportTable).where(ReportTable.evaluation_window_id.in_(window_ids)))
     session.exec(
         delete(EvaluationWindowTable).where(EvaluationWindowTable.team_profile_id == team_id)
-    )
-    session.exec(
-        delete(ReportJobTable).where(ReportJobTable.team_profile_id == team_id)
     )
     session.commit()
 
