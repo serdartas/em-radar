@@ -413,8 +413,11 @@ function operatorsForJiraFieldType(fieldType: string | null): {
     case "string":
       return { operators: ["is_empty", "is_not_empty"], values: [] }
     case "option":
-    case "array":
       return { operators: ["is", "is_not"], values: [] }
+    case "array":
+      // list[str] coercion means is/is_not always mismatch; contains/does_not_contain
+      // compare correctly against list values and are in the engine allowlist.
+      return { operators: ["contains", "does_not_contain"], values: [] }
     default:
       return { operators: ["is", "is_not", "is_empty", "is_not_empty"], values: [] }
   }

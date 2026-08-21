@@ -49,6 +49,7 @@ const JIRA_CUSTOM_FIELDS: JiraFieldInfo[] = [
   { id: "customfield_10001", name: "Priority Score", custom: true, field_type: "number" },
   { id: "customfield_10002", name: "Team", custom: true, field_type: "option" },
   { id: "customfield_10003", name: "Notes", custom: true, field_type: "string" },
+  { id: "customfield_10004", name: "Labels List", custom: true, field_type: "array" },
 ]
 
 const FIELDS_BY_ENTITY: Record<string, SignalField[]> = {
@@ -138,10 +139,11 @@ describe("SignalCreateForm — custom field picker", () => {
       .filter((o) => !o.disabled)
       .map((o) => o.text)
 
-    // Sorted: "Notes", "Priority Score", "Team"
-    expect(optionLabels[0]).toMatch(/Notes/)
-    expect(optionLabels[1]).toMatch(/Priority Score/)
-    expect(optionLabels[2]).toMatch(/Team/)
+    // Sorted alphabetically: "Labels List", "Notes", "Priority Score", "Team"
+    expect(optionLabels[0]).toMatch(/Labels List/)
+    expect(optionLabels[1]).toMatch(/Notes/)
+    expect(optionLabels[2]).toMatch(/Priority Score/)
+    expect(optionLabels[3]).toMatch(/Team/)
   })
 
   it("shows a placeholder 'Choose a field...' when no specific custom field is picked yet", () => {
@@ -333,5 +335,77 @@ describe("SignalCreateForm — sentinel guard", () => {
     })
 
     expect(screen.getByRole("button", { name: "Save signal" })).not.toBeDisabled()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Array field type uses contains/does_not_contain
+// ---------------------------------------------------------------------------
+
+describe("SignalCreateForm — array field type operators", () => {
+  it("array field type shows contains / does not contain operators", () => {
+    renderForm({ jiraCustomFields: JIRA_CUSTOM_FIELDS })
+
+    fireEvent.change(screen.getByLabelText("Field"), { target: { value: "__custom__" } })
+    fireEvent.change(screen.getByLabelText("Jira field"), {
+      target: { value: "customfield_10004" }, // Labels List — array
+    })
+
+    const operatorSelect = screen.getByLabelText("Operator") as HTMLSelectElement
+    const optionLabels = Array.from(operatorSelect.options).map((o) => o.text)
+    expect(optionLabels).toContain("contains")
+    expect(optionLabels).toContain("does not contain")
+    expect(optionLabels).not.toContain("is")
+    expect(optionLabels).not.toContain("is not")
+  })
+
+  it("array field type renders a value input (contains is value-bearing)", () => {
+    renderForm({ jiraCustomFields: JIRA_CUSTOM_FIELDS })
+
+    fireEvent.change(screen.getByLabelText("Field"), { target: { value: "__custom__" } })
+    fireEvent.change(screen.getByLabelText("Jira field"), {
+      target: { value: "customfield_10004" }, // Labels List — array
+    })
+
+    // contains is not a no-value operator so the value control must render
+    expect(screen.getByLabelText("Value")).toBeInTheDocument()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Operator label correctness (humanizeOperator mapping)
+// ---------------------------------------------------------------------------
+
+describe("SignalCreateForm — operator label correctness", () => {
+  it("renders 'does not contain' label for does_not_contain operator", () => {
+    renderForm({ jiraCustomFields: JIRA_CUSTOM_FIELDS })
+
+    fireEvent.change(screen.getByLabelText("Field"), { target: { value: "__custom__" } })
+    fireEvent.change(screen.getByLabelText("Jira field"), {
+      target: { value: "customfield_10004" }, // Labels List — array
+    })
+
+    const operatorSelect = screen.getByLabelText("Operator") as HTMLSelectElement
+    const optionTexts = Array.from(operatorSelect.options).map((o) => o.text)
+    expect(optionTexts).toContain("does not contain")
+    expect(optionTexts).not.toContain("does_not_contain")
+  })
+
+  it("underlying operator value is does_not_contain when label shows 'does not contain'", () => {
+    const { onSave } = renderForm({ jiraCustomFields: JIRA_CUSTOM_FIELDS })
+
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "My signal" } })
+    fireEvent.change(screen.getByLabelText("Field"), { target: { value: "__custom__" } })
+    fireEvent.change(screen.getByLabelText("Jira field"), {
+      target: { value: "customfield_10004" },
+    })
+    fireEvent.change(screen.getByLabelText("Operator"), { target: { value: "does_not_contain" } })
+    fireEvent.click(screen.getByRole("button", { name: "Save signal" }))
+
+    expect(onSave).toHaveBeenCalledOnce()
+    const call = onSave.mock.calls[0][0] as {
+      expression: { conditions: Array<{ operator: string }> }
+    }
+    expect(call.expression.conditions[0].operator).toBe("does_not_contain")
   })
 })
