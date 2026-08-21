@@ -5,6 +5,7 @@ import { useIsMutating, useMutation, useQueryClient } from "@tanstack/react-quer
 import { useNavigate } from "react-router-dom"
 
 import { ConnectionForm } from "@/components/connections/ConnectionForm"
+import { WizardStepFooter } from "@/components/setup/WizardStepFooter"
 import { CodeSourcePicker } from "@/components/teams/CodeSourcePicker"
 import { SignalGroupAttachList } from "@/components/teams/SignalGroupAttachList"
 import { TaskBoardPicker } from "@/components/teams/TaskBoardPicker"
@@ -60,6 +61,9 @@ export function SetupPage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [step, setStep] = useState<Step>("welcome")
+  // High-water mark: only advances on forward transitions; never decremented on Back.
+  // Drives pill interactivity so previously-entered steps stay clickable after back-navigation.
+  const [furthestStep, setFurthestStep] = useState<Step>("welcome")
   const [currentTeamId, setCurrentTeamId] = useState<string | null>(null)
   const [initialized, setInitialized] = useState(false)
 
@@ -78,10 +82,19 @@ export function SetupPage() {
       }
     },
     onSuccess: () => {
-      saveWizardProgress({ step, currentTeamId, completed: true })
+      saveWizardProgress({ step, currentTeamId, furthestStep, completed: true })
       navigate("/", { replace: true })
     },
   })
+
+  // Navigate to a step. Advances the furthestStep high-water mark on forward transitions;
+  // going back leaves furthestStep unchanged so previously-entered pills stay clickable.
+  function goToStep(newStep: Step) {
+    setStep(newStep)
+    setFurthestStep((prev) =>
+      STEP_ORDER.indexOf(newStep) > STEP_ORDER.indexOf(prev) ? newStep : prev,
+    )
+  }
 
   // Resumability: prefer explicit persisted wizard progress; otherwise infer from stored data.
   // Rendering is gated until this resolves so returning users never see a Welcome flash.
@@ -103,22 +116,28 @@ export function SetupPage() {
       const canResume = persisted.step !== "sources" || teamValid
       if (canResume) {
         setStep(persisted.step)
+        setFurthestStep(persisted.furthestStep)
         setCurrentTeamId(teamValid ? persisted.currentTeamId : null)
         setInitialized(true)
         return
       }
     }
 
+    // Heuristic fallback: infer the right entry point from stored data.
     if (teams.length > 0) {
       const incomplete = teams.find((team) => !teamHasSources(team)) ?? teams[teams.length - 1]
       setCurrentTeamId(incomplete.id)
       setStep("sources")
+      setFurthestStep("sources")
     } else if (jiraConnections.length > 0) {
       setStep("team")
+      setFurthestStep("team")
     } else if (connections.length > 0) {
       setStep("jira")
+      setFurthestStep("jira")
     } else {
       setStep("welcome")
+      setFurthestStep("welcome")
     }
     setInitialized(true)
   }, [initialized, isLoading, teams, jiraConnections, connections, navigate])
@@ -126,8 +145,8 @@ export function SetupPage() {
   // Persist each transition so closing the browser mid-wizard resumes at the right step.
   useEffect(() => {
     if (!initialized || finishMutation.isSuccess) return
-    saveWizardProgress({ step, currentTeamId, completed: false })
-  }, [initialized, step, currentTeamId, finishMutation.isSuccess])
+    saveWizardProgress({ step, currentTeamId, furthestStep, completed: false })
+  }, [initialized, step, currentTeamId, furthestStep, finishMutation.isSuccess])
 
   const currentTeam = teams.find((team) => team.id === currentTeamId) ?? null
 
@@ -143,18 +162,24 @@ export function SetupPage() {
         </p>
       </header>
 
-      <WizardProgress current={step} />
+      <WizardProgress
+        current={step}
+        furthestStep={furthestStep}
+        onGoToStep={goToStep}
+        sourcesReachable={currentTeamId !== null}
+      />
 
       {!initialized && <p className="text-sm text-slate-500">Loading setup...</p>}
 
-      {initialized && step === "welcome" && <WelcomeStep onStart={() => setStep("jira")} />}
+      {initialized && step === "welcome" && <WelcomeStep onStart={() => goToStep("jira")} />}
 
       {step === "jira" && (
         <ConnectionStep
           connections={jiraConnections}
           description="Add a named Jira connection. It is required to run work-item signals. Credentials are stored locally and shown masked."
           lockConnectorName="jira"
-          onContinue={() => setStep("gitlab")}
+          onBack={() => goToStep("welcome")}
+          onContinue={() => goToStep("gitlab")}
           optional={false}
           title="Connect your ticketing source (Jira)"
         />
@@ -165,8 +190,8 @@ export function SetupPage() {
           connections={codeConnections}
           description="Add a named GitLab connection for merge-request signals. This step is optional but recommended."
           lockConnectorName="gitlab"
-          onBack={() => setStep("jira")}
-          onContinue={() => setStep("team")}
+          onBack={() => goToStep("jira")}
+          onContinue={() => goToStep("team")}
           optional
           title="Connect your code source (GitLab)"
         />
@@ -175,10 +200,10 @@ export function SetupPage() {
       {step === "team" && (
         <TeamStep
           groups={groups}
-          onBack={() => setStep("gitlab")}
+          onBack={() => goToStep("gitlab")}
           onCreated={(team) => {
             setCurrentTeamId(team.id)
-            setStep("sources")
+            goToStep("sources")
           }}
         />
       )}
@@ -193,9 +218,13 @@ export function SetupPage() {
           groups={groups}
           jiraConnections={jiraConnections}
           onAddAnother={() => {
+            // Starting a fresh team context: Sources is no longer reachable until a new
+            // team is created, so reset the high-water mark back to "team".
             setCurrentTeamId(null)
             setStep("team")
+            setFurthestStep("team")
           }}
+          onBack={() => goToStep("team")}
           onFinish={() => finishMutation.mutate()}
           team={currentTeam}
         />
@@ -204,32 +233,80 @@ export function SetupPage() {
   )
 }
 
-function WizardProgress({ current }: { current: Step }) {
+// ---------------------------------------------------------------------------
+// WizardProgress
+// ---------------------------------------------------------------------------
+
+function WizardProgress({
+  current,
+  furthestStep,
+  onGoToStep,
+  sourcesReachable,
+}: {
+  current: Step
+  furthestStep: Step
+  onGoToStep: (step: Step) => void
+  /** False when currentTeamId is null; prevents the Sources pill from being
+   *  interactive even if furthestStep covers it, avoiding a null-team render. */
+  sourcesReachable: boolean
+}) {
   const currentIndex = STEP_ORDER.indexOf(current)
+  const furthestIndex = STEP_ORDER.indexOf(furthestStep)
+
   return (
     <ol aria-label="Setup progress" className="flex flex-wrap gap-2 text-xs">
       {STEP_ORDER.map((step, index) => {
-        const state = index < currentIndex ? "done" : index === currentIndex ? "current" : "todo"
+        const isCurrent = index === currentIndex
+        // A step is "done" (previously entered, clickable) when its index is at or before
+        // the furthest step reached AND it is not the current step. The Sources step also
+        // requires a selected team so clicking it never opens SourcesStep with team === null.
+        const isStepReachable = step !== "sources" || sourcesReachable
+        const isDone = !isCurrent && index <= furthestIndex && isStepReachable
+        const label = `${index + 1}. ${STEP_LABELS[step]}`
+
+        if (isCurrent) {
+          return (
+            <li
+              aria-current="step"
+              className="rounded-full border border-primary bg-primary px-3 py-1 font-medium text-primary-foreground"
+              key={step}
+            >
+              {label}
+            </li>
+          )
+        }
+
+        if (isDone) {
+          return (
+            <li key={step}>
+              <button
+                className="rounded-full border border-green-300 bg-green-50 px-3 py-1 font-medium text-green-800 hover:bg-green-100"
+                onClick={() => onGoToStep(step)}
+                type="button"
+              >
+                {label}
+              </button>
+            </li>
+          )
+        }
+
+        // Future / not yet reached: non-interactive, visually de-emphasised.
         return (
           <li
-            aria-current={state === "current" ? "step" : undefined}
-            className={
-              "rounded-full border px-3 py-1 font-medium " +
-              (state === "current"
-                ? "border-primary bg-primary text-primary-foreground"
-                : state === "done"
-                  ? "border-green-300 bg-green-50 text-green-800"
-                  : "border-slate-200 text-slate-500")
-            }
+            className="rounded-full border border-slate-200 px-3 py-1 font-medium text-slate-400 opacity-50"
             key={step}
           >
-            {index + 1}. {STEP_LABELS[step]}
+            {label}
           </li>
         )
       })}
     </ol>
   )
 }
+
+// ---------------------------------------------------------------------------
+// WelcomeStep
+// ---------------------------------------------------------------------------
 
 function WelcomeStep({ onStart }: { onStart: () => void }) {
   return (
@@ -253,6 +330,10 @@ function WelcomeStep({ onStart }: { onStart: () => void }) {
   )
 }
 
+// ---------------------------------------------------------------------------
+// ConnectionStep
+// ---------------------------------------------------------------------------
+
 function ConnectionStep({
   connections,
   description,
@@ -272,6 +353,10 @@ function ConnectionStep({
 }) {
   const { connectors } = useTeamSetupData()
   const canContinue = optional || connections.length > 0
+  const successMessage =
+    connections.length > 0
+      ? `${connections.length === 1 ? "Connection" : `${connections.length} connections`} saved. Ready to continue.`
+      : undefined
 
   return (
     <div className="space-y-4">
@@ -295,19 +380,20 @@ function ConnectionStep({
 
       <ConnectionForm connectors={connectors} lockConnectorName={lockConnectorName} />
 
-      <div className="flex flex-wrap gap-3">
-        {onBack && (
-          <Button onClick={onBack} variant="outline">
-            Back
-          </Button>
-        )}
-        <Button disabled={!canContinue} onClick={onContinue}>
-          {optional && connections.length === 0 ? "Skip for now" : "Continue"}
-        </Button>
-      </div>
+      <WizardStepFooter
+        onBack={onBack}
+        onPrimary={onContinue}
+        primaryDisabled={!canContinue}
+        primaryLabel={optional && connections.length === 0 ? "Skip for now" : "Continue"}
+        successMessage={successMessage}
+      />
     </div>
   )
 }
+
+// ---------------------------------------------------------------------------
+// TeamStep
+// ---------------------------------------------------------------------------
 
 function TeamStep({
   groups,
@@ -355,17 +441,12 @@ function TeamStep({
             value={name}
           />
         </div>
-        <div className="flex flex-wrap gap-3">
-          <Button onClick={onBack} variant="outline">
-            Back
-          </Button>
-          <Button
-            disabled={createMutation.isPending || name.trim().length === 0}
-            onClick={submit}
-          >
-            {createMutation.isPending ? "Creating..." : "Create team"}
-          </Button>
-        </div>
+        <WizardStepFooter
+          onBack={onBack}
+          onPrimary={submit}
+          primaryDisabled={createMutation.isPending || name.trim().length === 0}
+          primaryLabel={createMutation.isPending ? "Creating..." : "Create team"}
+        />
         {createMutation.isError && (
           <p className="text-sm text-red-700" role="alert">
             {apiErrorMessage(createMutation.error, "Failed to create the team. Please try again.")}
@@ -376,6 +457,10 @@ function TeamStep({
   )
 }
 
+// ---------------------------------------------------------------------------
+// SourcesStep
+// ---------------------------------------------------------------------------
+
 function SourcesStep({
   boardScopes,
   busy,
@@ -385,6 +470,7 @@ function SourcesStep({
   groups,
   jiraConnections,
   onAddAnother,
+  onBack,
   onFinish,
   team,
 }: {
@@ -396,6 +482,7 @@ function SourcesStep({
   groups: SignalConfigGroup[]
   jiraConnections: SourceConnection[]
   onAddAnother: () => void
+  onBack: () => void
   onFinish: () => void
   team: TeamProfile | null
 }) {
@@ -423,14 +510,17 @@ function SourcesStep({
         </CardContent>
       </Card>
 
-      <div className="flex flex-wrap gap-3">
-        <Button disabled={busy || finishPending} onClick={onAddAnother} variant="outline">
-          Add another team
-        </Button>
-        <Button disabled={busy || finishPending} onClick={onFinish}>
-          {finishPending ? "Starting sync..." : busy ? "Saving sources..." : "Finish setup"}
-        </Button>
-      </div>
+      <WizardStepFooter
+        onBack={onBack}
+        onPrimary={onFinish}
+        primaryDisabled={busy || finishPending}
+        primaryLabel={finishPending ? "Starting sync..." : busy ? "Saving sources..." : "Finish setup"}
+        secondaryActions={
+          <Button disabled={busy || finishPending} onClick={onAddAnother} variant="outline">
+            Add another team
+          </Button>
+        }
+      />
       {finishError !== null && (
         <p className="text-sm text-red-700" role="alert">
           {apiErrorMessage(finishError, "The initial sync failed. Please try again.")}
