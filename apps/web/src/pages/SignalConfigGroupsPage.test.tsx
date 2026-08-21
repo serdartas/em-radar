@@ -80,6 +80,24 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+describe("SignalConfigGroupsPage — create form", () => {
+  it("uses InlineCreateRow with shared Input for the new-group form", async () => {
+    mockApi()
+    renderPage()
+
+    // The label and input are wired via InlineCreateRow (shared Input component)
+    const input = await screen.findByLabelText("New group name")
+    expect(input.tagName).toBe("INPUT")
+
+    // The create button is present and disabled when the input is empty
+    expect(screen.getByRole("button", { name: "Create group" })).toBeDisabled()
+
+    // Typing a name enables the button
+    fireEvent.change(input, { target: { value: "Backend signals" } })
+    expect(screen.getByRole("button", { name: "Create group" })).not.toBeDisabled()
+  })
+})
+
 describe("SignalConfigGroupsPage", () => {
   it("creates a group and adds a signal to it", async () => {
     const fetchMock = mockApi()

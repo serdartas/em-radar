@@ -211,8 +211,12 @@ function renderPage() {
   )
 }
 
-/** Drives the picker to the board selection step via the new Combobox interaction. */
-async function selectUpToBoard(boards: typeof scrumBoards) {
+/** Opens a TeamCard into edit mode, then drives the picker to board selection. */
+async function expandTeamAndSelectUpToBoard(boards: typeof scrumBoards) {
+  // Wait for team to appear in summary mode then expand to editing mode.
+  await screen.findByText("Platform")
+  fireEvent.click(screen.getByRole("button", { name: "Edit Platform" }))
+
   const connSelect = await screen.findByRole("combobox", { name: "Ticketing connection" })
   fireEvent.change(connSelect, { target: { value: "conn-1" } })
 
@@ -236,10 +240,83 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+describe("TeamsPage — create form", () => {
+  it("uses InlineCreateRow with shared Input for the new-team form", async () => {
+    mockApi()
+    renderPage()
+
+    // The label and input must be wired via InlineCreateRow (shared Input component)
+    const input = await screen.findByLabelText("New team name")
+    expect(input.tagName).toBe("INPUT")
+
+    // The create button must be present and disabled when the input is empty
+    expect(screen.getByRole("button", { name: "Create team" })).toBeDisabled()
+
+    // Typing a name enables the button
+    fireEvent.change(input, { target: { value: "Backend" } })
+    expect(screen.getByRole("button", { name: "Create team" })).not.toBeDisabled()
+  })
+})
+
+describe("TeamsPage — TeamCard saved-vs-draft state", () => {
+  it("renders a saved team as a settled summary without showing the edit controls", async () => {
+    mockApi()
+    renderPage()
+
+    // Team name appears in summary
+    await screen.findByText("Platform")
+
+    // Edit button is present
+    expect(screen.getByRole("button", { name: "Edit Platform" })).toBeInTheDocument()
+
+    // Pickers are NOT shown in summary mode
+    expect(screen.queryByRole("combobox", { name: "Ticketing connection" })).toBeNull()
+    expect(screen.queryByLabelText("Code source")).toBeNull()
+    expect(screen.queryByRole("button", { name: "Attach" })).toBeNull()
+  })
+
+  it("shows edit controls after clicking Edit and collapses them after clicking Done", async () => {
+    mockApi()
+    renderPage()
+
+    await screen.findByText("Platform")
+    fireEvent.click(screen.getByRole("button", { name: "Edit Platform" }))
+
+    // Pickers are now visible
+    expect(await screen.findByRole("combobox", { name: "Ticketing connection" })).toBeInTheDocument()
+
+    // Done button collapses back to summary
+    fireEvent.click(screen.getByRole("button", { name: "Done" }))
+    await waitFor(() => {
+      expect(screen.queryByRole("combobox", { name: "Ticketing connection" })).toBeNull()
+    })
+    expect(screen.getByRole("button", { name: "Edit Platform" })).toBeInTheDocument()
+  })
+
+  it("summary view is visually distinct from the add-a-team affordance", async () => {
+    mockApi()
+    renderPage()
+
+    await screen.findByText("Platform")
+
+    // The create affordance has "New team name" label and "Create team" button
+    expect(screen.getByLabelText("New team name")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Create team" })).toBeInTheDocument()
+
+    // The saved team has an Edit button, not a Create button
+    expect(screen.getByRole("button", { name: "Edit Platform" })).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Create team Platform" })).toBeNull()
+  })
+})
+
 describe("TeamsPage — signal config group", () => {
   it("attaches a signal config group to a team", async () => {
     const fetchMock = mockApi()
     renderPage()
+
+    // Expand the team card to editing mode before interacting with pickers
+    await screen.findByText("Platform")
+    fireEvent.click(screen.getByRole("button", { name: "Edit Platform" }))
 
     fireEvent.click(await screen.findByRole("button", { name: "Attach" }))
 
@@ -259,6 +336,9 @@ describe("TeamsPage — task-board source picker", () => {
     mockApi()
     renderPage()
 
+    await screen.findByText("Platform")
+    fireEvent.click(screen.getByRole("button", { name: "Edit Platform" }))
+
     const connSelect = await screen.findByRole("combobox", { name: "Ticketing connection" })
     fireEvent.change(connSelect, { target: { value: "conn-1" } })
 
@@ -277,6 +357,9 @@ describe("TeamsPage — task-board source picker", () => {
   it("filters the board list as the user types", async () => {
     mockApi({ boards: [...scrumBoards, ...kanbanBoards] })
     renderPage()
+
+    await screen.findByText("Platform")
+    fireEvent.click(screen.getByRole("button", { name: "Edit Platform" }))
 
     const connSelect = await screen.findByRole("combobox", { name: "Ticketing connection" })
     fireEvent.change(connSelect, { target: { value: "conn-1" } })
@@ -303,7 +386,7 @@ describe("TeamsPage — task-board source picker", () => {
     const fetchMock = mockApi()
     renderPage()
 
-    await selectUpToBoard(scrumBoards)
+    await expandTeamAndSelectUpToBoard(scrumBoards)
     await screen.findByRole("combobox", { name: "Working mode" })
 
     fireEvent.click(screen.getByRole("button", { name: "Save board source" }))
@@ -336,7 +419,7 @@ describe("TeamsPage — task-board source picker", () => {
     const fetchMock = mockApi({ boards: kanbanBoards, sprintsResponse: [] })
     renderPage()
 
-    await selectUpToBoard(kanbanBoards)
+    await expandTeamAndSelectUpToBoard(kanbanBoards)
     await screen.findByRole("combobox", { name: "Working mode" })
 
     fireEvent.click(screen.getByRole("button", { name: "Save board source" }))
@@ -358,6 +441,8 @@ describe("TeamsPage — task-board source picker", () => {
     renderPage()
 
     await screen.findByText("Platform")
+    fireEvent.click(screen.getByRole("button", { name: "Edit Platform" }))
+
     await screen.findByRole("combobox", { name: "Ticketing connection" })
 
     expect(screen.getByRole("button", { name: "Save board source" })).toBeDisabled()
@@ -369,7 +454,7 @@ describe("TeamsPage — task-board source picker", () => {
     })
     renderPage()
 
-    await selectUpToBoard(scrumBoards)
+    await expandTeamAndSelectUpToBoard(scrumBoards)
     await screen.findByRole("combobox", { name: "Working mode" })
 
     fireEvent.click(screen.getByRole("button", { name: "Save board source" }))
@@ -395,7 +480,7 @@ describe("TeamsPage — task-board source picker", () => {
     renderPage()
 
     // Drive to board selection — sprints are pending (deferred)
-    await selectUpToBoard(scrumBoards)
+    await expandTeamAndSelectUpToBoard(scrumBoards)
 
     // Working mode section appears from board.type detection before sprints load
     const modeSelect = await screen.findByRole("combobox", { name: "Working mode" })
@@ -430,7 +515,7 @@ describe("TeamsPage — task-board source picker", () => {
     mockApi()
     renderPage()
 
-    await selectUpToBoard(scrumBoards)
+    await expandTeamAndSelectUpToBoard(scrumBoards)
 
     // Wait until sprint data has been applied to the field (14 days from mock sprint data).
     // This ensures no pending detection effect can override the clear that follows.
@@ -451,6 +536,9 @@ describe("TeamsPage — task-board source picker", () => {
     mockApi({ connectors: [ticketingConnector], connections: [] })
     renderPage()
 
+    await screen.findByText("Platform")
+    fireEvent.click(screen.getByRole("button", { name: "Edit Platform" }))
+
     expect(
       await screen.findByText(/no code connections available/i),
     ).toBeInTheDocument()
@@ -462,6 +550,9 @@ describe("TeamsPage — task-board source picker", () => {
       connections: [gitlabConnection],
     })
     renderPage()
+
+    await screen.findByText("Platform")
+    fireEvent.click(screen.getByRole("button", { name: "Edit Platform" }))
 
     fireEvent.change(await screen.findByLabelText("Code source"), {
       target: { value: "conn-gitlab" },
@@ -499,6 +590,9 @@ describe("TeamsPage — task-board source picker", () => {
     })
 
     renderPage()
+
+    await screen.findByText("Platform")
+    fireEvent.click(screen.getByRole("button", { name: "Edit Platform" }))
 
     fireEvent.change(await screen.findByLabelText("Code source"), {
       target: { value: "" },
