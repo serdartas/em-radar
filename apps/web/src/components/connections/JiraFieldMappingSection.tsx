@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { useId, useState, type ReactNode } from "react"
+import { useEffect, useId, useState, type ReactNode } from "react"
 import { useQuery } from "@tanstack/react-query"
 
 import { Callout } from "@/components/ui/callout"
@@ -123,12 +123,26 @@ interface JiraFieldMappingSectionProps {
   connectionId?: string
   fieldMappingValues?: FieldMappingValues
   onFieldMappingChange: (values: FieldMappingValues) => void
+  /**
+   * Default value for story_points, sourced from the connector's config_schema
+   * (`$defs.JiraFieldMappingConfig.properties.story_points.default`).
+   * Emitted when the user turns SP off, so any stored override is reset via deep-merge.
+   */
+  storyPointsDefault: string
+  /**
+   * Default value for acceptance_criteria_heading, sourced from the connector's config_schema
+   * (`$defs.JiraFieldMappingConfig.properties.acceptance_criteria_heading.default`).
+   * Emitted as the heading when AC is enabled in description mode and no heading is set.
+   */
+  acHeadingDefault: string
 }
 
 export function JiraFieldMappingSection({
+  acHeadingDefault,
   connectionId,
   fieldMappingValues,
   onFieldMappingChange,
+  storyPointsDefault,
 }: JiraFieldMappingSectionProps) {
   const spSwitchId = useId()
   const acSwitchId = useId()
@@ -137,13 +151,17 @@ export function JiraFieldMappingSection({
   const acCustomFieldId = useId()
   const spFieldSelectId = useId()
 
-  // spForcedOpen is true only while the user has clicked the switch ON without
-  // a value being present yet (e.g. unsaved connection, no discovered fields).
-  // It is reset to false when the switch is turned OFF or when a value arrives
-  // via props. This avoids the once-only initialiser problem: spEnabled is
-  // re-derived on every render so it stays in sync when fieldMappingValues
-  // changes due to add↔edit transitions without unmounting the component.
+  // spForcedOpen is true only while the user clicked the switch ON without a value
+  // present (e.g. unsaved connection, no discovered fields). It is reset to false on
+  // disable or when connectionId changes so it never leaks into a different connection.
   const [spForcedOpen, setSpForcedOpen] = useState(false)
+
+  // Reset the forced-open state whenever the connection context changes.
+  // This prevents an "open but no value" SP toggle from carrying over to
+  // the next connection loaded into the same mounted form.
+  useEffect(() => {
+    setSpForcedOpen(false)
+  }, [connectionId])
 
   const { data: allFields = [] } = useQuery({
     queryKey: ["jiraFields", connectionId],
@@ -160,27 +178,47 @@ export function JiraFieldMappingSection({
   const acCustomField = fieldMappingValues?.acceptance_criteria ?? null
   const acHeading = fieldMappingValues?.acceptance_criteria_heading ?? null
 
-  // spEnabled re-syncs from props on every render (mirrors AC derivation).
-  // It is true when a saved value exists in props OR the user has explicitly
-  // clicked the switch ON (spForcedOpen) to reveal the control before picking.
+  // spEnabled re-syncs from props on every render (mirrors AC's fully-derived approach).
+  // It is true when a saved value exists in props OR when the user explicitly clicked ON.
   const spEnabled = storyPointsValue !== "" || spForcedOpen
 
   // AC enabled/mode are fully derived from props (AC always sets a non-null value on enable).
   const acEnabled = acCustomField !== null || acHeading !== null
   const acMode: AcMode = acCustomField !== null ? "custom_field" : "description"
 
-  // Returns the current AC values for use in every emitted FieldMappingValues object.
-  // story_points is included only when a non-empty value is stored in props so we never
-  // emit story_points: "" to the backend.
-  function currentBase(): FieldMappingValues {
-    const base: FieldMappingValues = {
+  // ── Helpers for building the emitted FieldMappingValues ──────────────────
+  //
+  // story_points is ALWAYS emitted:
+  //  - When SP is on and has a value: emit that value.
+  //  - When SP is off or has no value yet: emit the schema default so any
+  //    previously stored override is cleared via the backend's deep-merge.
+  // AC keys are emitted ONLY when the user has actively configured AC;
+  // omitting them preserves whatever the backend already stores (or its default).
+
+  function currentSpPart(): { story_points: string } {
+    return {
+      story_points: spEnabled && storyPointsValue ? storyPointsValue : storyPointsDefault,
+    }
+  }
+
+  function currentAcPart(): Partial<FieldMappingValues> {
+    if (!acEnabled) {
+      // AC not configured: omit AC keys so stored behavior is preserved.
+      return {}
+    }
+    if (acMode === "description") {
+      return {
+        acceptance_criteria: null,
+        // Use the schema default heading if none is stored so we never emit null
+        // in description mode, which would disable the connector's default extraction.
+        acceptance_criteria_heading: acHeading ?? acHeadingDefault,
+      }
+    }
+    // custom_field mode
+    return {
       acceptance_criteria: acCustomField,
-      acceptance_criteria_heading: acHeading,
+      acceptance_criteria_heading: null,
     }
-    if (storyPointsValue) {
-      base.story_points = storyPointsValue
-    }
-    return base
   }
 
   // ── Story Points handlers ─────────────────────────────────────────────────
@@ -188,10 +226,11 @@ export function JiraFieldMappingSection({
   function handleSpToggle(on: boolean) {
     setSpForcedOpen(on)
     if (!on) {
-      // Omit story_points so the backend default applies; never emit story_points: "".
+      // SP turned off: emit the schema default so any stored custom-field override
+      // is reset by the deep-merge. Never omit story_points when turning off.
       onFieldMappingChange({
-        acceptance_criteria: acCustomField,
-        acceptance_criteria_heading: acHeading,
+        story_points: storyPointsDefault,
+        ...currentAcPart(),
       })
     }
     // When enabling: do NOT pre-select a field. The revealed control shows
@@ -199,13 +238,10 @@ export function JiraFieldMappingSection({
   }
 
   function handleSpChange(value: string) {
-    const next: FieldMappingValues = { ...currentBase() }
-    if (value) {
-      next.story_points = value
-    } else {
-      delete next.story_points
-    }
-    onFieldMappingChange(next)
+    onFieldMappingChange({
+      story_points: value || storyPointsDefault,
+      ...currentAcPart(),
+    })
   }
 
   // ── Acceptance Criteria handlers ─────────────────────────────────────────
@@ -213,13 +249,13 @@ export function JiraFieldMappingSection({
   function handleAcToggle(on: boolean) {
     if (on) {
       onFieldMappingChange({
-        ...currentBase(),
+        ...currentSpPart(),
         acceptance_criteria: null,
-        acceptance_criteria_heading: "### Acceptance Criteria",
+        acceptance_criteria_heading: acHeadingDefault,
       })
     } else {
       onFieldMappingChange({
-        ...currentBase(),
+        ...currentSpPart(),
         acceptance_criteria: null,
         acceptance_criteria_heading: null,
       })
@@ -229,15 +265,15 @@ export function JiraFieldMappingSection({
   function handleAcModeChange(mode: AcMode) {
     if (mode === "description") {
       onFieldMappingChange({
-        ...currentBase(),
+        ...currentSpPart(),
         acceptance_criteria: null,
-        acceptance_criteria_heading: acHeading ?? "### Acceptance Criteria",
+        acceptance_criteria_heading: acHeading ?? acHeadingDefault,
       })
     } else {
       // Switch to custom_field mode: keep any previously stored field id or start
       // with no selection — never pre-select the first discovered field.
       onFieldMappingChange({
-        ...currentBase(),
+        ...currentSpPart(),
         acceptance_criteria: acCustomField ?? "",
         acceptance_criteria_heading: null,
       })
@@ -245,11 +281,19 @@ export function JiraFieldMappingSection({
   }
 
   function handleAcHeadingChange(heading: string) {
-    onFieldMappingChange({ ...currentBase(), acceptance_criteria_heading: heading })
+    onFieldMappingChange({
+      ...currentSpPart(),
+      acceptance_criteria: null,
+      acceptance_criteria_heading: heading,
+    })
   }
 
   function handleAcCustomFieldChange(value: string) {
-    onFieldMappingChange({ ...currentBase(), acceptance_criteria: value })
+    onFieldMappingChange({
+      ...currentSpPart(),
+      acceptance_criteria: value,
+      acceptance_criteria_heading: null,
+    })
   }
 
   return (
@@ -311,7 +355,7 @@ export function JiraFieldMappingSection({
                 <Input
                   id={acHeadingId}
                   onChange={(e) => handleAcHeadingChange(e.target.value)}
-                  placeholder="### Acceptance Criteria"
+                  placeholder={acHeadingDefault}
                   value={acHeading ?? ""}
                 />
               </FormRow>

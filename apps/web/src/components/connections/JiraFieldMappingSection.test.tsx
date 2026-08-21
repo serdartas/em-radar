@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 
 import {
   FieldMappingRow,
+  type FieldMappingValues,
   JiraFieldMappingSection,
 } from "@/components/connections/JiraFieldMappingSection"
 
@@ -25,12 +26,35 @@ vi.mock("@/lib/connections", async (importOriginal) => {
   }
 })
 
+// Default prop values sourced from the Jira connector schema (same as production defaults).
+const SP_DEFAULT = "customfield_10016"
+const AC_HEADING_DEFAULT = "### Acceptance Criteria"
+
 function wrapper({ children }: { children: React.ReactNode }) {
   return (
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
       {children}
     </QueryClientProvider>
   )
+}
+
+// Helper to render JiraFieldMappingSection with the required schema-sourced defaults.
+function renderSection(
+  props: Partial<{
+    connectionId: string
+    fieldMappingValues: FieldMappingValues
+    onFieldMappingChange: (v: FieldMappingValues) => void
+    storyPointsDefault: string
+    acHeadingDefault: string
+  }> = {},
+) {
+  const merged = {
+    storyPointsDefault: SP_DEFAULT,
+    acHeadingDefault: AC_HEADING_DEFAULT,
+    onFieldMappingChange: () => undefined,
+    ...props,
+  }
+  return render(<JiraFieldMappingSection {...merged} />, { wrapper })
 }
 
 afterEach(cleanup)
@@ -96,27 +120,15 @@ describe("FieldMappingRow", () => {
 
 describe("JiraFieldMappingSection — legend", () => {
   it("renders the legend as 'Jira Field Mapping'", () => {
-    render(
-      <JiraFieldMappingSection
-        fieldMappingValues={{}}
-        onFieldMappingChange={() => undefined}
-      />,
-      { wrapper },
-    )
-
+    renderSection()
     expect(screen.getByRole("group", { name: "Jira Field Mapping" })).toBeInTheDocument()
   })
 
   it("shows helper copy about using other Jira fields directly", () => {
-    render(
-      <JiraFieldMappingSection
-        fieldMappingValues={{}}
-        onFieldMappingChange={() => undefined}
-      />,
-      { wrapper },
-    )
-
-    expect(screen.getByText(/All other Jira fields and labels are available directly/i)).toBeInTheDocument()
+    renderSection()
+    expect(
+      screen.getByText(/All other Jira fields and labels are available directly/i),
+    ).toBeInTheDocument()
   })
 })
 
@@ -126,115 +138,72 @@ describe("JiraFieldMappingSection — legend", () => {
 
 describe("JiraFieldMappingSection — removed rows", () => {
   it("does not render an Epic Link row", () => {
-    render(
-      <JiraFieldMappingSection
-        fieldMappingValues={{}}
-        onFieldMappingChange={() => undefined}
-      />,
-      { wrapper },
-    )
-
+    renderSection()
     expect(screen.queryByText(/epic link/i)).not.toBeInTheDocument()
   })
 
   it("does not render a Blocked row", () => {
-    render(
-      <JiraFieldMappingSection
-        fieldMappingValues={{}}
-        onFieldMappingChange={() => undefined}
-      />,
-      { wrapper },
-    )
-
+    renderSection()
     expect(screen.queryByText(/blocked/i)).not.toBeInTheDocument()
   })
 })
 
 // ---------------------------------------------------------------------------
-// JiraFieldMappingSection — Story Points (toggle state is independent)
+// JiraFieldMappingSection — Story Points
 // ---------------------------------------------------------------------------
 
 describe("JiraFieldMappingSection — Story Points", () => {
   it("starts as 'Not configured' when story_points is absent", () => {
-    render(
-      <JiraFieldMappingSection
-        fieldMappingValues={{}}
-        onFieldMappingChange={() => undefined}
-      />,
-      { wrapper },
-    )
-
+    renderSection()
     const labels = screen.getAllByText("Not configured")
     expect(labels.length).toBeGreaterThanOrEqual(1)
   })
 
   it("reveals the dropdown (with 'Save first' guidance) when SP is toggled ON without a connectionId", () => {
-    render(
-      <JiraFieldMappingSection
-        // No connectionId — unsaved connection, no field discovery possible
-        fieldMappingValues={{ story_points: "" }}
-        onFieldMappingChange={() => undefined}
-      />,
-      { wrapper },
-    )
+    renderSection({ fieldMappingValues: { story_points: "" } })
 
     // Before toggle: both SP and AC show "Not configured"
     expect(screen.getAllByText("Not configured")).toHaveLength(2)
 
-    const spSwitch = screen.getAllByRole("switch")[0]
-    fireEvent.click(spSwitch)
+    fireEvent.click(screen.getAllByRole("switch")[0])
 
     // After toggle: only AC remains "Not configured"; SP row reveals its control
     expect(screen.getAllByText("Not configured")).toHaveLength(1)
-    // Guidance text is visible inside the revealed SP dropdown
     expect(screen.getByText("Save the connection first to load fields")).toBeInTheDocument()
   })
 
   it("does NOT call onFieldMappingChange when SP is toggled ON (waits for field selection)", () => {
     const onChange = vi.fn()
-    render(
-      <JiraFieldMappingSection
-        fieldMappingValues={{}}
-        onFieldMappingChange={onChange}
-      />,
-      { wrapper },
-    )
+    renderSection({ onFieldMappingChange: onChange })
 
-    const spSwitch = screen.getAllByRole("switch")[0]
-    fireEvent.click(spSwitch)
+    fireEvent.click(screen.getAllByRole("switch")[0])
 
-    // Enabling the toggle alone must not emit a value — user must pick a field first
     expect(onChange).not.toHaveBeenCalled()
   })
 
-  it("calls onFieldMappingChange without story_points when SP is toggled OFF", () => {
+  // [P1] Turning SP OFF must emit story_points equal to the schema default so any
+  // previously stored override is reset via the PATCH deep-merge.
+  it("emits story_points set to the schema default (not omitted, not empty) when SP is turned OFF", () => {
     const onChange = vi.fn()
-    render(
-      <JiraFieldMappingSection
-        fieldMappingValues={{ story_points: "customfield_10016" }}
-        onFieldMappingChange={onChange}
-      />,
-      { wrapper },
-    )
+    renderSection({
+      fieldMappingValues: { story_points: "customfield_99999" },
+      onFieldMappingChange: onChange,
+    })
 
-    const spSwitch = screen.getAllByRole("switch")[0]
-    fireEvent.click(spSwitch)
+    // SP starts enabled (storyPointsValue is non-empty)
+    fireEvent.click(screen.getAllByRole("switch")[0])
 
     expect(onChange).toHaveBeenCalledOnce()
-    const emitted = onChange.mock.calls[0][0] as Record<string, unknown>
-    // story_points must be omitted so the backend default applies
-    expect("story_points" in emitted).toBe(false)
+    const emitted = onChange.mock.calls[0][0] as FieldMappingValues
+    // Must be the schema default, not "" and not omitted
+    expect(emitted.story_points).toBe(SP_DEFAULT)
   })
 
   it("reveals the discovered custom-field dropdown when SP is enabled with a stored value", async () => {
-    render(
-      <JiraFieldMappingSection
-        connectionId="conn-1"
-        fieldMappingValues={{ story_points: "customfield_10016" }}
-        onFieldMappingChange={() => undefined}
-      />,
-      { wrapper },
-    )
+    renderSection({
+      connectionId: "conn-1",
+      fieldMappingValues: { story_points: "customfield_10016" },
+    })
 
     await waitFor(() => {
       expect(screen.getByRole("combobox", { name: "Story points field" })).toBeInTheDocument()
@@ -242,58 +211,87 @@ describe("JiraFieldMappingSection — Story Points", () => {
   })
 
   it("shows 'Choose a field...' placeholder when SP is enabled but no field selected yet", async () => {
-    render(
-      <JiraFieldMappingSection
-        connectionId="conn-1"
-        fieldMappingValues={{ story_points: "" }}
-        onFieldMappingChange={() => undefined}
-      />,
-      { wrapper },
-    )
+    renderSection({ connectionId: "conn-1", fieldMappingValues: { story_points: "" } })
 
-    // Toggle SP on
     fireEvent.click(screen.getAllByRole("switch")[0])
 
     await waitFor(() => {
       const select = screen.getByRole("combobox", { name: "Story points field" }) as HTMLSelectElement
-      // The placeholder option must be present
-      expect(
-        Array.from(select.options).some((o) => o.text === "Choose a field..."),
-      ).toBe(true)
+      expect(Array.from(select.options).some((o) => o.text === "Choose a field...")).toBe(true)
     })
   })
 
   it("reflects a prop-loaded story_points value without unmounting (edit transition regression)", () => {
-    // Simulate SourceConnectionsPage keeping a single ConnectionForm mounted
-    // across add→edit transitions: props change but the component is NOT remounted.
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
 
     const { rerender } = render(
       <QueryClientProvider client={qc}>
         <JiraFieldMappingSection
+          acHeadingDefault={AC_HEADING_DEFAULT}
           fieldMappingValues={{}}
           onFieldMappingChange={() => undefined}
+          storyPointsDefault={SP_DEFAULT}
         />
       </QueryClientProvider>,
     )
 
-    // Initially "Not configured" (no SP value in props, spForcedOpen = false)
+    // Initially both SP and AC are "Not configured"
     expect(screen.getAllByText("Not configured")).toHaveLength(2)
 
-    // Simulate the edit effect: ConnectionForm receives a different connection whose
-    // config has story_points set. Values are updated in place — no remount.
     rerender(
       <QueryClientProvider client={qc}>
         <JiraFieldMappingSection
+          acHeadingDefault={AC_HEADING_DEFAULT}
           fieldMappingValues={{ story_points: "customfield_20000" }}
           onFieldMappingChange={() => undefined}
+          storyPointsDefault={SP_DEFAULT}
         />
       </QueryClientProvider>,
     )
 
-    // SP row must now show as enabled (value in props), not "Not configured"
-    expect(screen.getAllByText("Not configured")).toHaveLength(1) // only AC
+    // SP row must show as enabled (value arrived via props); only AC is "Not configured"
+    expect(screen.getAllByText("Not configured")).toHaveLength(1)
     expect(screen.getByRole("combobox", { name: "Story points field" })).toBeInTheDocument()
+  })
+
+  // [P3] spForcedOpen must reset when connectionId changes so a "toggled open but
+  // no value picked" state doesn't bleed into the next connection.
+  it("resets spForcedOpen to false when connectionId changes (prevents stale open state)", async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+
+    const { rerender } = render(
+      <QueryClientProvider client={qc}>
+        <JiraFieldMappingSection
+          acHeadingDefault={AC_HEADING_DEFAULT}
+          connectionId="conn-A"
+          fieldMappingValues={{}}
+          onFieldMappingChange={() => undefined}
+          storyPointsDefault={SP_DEFAULT}
+        />
+      </QueryClientProvider>,
+    )
+
+    // Open SP without picking a field (spForcedOpen = true)
+    fireEvent.click(screen.getAllByRole("switch")[0])
+    expect(screen.getAllByText("Not configured")).toHaveLength(1) // only AC
+
+    // Switch to a different connection that also has no story_points
+    rerender(
+      <QueryClientProvider client={qc}>
+        <JiraFieldMappingSection
+          acHeadingDefault={AC_HEADING_DEFAULT}
+          connectionId="conn-B"
+          fieldMappingValues={{}}
+          onFieldMappingChange={() => undefined}
+          storyPointsDefault={SP_DEFAULT}
+        />
+      </QueryClientProvider>,
+    )
+
+    // spForcedOpen must have reset: SP is now "Not configured" for the new connection
+    await waitFor(() => {
+      expect(screen.getAllByText("Not configured")).toHaveLength(2)
+    })
   })
 })
 
@@ -303,33 +301,25 @@ describe("JiraFieldMappingSection — Story Points", () => {
 
 describe("JiraFieldMappingSection — Acceptance Criteria", () => {
   it("shows 'Text in description' controls when AC heading is set", () => {
-    render(
-      <JiraFieldMappingSection
-        fieldMappingValues={{
-          acceptance_criteria: null,
-          acceptance_criteria_heading: "### Acceptance Criteria",
-        }}
-        onFieldMappingChange={() => undefined}
-      />,
-      { wrapper },
-    )
+    renderSection({
+      fieldMappingValues: {
+        acceptance_criteria: null,
+        acceptance_criteria_heading: "### Acceptance Criteria",
+      },
+    })
 
     expect(screen.getByRole("combobox", { name: "How is it recorded?" })).toBeInTheDocument()
-    expect(screen.getByPlaceholderText("### Acceptance Criteria")).toBeInTheDocument()
+    expect(screen.getByPlaceholderText(AC_HEADING_DEFAULT)).toBeInTheDocument()
   })
 
   it("shows the custom-field dropdown when AC mode is 'Custom field'", async () => {
-    render(
-      <JiraFieldMappingSection
-        connectionId="conn-1"
-        fieldMappingValues={{
-          acceptance_criteria: "customfield_99001",
-          acceptance_criteria_heading: null,
-        }}
-        onFieldMappingChange={() => undefined}
-      />,
-      { wrapper },
-    )
+    renderSection({
+      connectionId: "conn-1",
+      fieldMappingValues: {
+        acceptance_criteria: "customfield_99001",
+        acceptance_criteria_heading: null,
+      },
+    })
 
     await waitFor(() => {
       const modeSelect = screen.getByRole("combobox", { name: "How is it recorded?" })
@@ -341,43 +331,97 @@ describe("JiraFieldMappingSection — Acceptance Criteria", () => {
 
   it("switching from 'Text in description' to 'Custom field' sets acceptance_criteria_heading to null", () => {
     const onChange = vi.fn()
-    render(
-      <JiraFieldMappingSection
-        fieldMappingValues={{
-          acceptance_criteria: null,
-          acceptance_criteria_heading: "### Acceptance Criteria",
-        }}
-        onFieldMappingChange={onChange}
-      />,
-      { wrapper },
-    )
+    renderSection({
+      fieldMappingValues: {
+        acceptance_criteria: null,
+        acceptance_criteria_heading: "### Acceptance Criteria",
+      },
+      onFieldMappingChange: onChange,
+    })
 
-    const modeSelect = screen.getByRole("combobox", { name: "How is it recorded?" })
-    fireEvent.change(modeSelect, { target: { value: "custom_field" } })
+    fireEvent.change(screen.getByRole("combobox", { name: "How is it recorded?" }), {
+      target: { value: "custom_field" },
+    })
 
     expect(onChange).toHaveBeenCalledOnce()
-    const call = onChange.mock.calls[0][0] as {
-      acceptance_criteria: string | null
-      acceptance_criteria_heading: string | null
-    }
+    const call = onChange.mock.calls[0][0] as FieldMappingValues
     expect(call.acceptance_criteria_heading).toBeNull()
-    // No pre-selection: acceptance_criteria must not be a discovered field id
+    // No pre-selection when switching to custom_field mode
     expect(call.acceptance_criteria).toBe("")
   })
 
   it("the Acceptance Criteria heading textbox shows an InfoTooltip", () => {
-    render(
-      <JiraFieldMappingSection
-        fieldMappingValues={{
-          acceptance_criteria: null,
-          acceptance_criteria_heading: "### AC",
-        }}
-        onFieldMappingChange={() => undefined}
-      />,
-      { wrapper },
-    )
+    renderSection({
+      fieldMappingValues: {
+        acceptance_criteria: null,
+        acceptance_criteria_heading: "### AC",
+      },
+    })
 
     expect(screen.getByRole("button", { name: /About heading text/i })).toBeInTheDocument()
+  })
+
+  // [P1/P2] Enabling AC must emit the schema-sourced heading default (non-null, non-hardcoded).
+  // A non-standard acHeadingDefault prop verifies the value comes from the prop, not hardcoded.
+  it("enabling AC emits the schema-default heading (sourced from acHeadingDefault prop)", () => {
+    const onChange = vi.fn()
+    const customDefault = "## My AC Heading"
+    renderSection({
+      fieldMappingValues: {},
+      onFieldMappingChange: onChange,
+      acHeadingDefault: customDefault,
+    })
+
+    const acSwitch = screen.getAllByRole("switch")[1]
+    fireEvent.click(acSwitch)
+
+    expect(onChange).toHaveBeenCalledOnce()
+    const emitted = onChange.mock.calls[0][0] as FieldMappingValues
+    // Must be the prop value, not the hardcoded "### Acceptance Criteria"
+    expect(emitted.acceptance_criteria_heading).toBe(customDefault)
+    expect(emitted.acceptance_criteria_heading).not.toBeNull()
+  })
+
+  // [P2] Changing Story Points must NOT write null acceptance_criteria_heading when AC
+  // is not configured, because that would disable the connector's default heading extraction
+  // via the PATCH deep-merge.
+  it("changing Story Points does not emit acceptance_criteria_heading:null when AC is not configured", () => {
+    const onChange = vi.fn()
+    renderSection({
+      // SP has a value; AC not configured (no AC keys in fieldMappingValues)
+      fieldMappingValues: { story_points: SP_DEFAULT },
+      onFieldMappingChange: onChange,
+    })
+
+    // Turn SP off — this triggers an emit
+    fireEvent.click(screen.getAllByRole("switch")[0])
+
+    expect(onChange).toHaveBeenCalledOnce()
+    const emitted = onChange.mock.calls[0][0] as FieldMappingValues
+    // AC keys must be absent from the emitted object (not null) so deep-merge
+    // does not overwrite any stored heading value.
+    expect(emitted.acceptance_criteria_heading).not.toBe(null)
+  })
+
+  // [P2] When AC is in description mode, any SP-triggered emit must keep the heading non-null.
+  it("changing Story Points preserves a non-null AC heading when AC is in description mode", () => {
+    const onChange = vi.fn()
+    renderSection({
+      fieldMappingValues: {
+        story_points: SP_DEFAULT,
+        acceptance_criteria: null,
+        acceptance_criteria_heading: "### Acceptance Criteria",
+      },
+      onFieldMappingChange: onChange,
+    })
+
+    // Turn SP off → emit
+    fireEvent.click(screen.getAllByRole("switch")[0])
+
+    expect(onChange).toHaveBeenCalledOnce()
+    const emitted = onChange.mock.calls[0][0] as FieldMappingValues
+    expect(emitted.acceptance_criteria_heading).not.toBeNull()
+    expect(emitted.acceptance_criteria_heading).toBe("### Acceptance Criteria")
   })
 })
 
@@ -387,21 +431,15 @@ describe("JiraFieldMappingSection — Acceptance Criteria", () => {
 
 describe("JiraFieldMappingSection — stale field value", () => {
   it("shows a '(not in discovered fields)' option when the stored id is absent from discovered list", async () => {
-    render(
-      <JiraFieldMappingSection
-        connectionId="conn-1"
-        fieldMappingValues={{ story_points: "customfield_99999" }}
-        onFieldMappingChange={() => undefined}
-      />,
-      { wrapper },
-    )
+    renderSection({
+      connectionId: "conn-1",
+      fieldMappingValues: { story_points: "customfield_99999" },
+    })
 
     await waitFor(() => {
       const select = screen.getByRole("combobox", { name: "Story points field" }) as HTMLSelectElement
       expect(
-        Array.from(select.options).some((o) =>
-          o.text.includes("not in discovered fields"),
-        ),
+        Array.from(select.options).some((o) => o.text.includes("not in discovered fields")),
       ).toBe(true)
     })
   })

@@ -216,13 +216,20 @@ export function ConnectionForm({
             />
           )}
 
-          {selectedConnector?.name === "jira" && (
-            <JiraFieldMappingSection
-              connectionId={editing?.id}
-              fieldMappingValues={toFieldMappingValues(values.field_mapping)}
-              onFieldMappingChange={(next) => changeField("field_mapping", next)}
-            />
-          )}
+          {selectedConnector?.name === "jira" && (() => {
+            const { storyPointsDefault, acHeadingDefault } = jiraFieldMappingDefaults(
+              selectedConnector.config_schema,
+            )
+            return (
+              <JiraFieldMappingSection
+                acHeadingDefault={acHeadingDefault}
+                connectionId={editing?.id}
+                fieldMappingValues={toFieldMappingValues(values.field_mapping)}
+                onFieldMappingChange={(next) => changeField("field_mapping", next)}
+                storyPointsDefault={storyPointsDefault}
+              />
+            )
+          })()}
 
           <TestResult error={testMutation.error} result={testMutation.data} />
 
@@ -267,6 +274,32 @@ export function ConnectionForm({
 
 /** Fields rendered by the purpose-built JiraFieldMappingSection — skip them in SchemaForm. */
 const JIRA_SKIP_KEYS = new Set(["field_mapping"])
+
+// Module-level fallbacks used only when the schema lookup returns undefined.
+const SP_FIELD_DEFAULT_FALLBACK = "customfield_10016"
+const AC_HEADING_DEFAULT_FALLBACK = "### Acceptance Criteria"
+
+/**
+ * Extract story_points and acceptance_criteria_heading defaults from the connector's
+ * config_schema. Resolves the field_mapping $ref into its $defs entry and reads
+ * the `default` values. Falls back to known Jira defaults if the schema is missing them.
+ */
+function jiraFieldMappingDefaults(schema: JsonSchema): {
+  storyPointsDefault: string
+  acHeadingDefault: string
+} {
+  const ref = schema.properties?.field_mapping?.$ref
+  const defKey = ref?.replace(/^#\/\$defs\//, "")
+  const def = defKey !== undefined ? schema.$defs?.[defKey] : undefined
+  const props = def?.properties
+  return {
+    storyPointsDefault:
+      (props?.story_points?.default as string | undefined) ?? SP_FIELD_DEFAULT_FALLBACK,
+    acHeadingDefault:
+      (props?.acceptance_criteria_heading?.default as string | undefined) ??
+      AC_HEADING_DEFAULT_FALLBACK,
+  }
+}
 
 function toFieldMappingValues(raw: unknown): FieldMappingValues | undefined {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
