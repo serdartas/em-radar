@@ -14,6 +14,8 @@ export function TeamsPage() {
   const { isLoading, teams, boardScopes, groups, jiraConnections, codeConnections } =
     useTeamSetupData()
   const [name, setName] = useState("")
+  // Track which teams are in edit mode by team.id — stable across updated_at remounts.
+  const [editingIds, setEditingIds] = useState<Set<string>>(new Set())
 
   const createMutation = useMutation({
     mutationFn: createTeam,
@@ -22,6 +24,18 @@ export function TeamsPage() {
       void queryClient.invalidateQueries({ queryKey: TEAMS_KEY })
     },
   })
+
+  function startEdit(id: string) {
+    setEditingIds((prev) => new Set(prev).add(id))
+  }
+
+  function stopEdit(id: string) {
+    setEditingIds((prev) => {
+      const next = new Set(prev)
+      next.delete(id)
+      return next
+    })
+  }
 
   return (
     <section aria-labelledby="page-title" className="space-y-6">
@@ -59,8 +73,11 @@ export function TeamsPage() {
                 boardScopes={boardScopes}
                 codeConnections={codeConnections}
                 groups={groups}
+                isEditing={editingIds.has(team.id)}
                 jiraConnections={jiraConnections}
                 key={team.updated_at}
+                onDone={() => stopEdit(team.id)}
+                onStartEdit={() => startEdit(team.id)}
                 team={team}
               />
             </li>

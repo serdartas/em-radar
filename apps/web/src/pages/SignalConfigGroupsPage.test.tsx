@@ -81,13 +81,15 @@ afterEach(() => {
 })
 
 describe("SignalConfigGroupsPage — create form", () => {
-  it("uses InlineCreateRow with shared Input for the new-group form", async () => {
+  it("uses InlineCreateRow with shared Input (h-9 class) for the new-group form", async () => {
     mockApi()
     renderPage()
 
-    // The label and input are wired via InlineCreateRow (shared Input component)
+    // The label and input are wired via InlineCreateRow using the shared Input component.
+    // The shared Input renders with h-9; a raw <input className="w-64 ..."> would not.
     const input = await screen.findByLabelText("New group name")
     expect(input.tagName).toBe("INPUT")
+    expect(input).toHaveClass("h-9")
 
     // The create button is present and disabled when the input is empty
     expect(screen.getByRole("button", { name: "Create group" })).toBeDisabled()

@@ -241,15 +241,17 @@ afterEach(() => {
 })
 
 describe("TeamsPage — create form", () => {
-  it("uses InlineCreateRow with shared Input for the new-team form", async () => {
+  it("uses InlineCreateRow with shared Input (h-9 class) for the new-team form", async () => {
     mockApi()
     renderPage()
 
-    // The label and input must be wired via InlineCreateRow (shared Input component)
+    // The label and input are wired via InlineCreateRow using the shared Input component.
+    // The shared Input renders with h-9; a raw <input className="w-64 ..."> would not.
     const input = await screen.findByLabelText("New team name")
     expect(input.tagName).toBe("INPUT")
+    expect(input).toHaveClass("h-9")
 
-    // The create button must be present and disabled when the input is empty
+    // The create button is present and disabled when the input is empty
     expect(screen.getByRole("button", { name: "Create team" })).toBeDisabled()
 
     // Typing a name enables the button
@@ -285,8 +287,8 @@ describe("TeamsPage — TeamCard saved-vs-draft state", () => {
     // Pickers are now visible
     expect(await screen.findByRole("combobox", { name: "Ticketing connection" })).toBeInTheDocument()
 
-    // Done button collapses back to summary
-    fireEvent.click(screen.getByRole("button", { name: "Done" }))
+    // Done button has a distinct aria-label per team
+    fireEvent.click(screen.getByRole("button", { name: "Done editing Platform" }))
     await waitFor(() => {
       expect(screen.queryByRole("combobox", { name: "Ticketing connection" })).toBeNull()
     })
@@ -306,6 +308,65 @@ describe("TeamsPage — TeamCard saved-vs-draft state", () => {
     // The saved team has an Edit button, not a Create button
     expect(screen.getByRole("button", { name: "Edit Platform" })).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "Create team Platform" })).toBeNull()
+  })
+
+  it("card stays in edit mode after a picker save bumps updated_at and remounts TeamCard", async () => {
+    // This is the regression guard for the major bug: isEditing must be lifted to TeamsPage
+    // (keyed by team.id) so it survives the updated_at-driven TeamCard remount.
+    let patchCalled = false
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = typeof input === "string" ? input : input.toString()
+      const method = init?.method ?? "GET"
+
+      if (url.endsWith("/api/teams") && method === "GET") {
+        // Second GET (after PATCH invalidation) returns a new updated_at → key changes → remount.
+        const currentTeam = patchCalled
+          ? { ...team, updated_at: "2026-01-01T00:01:00Z" }
+          : team
+        return Promise.resolve(jsonResponse([currentTeam]))
+      }
+      if (url.endsWith("/api/scopes") && method === "GET") {
+        return Promise.resolve(jsonResponse([]))
+      }
+      if (url.endsWith("/api/signal-config-groups")) {
+        return Promise.resolve(jsonResponse(groups))
+      }
+      if (url.endsWith("/api/connectors")) {
+        return Promise.resolve(jsonResponse([]))
+      }
+      if (url.endsWith("/api/connections") && method === "GET") {
+        return Promise.resolve(jsonResponse(connections))
+      }
+      if (url.includes("/api/teams/") && method === "PATCH") {
+        patchCalled = true
+        const body = JSON.parse(String(init?.body))
+        return Promise.resolve(
+          jsonResponse({ ...team, ...body, updated_at: "2026-01-01T00:01:00Z" }),
+        )
+      }
+      throw new Error(`unexpected fetch: ${method} ${url}`)
+    })
+
+    renderPage()
+
+    // Expand the team card into edit mode
+    await screen.findByText("Platform")
+    fireEvent.click(screen.getByRole("button", { name: "Edit Platform" }))
+
+    // Confirm pickers are visible in edit mode
+    expect(await screen.findByRole("button", { name: "Attach" })).toBeInTheDocument()
+
+    // Attach the group — triggers PATCH → query invalidation → GET returns new updated_at
+    // → TeamCard remounts (key changes from "2026-01-01T00:00:00Z" to "2026-01-01T00:01:00Z")
+    fireEvent.click(screen.getByRole("button", { name: "Attach" }))
+
+    // The card must remain in edit mode after the remount.
+    // With local isEditing (pre-fix), the remount would reset it to false and the picker
+    // would disappear, failing this assertion.
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Done editing Platform" })).toBeInTheDocument()
+    })
+    expect(screen.queryByRole("button", { name: "Edit Platform" })).toBeNull()
   })
 })
 

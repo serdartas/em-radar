@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { useState } from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 
 import { CodeSourcePicker } from "@/components/teams/CodeSourcePicker"
@@ -32,9 +31,7 @@ function teamSummaryText(team: TeamProfile, groups: SignalConfigGroup[]): string
   const attachedGroupCount = team.signal_config_group_ids.filter((id) =>
     groups.some((g) => g.id === id),
   ).length
-  parts.push(
-    `${attachedGroupCount} signal group${attachedGroupCount !== 1 ? "s" : ""}`,
-  )
+  parts.push(`${attachedGroupCount} signal group${attachedGroupCount !== 1 ? "s" : ""}`)
 
   return parts.join(" · ")
 }
@@ -43,17 +40,23 @@ export function TeamCard({
   boardScopes,
   codeConnections,
   groups,
+  isEditing,
   jiraConnections,
+  onDone,
+  onStartEdit,
   team,
 }: {
   boardScopes: ScopeDefinition[]
   codeConnections: SourceConnection[]
   groups: SignalConfigGroup[]
+  /** Controlled by TeamsPage (keyed by team.id) so edit state survives updated_at remounts. */
+  isEditing: boolean
   jiraConnections: SourceConnection[]
+  onDone: () => void
+  onStartEdit: () => void
   team: TeamProfile
 }) {
   const queryClient = useQueryClient()
-  const [isEditing, setIsEditing] = useState(false)
 
   const deleteMutation = useMutation({
     mutationFn: () => deleteTeam(team.id),
@@ -67,20 +70,23 @@ export function TeamCard({
           <div>
             <h2 className="text-lg font-semibold">{team.name}</h2>
             {!isEditing && (
-              <p className="mt-0.5 text-sm text-slate-500">
-                {teamSummaryText(team, groups)}
-              </p>
+              <p className="mt-0.5 text-sm text-slate-500">{teamSummaryText(team, groups)}</p>
             )}
           </div>
           <div className="flex shrink-0 gap-2">
             {isEditing ? (
-              <Button onClick={() => setIsEditing(false)} size="sm" variant="outline">
+              <Button
+                aria-label={`Done editing ${team.name}`}
+                onClick={onDone}
+                size="sm"
+                variant="outline"
+              >
                 Done
               </Button>
             ) : (
               <Button
                 aria-label={`Edit ${team.name}`}
-                onClick={() => setIsEditing(true)}
+                onClick={onStartEdit}
                 size="sm"
                 variant="outline"
               >
