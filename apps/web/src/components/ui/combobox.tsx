@@ -33,12 +33,19 @@ interface ComboboxProps {
    * gives a quick preview without overwhelming the UI.
    */
   maxOnFocus?: number
+  /**
+   * When true, the input is disabled and the listbox does not open. Matches the
+   * HTML `disabled` attribute semantics and lets callers reflect a loading or
+   * empty-options state without the user being able to type into a stale input.
+   */
+  disabled?: boolean
 }
 
 function Combobox({
   "aria-describedby": ariaDescribedby,
   "aria-labelledby": ariaLabelledby,
   className,
+  disabled,
   id,
   inputLabel,
   maxOnFocus,
@@ -146,14 +153,17 @@ function Combobox({
         aria-expanded={listboxVisible}
         aria-label={inputLabel}
         aria-labelledby={ariaLabelledby}
+        disabled={disabled}
         id={id}
         onChange={(e) => {
+          if (disabled) return
           setQuery(e.target.value)
           setIsEditing(true)
           setOpen(true)
           setActiveIndex(-1)
         }}
         onFocus={() => {
+          if (disabled) return
           // Treat focusing as "unedited": show all options, not filtered by selection.
           setIsEditing(false)
           setOpen(true)

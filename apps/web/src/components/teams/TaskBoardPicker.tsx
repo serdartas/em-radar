@@ -44,6 +44,8 @@ function sprintLengthFromSprints(sprints: JiraSprint[]): number | null {
 }
 
 interface ProjectPickerProps {
+  "aria-labelledby"?: string
+  disabled?: boolean
   id?: string
   isLoading: boolean
   onSelect: (externalId: string) => void
@@ -51,15 +53,24 @@ interface ProjectPickerProps {
   value: string
 }
 
-export function ProjectPicker({ id, isLoading, onSelect, projects, value }: ProjectPickerProps) {
+export function ProjectPicker({
+  "aria-labelledby": ariaLabelledby,
+  disabled,
+  id,
+  isLoading,
+  onSelect,
+  projects,
+  value,
+}: ProjectPickerProps) {
   const options = useMemo(
     () => projects.map((p) => ({ value: p.external_id, label: `${p.key} - ${p.name}` })),
     [projects],
   )
   return (
     <Combobox
+      aria-labelledby={ariaLabelledby}
+      disabled={disabled}
       id={id}
-      inputLabel="Project"
       onSelect={onSelect}
       options={options}
       placeholder={isLoading ? "Loading projects..." : "Type to search projects"}
@@ -69,22 +80,33 @@ export function ProjectPicker({ id, isLoading, onSelect, projects, value }: Proj
 }
 
 interface BoardPickerProps {
+  "aria-labelledby"?: string
   boards: JiraBoard[]
+  disabled?: boolean
   id?: string
   isLoading: boolean
   onSelect: (externalId: string) => void
   value: string
 }
 
-export function BoardPicker({ boards, id, isLoading, onSelect, value }: BoardPickerProps) {
+export function BoardPicker({
+  "aria-labelledby": ariaLabelledby,
+  boards,
+  disabled,
+  id,
+  isLoading,
+  onSelect,
+  value,
+}: BoardPickerProps) {
   const options = useMemo(
     () => boards.map((b) => ({ value: b.external_id, label: b.name })),
     [boards],
   )
   return (
     <Combobox
+      aria-labelledby={ariaLabelledby}
+      disabled={disabled}
       id={id}
-      inputLabel="Board"
       maxOnFocus={BOARDS_ON_FOCUS}
       onSelect={onSelect}
       options={options}
@@ -286,8 +308,12 @@ export function TaskBoardPicker({
 
           {connId !== "" && (
             <div className="max-w-sm space-y-1.5">
-              <Label htmlFor={`project-${team.id}`}>Project</Label>
+              <Label htmlFor={`project-${team.id}`} id={`project-label-${team.id}`}>
+                Project
+              </Label>
               <ProjectPicker
+                aria-labelledby={`project-label-${team.id}`}
+                disabled={projectsQuery.isLoading || projects.length === 0}
                 id={`project-${team.id}`}
                 isLoading={projectsQuery.isLoading}
                 onSelect={setSelectedProjectExternalId}
@@ -299,9 +325,13 @@ export function TaskBoardPicker({
 
           {connId !== "" && selectedProjectExternalId !== "" && (
             <div className="max-w-sm space-y-1.5">
-              <Label htmlFor={`board-${team.id}`}>Board</Label>
+              <Label htmlFor={`board-${team.id}`} id={`board-label-${team.id}`}>
+                Board
+              </Label>
               <BoardPicker
+                aria-labelledby={`board-label-${team.id}`}
                 boards={boards}
+                disabled={boardsQuery.isLoading || boards.length === 0}
                 id={`board-${team.id}`}
                 isLoading={boardsQuery.isLoading}
                 onSelect={setSelectedBoardExternalId}

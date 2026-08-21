@@ -175,4 +175,22 @@ describe("BoardPicker", () => {
     )
     expect(screen.getByRole("combobox")).toHaveValue("Sprint Board 2")
   })
+
+  it("disabled picker does not open when focused or typed into", () => {
+    render(
+      <BoardPicker
+        boards={makeBoards(5)}
+        disabled
+        isLoading={false}
+        onSelect={vi.fn()}
+        value=""
+      />,
+    )
+    const input = screen.getByRole("combobox")
+    expect(input).toBeDisabled()
+    fireEvent.focus(input)
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument()
+    fireEvent.change(input, { target: { value: "Sprint" } })
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument()
+  })
 })

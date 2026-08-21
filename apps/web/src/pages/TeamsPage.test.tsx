@@ -217,11 +217,14 @@ async function selectUpToBoard(boards: typeof scrumBoards) {
   fireEvent.change(connSelect, { target: { value: "conn-1" } })
 
   const projectCombobox = await screen.findByRole("combobox", { name: "Project" })
+  // Wait until loading finishes and the combobox is interactive.
+  await waitFor(() => expect(projectCombobox).not.toBeDisabled())
   fireEvent.focus(projectCombobox)
   await screen.findByRole("option", { name: /Alpha Project/ })
   fireEvent.mouseDown(screen.getByRole("option", { name: /Alpha Project/ }))
 
   const boardCombobox = await screen.findByRole("combobox", { name: "Board" })
+  await waitFor(() => expect(boardCombobox).not.toBeDisabled())
   fireEvent.focus(boardCombobox)
   await screen.findByRole("option", { name: new RegExp(boards[0].name) })
   fireEvent.mouseDown(screen.getByRole("option", { name: new RegExp(boards[0].name) }))
@@ -260,6 +263,7 @@ describe("TeamsPage — task-board source picker", () => {
     fireEvent.change(connSelect, { target: { value: "conn-1" } })
 
     const projectCombobox = await screen.findByRole("combobox", { name: "Project" })
+    await waitFor(() => expect(projectCombobox).not.toBeDisabled())
     fireEvent.focus(projectCombobox)
     await screen.findByRole("option", { name: /Alpha Project/ })
     await screen.findByRole("option", { name: /Beta Project/ })
@@ -278,11 +282,13 @@ describe("TeamsPage — task-board source picker", () => {
     fireEvent.change(connSelect, { target: { value: "conn-1" } })
 
     const projectCombobox = await screen.findByRole("combobox", { name: "Project" })
+    await waitFor(() => expect(projectCombobox).not.toBeDisabled())
     fireEvent.focus(projectCombobox)
     await screen.findByRole("option", { name: /Alpha Project/ })
     fireEvent.mouseDown(screen.getByRole("option", { name: /Alpha Project/ }))
 
     const boardCombobox = await screen.findByRole("combobox", { name: "Board" })
+    await waitFor(() => expect(boardCombobox).not.toBeDisabled())
     fireEvent.focus(boardCombobox)
     await screen.findByRole("option", { name: /Alpha Scrum Board/ })
     await screen.findByRole("option", { name: /Alpha Kanban Board/ })

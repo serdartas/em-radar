@@ -435,6 +435,25 @@ describe("Combobox", () => {
     expect(input).not.toHaveAttribute("aria-controls")
   })
 
+  it("disabled Combobox does not open or accept input", () => {
+    render(
+      <Combobox
+        disabled
+        inputLabel="Fruit"
+        onSelect={vi.fn()}
+        options={options}
+        placeholder="Pick..."
+      />,
+    )
+    const input = screen.getByRole("combobox")
+    expect(input).toBeDisabled()
+    // Focus and change must not open the listbox.
+    fireEvent.focus(input)
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument()
+    fireEvent.change(input, { target: { value: "an" } })
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument()
+  })
+
   it("calls scrollIntoView on the active option when navigating with keyboard", () => {
     const scrollIntoView = vi.fn()
     window.HTMLElement.prototype.scrollIntoView = scrollIntoView

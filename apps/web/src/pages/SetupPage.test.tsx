@@ -286,11 +286,13 @@ async function attachBoardSource() {
   })
 
   const projectCombobox = await screen.findByRole("combobox", { name: "Project" })
+  await waitFor(() => expect(projectCombobox).not.toBeDisabled())
   fireEvent.focus(projectCombobox)
   await screen.findByRole("option", { name: /Alpha Project/ })
   fireEvent.mouseDown(screen.getByRole("option", { name: /Alpha Project/ }))
 
   const boardCombobox = await screen.findByRole("combobox", { name: "Board" })
+  await waitFor(() => expect(boardCombobox).not.toBeDisabled())
   fireEvent.focus(boardCombobox)
   await screen.findByRole("option", { name: /Alpha Scrum Board/ })
   fireEvent.mouseDown(screen.getByRole("option", { name: /Alpha Scrum Board/ }))
