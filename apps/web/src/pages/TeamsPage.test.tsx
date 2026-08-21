@@ -211,20 +211,24 @@ function renderPage() {
   )
 }
 
-/** Drives the picker to the board selection step. Returns the board select element. */
+/** Drives the picker to the board selection step via the new Combobox interaction. */
 async function selectUpToBoard(boards: typeof scrumBoards) {
   const connSelect = await screen.findByRole("combobox", { name: "Ticketing connection" })
   fireEvent.change(connSelect, { target: { value: "conn-1" } })
 
+  const projectCombobox = await screen.findByRole("combobox", { name: "Project" })
+  // Wait until loading finishes and the combobox is interactive.
+  await waitFor(() => expect(projectCombobox).not.toBeDisabled())
+  fireEvent.focus(projectCombobox)
   await screen.findByRole("option", { name: /Alpha Project/ })
-  fireEvent.change(screen.getByRole("combobox", { name: "Project" }), {
-    target: { value: "10001" },
-  })
+  fireEvent.mouseDown(screen.getByRole("option", { name: /Alpha Project/ }))
 
+  const boardCombobox = await screen.findByRole("combobox", { name: "Board" })
+  await waitFor(() => expect(boardCombobox).not.toBeDisabled())
+  fireEvent.focus(boardCombobox)
   await screen.findByRole("option", { name: new RegExp(boards[0].name) })
-  const boardSelect = screen.getByRole("combobox", { name: "Board" })
-  fireEvent.change(boardSelect, { target: { value: boards[0].external_id } })
-  return boardSelect
+  fireEvent.mouseDown(screen.getByRole("option", { name: new RegExp(boards[0].name) }))
+  return boardCombobox
 }
 
 afterEach(() => {
@@ -258,11 +262,13 @@ describe("TeamsPage — task-board source picker", () => {
     const connSelect = await screen.findByRole("combobox", { name: "Ticketing connection" })
     fireEvent.change(connSelect, { target: { value: "conn-1" } })
 
+    const projectCombobox = await screen.findByRole("combobox", { name: "Project" })
+    await waitFor(() => expect(projectCombobox).not.toBeDisabled())
+    fireEvent.focus(projectCombobox)
     await screen.findByRole("option", { name: /Alpha Project/ })
     await screen.findByRole("option", { name: /Beta Project/ })
 
-    const projectFilter = screen.getByPlaceholderText("Filter projects...")
-    fireEvent.change(projectFilter, { target: { value: "beta" } })
+    fireEvent.change(projectCombobox, { target: { value: "beta" } })
 
     expect(screen.queryByRole("option", { name: /Alpha Project/ })).toBeNull()
     expect(screen.getByRole("option", { name: /Beta Project/ })).toBeInTheDocument()
@@ -275,16 +281,19 @@ describe("TeamsPage — task-board source picker", () => {
     const connSelect = await screen.findByRole("combobox", { name: "Ticketing connection" })
     fireEvent.change(connSelect, { target: { value: "conn-1" } })
 
+    const projectCombobox = await screen.findByRole("combobox", { name: "Project" })
+    await waitFor(() => expect(projectCombobox).not.toBeDisabled())
+    fireEvent.focus(projectCombobox)
     await screen.findByRole("option", { name: /Alpha Project/ })
-    fireEvent.change(screen.getByRole("combobox", { name: "Project" }), {
-      target: { value: "10001" },
-    })
+    fireEvent.mouseDown(screen.getByRole("option", { name: /Alpha Project/ }))
 
+    const boardCombobox = await screen.findByRole("combobox", { name: "Board" })
+    await waitFor(() => expect(boardCombobox).not.toBeDisabled())
+    fireEvent.focus(boardCombobox)
     await screen.findByRole("option", { name: /Alpha Scrum Board/ })
     await screen.findByRole("option", { name: /Alpha Kanban Board/ })
 
-    const boardFilter = screen.getByPlaceholderText("Filter boards...")
-    fireEvent.change(boardFilter, { target: { value: "kanban" } })
+    fireEvent.change(boardCombobox, { target: { value: "kanban" } })
 
     expect(screen.queryByRole("option", { name: /Alpha Scrum Board/ })).toBeNull()
     expect(screen.getByRole("option", { name: /Alpha Kanban Board/ })).toBeInTheDocument()
