@@ -5,6 +5,7 @@ import { useIsMutating, useMutation, useQueryClient } from "@tanstack/react-quer
 import { useNavigate } from "react-router-dom"
 
 import { ConnectionForm } from "@/components/connections/ConnectionForm"
+import { WizardStepFooter } from "@/components/setup/WizardStepFooter"
 import { CodeSourcePicker } from "@/components/teams/CodeSourcePicker"
 import { SignalGroupAttachList } from "@/components/teams/SignalGroupAttachList"
 import { TaskBoardPicker } from "@/components/teams/TaskBoardPicker"
@@ -143,7 +144,7 @@ export function SetupPage() {
         </p>
       </header>
 
-      <WizardProgress current={step} />
+      <WizardProgress current={step} onGoToStep={setStep} />
 
       {!initialized && <p className="text-sm text-slate-500">Loading setup...</p>}
 
@@ -154,6 +155,7 @@ export function SetupPage() {
           connections={jiraConnections}
           description="Add a named Jira connection. It is required to run work-item signals. Credentials are stored locally and shown masked."
           lockConnectorName="jira"
+          onBack={() => setStep("welcome")}
           onContinue={() => setStep("gitlab")}
           optional={false}
           title="Connect your ticketing source (Jira)"
@@ -196,6 +198,7 @@ export function SetupPage() {
             setCurrentTeamId(null)
             setStep("team")
           }}
+          onBack={() => setStep("team")}
           onFinish={() => finishMutation.mutate()}
           team={currentTeam}
         />
@@ -204,32 +207,61 @@ export function SetupPage() {
   )
 }
 
-function WizardProgress({ current }: { current: Step }) {
+// ---------------------------------------------------------------------------
+// WizardProgress
+// ---------------------------------------------------------------------------
+
+function WizardProgress({
+  current,
+  onGoToStep,
+}: {
+  current: Step
+  onGoToStep: (step: Step) => void
+}) {
   const currentIndex = STEP_ORDER.indexOf(current)
   return (
     <ol aria-label="Setup progress" className="flex flex-wrap gap-2 text-xs">
       {STEP_ORDER.map((step, index) => {
         const state = index < currentIndex ? "done" : index === currentIndex ? "current" : "todo"
+        const label = `${index + 1}. ${STEP_LABELS[step]}`
+
+        if (state === "done") {
+          return (
+            <li key={step}>
+              <button
+                className="rounded-full border border-green-300 bg-green-50 px-3 py-1 font-medium text-green-800 hover:bg-green-100"
+                onClick={() => onGoToStep(step)}
+                type="button"
+              >
+                {label}
+              </button>
+            </li>
+          )
+        }
+
         return (
           <li
             aria-current={state === "current" ? "step" : undefined}
+            aria-disabled={state === "todo" ? true : undefined}
             className={
               "rounded-full border px-3 py-1 font-medium " +
               (state === "current"
                 ? "border-primary bg-primary text-primary-foreground"
-                : state === "done"
-                  ? "border-green-300 bg-green-50 text-green-800"
-                  : "border-slate-200 text-slate-500")
+                : "border-slate-200 text-slate-400 opacity-50")
             }
             key={step}
           >
-            {index + 1}. {STEP_LABELS[step]}
+            {label}
           </li>
         )
       })}
     </ol>
   )
 }
+
+// ---------------------------------------------------------------------------
+// WelcomeStep
+// ---------------------------------------------------------------------------
 
 function WelcomeStep({ onStart }: { onStart: () => void }) {
   return (
@@ -253,6 +285,10 @@ function WelcomeStep({ onStart }: { onStart: () => void }) {
   )
 }
 
+// ---------------------------------------------------------------------------
+// ConnectionStep
+// ---------------------------------------------------------------------------
+
 function ConnectionStep({
   connections,
   description,
@@ -272,6 +308,10 @@ function ConnectionStep({
 }) {
   const { connectors } = useTeamSetupData()
   const canContinue = optional || connections.length > 0
+  const successMessage =
+    connections.length > 0
+      ? `${connections.length === 1 ? "Connection" : `${connections.length} connections`} saved. Ready to continue.`
+      : undefined
 
   return (
     <div className="space-y-4">
@@ -295,19 +335,20 @@ function ConnectionStep({
 
       <ConnectionForm connectors={connectors} lockConnectorName={lockConnectorName} />
 
-      <div className="flex flex-wrap gap-3">
-        {onBack && (
-          <Button onClick={onBack} variant="outline">
-            Back
-          </Button>
-        )}
-        <Button disabled={!canContinue} onClick={onContinue}>
-          {optional && connections.length === 0 ? "Skip for now" : "Continue"}
-        </Button>
-      </div>
+      <WizardStepFooter
+        onBack={onBack}
+        onPrimary={onContinue}
+        primaryDisabled={!canContinue}
+        primaryLabel={optional && connections.length === 0 ? "Skip for now" : "Continue"}
+        successMessage={successMessage}
+      />
     </div>
   )
 }
+
+// ---------------------------------------------------------------------------
+// TeamStep
+// ---------------------------------------------------------------------------
 
 function TeamStep({
   groups,
@@ -355,17 +396,12 @@ function TeamStep({
             value={name}
           />
         </div>
-        <div className="flex flex-wrap gap-3">
-          <Button onClick={onBack} variant="outline">
-            Back
-          </Button>
-          <Button
-            disabled={createMutation.isPending || name.trim().length === 0}
-            onClick={submit}
-          >
-            {createMutation.isPending ? "Creating..." : "Create team"}
-          </Button>
-        </div>
+        <WizardStepFooter
+          onBack={onBack}
+          onPrimary={submit}
+          primaryDisabled={createMutation.isPending || name.trim().length === 0}
+          primaryLabel={createMutation.isPending ? "Creating..." : "Create team"}
+        />
         {createMutation.isError && (
           <p className="text-sm text-red-700" role="alert">
             {apiErrorMessage(createMutation.error, "Failed to create the team. Please try again.")}
@@ -376,6 +412,10 @@ function TeamStep({
   )
 }
 
+// ---------------------------------------------------------------------------
+// SourcesStep
+// ---------------------------------------------------------------------------
+
 function SourcesStep({
   boardScopes,
   busy,
@@ -385,6 +425,7 @@ function SourcesStep({
   groups,
   jiraConnections,
   onAddAnother,
+  onBack,
   onFinish,
   team,
 }: {
@@ -396,6 +437,7 @@ function SourcesStep({
   groups: SignalConfigGroup[]
   jiraConnections: SourceConnection[]
   onAddAnother: () => void
+  onBack: () => void
   onFinish: () => void
   team: TeamProfile | null
 }) {
@@ -423,14 +465,17 @@ function SourcesStep({
         </CardContent>
       </Card>
 
-      <div className="flex flex-wrap gap-3">
-        <Button disabled={busy || finishPending} onClick={onAddAnother} variant="outline">
-          Add another team
-        </Button>
-        <Button disabled={busy || finishPending} onClick={onFinish}>
-          {finishPending ? "Starting sync..." : busy ? "Saving sources..." : "Finish setup"}
-        </Button>
-      </div>
+      <WizardStepFooter
+        onBack={onBack}
+        onPrimary={onFinish}
+        primaryDisabled={busy || finishPending}
+        primaryLabel={finishPending ? "Starting sync..." : busy ? "Saving sources..." : "Finish setup"}
+        secondaryActions={
+          <Button disabled={busy || finishPending} onClick={onAddAnother} variant="outline">
+            Add another team
+          </Button>
+        }
+      />
       {finishError !== null && (
         <p className="text-sm text-red-700" role="alert">
           {apiErrorMessage(finishError, "The initial sync failed. Please try again.")}

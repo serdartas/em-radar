@@ -457,3 +457,98 @@ describe("SetupPage onboarding wizard", () => {
     expect(loadWizardProgress()?.completed ?? false).toBe(false)
   })
 })
+
+// ---------------------------------------------------------------------------
+// M8.5-05: navigation — Back button, clickable step pills, WizardStepFooter
+// ---------------------------------------------------------------------------
+
+describe("SetupPage wizard navigation (M8.5-05)", () => {
+  it("shows no Back button on the Welcome step", async () => {
+    readOnlyMock([])
+    renderWizard()
+
+    await screen.findByRole("heading", { name: "Welcome to EM Radar" })
+    expect(screen.queryByRole("button", { name: "Back" })).not.toBeInTheDocument()
+  })
+
+  it("shows a Back button on the Ticketing step and navigates back to Welcome", async () => {
+    readOnlyMock([])
+    saveWizardProgress({ step: "jira", currentTeamId: null, completed: false })
+    renderWizard()
+
+    await screen.findByRole("heading", { name: /Connect your ticketing source/ })
+    const backBtn = screen.getByRole("button", { name: "Back" })
+    expect(backBtn).toBeInTheDocument()
+    fireEvent.click(backBtn)
+    expect(await screen.findByRole("heading", { name: "Welcome to EM Radar" })).toBeInTheDocument()
+  })
+
+  it("shows a Back button on the Code step and navigates back to Ticketing", async () => {
+    readOnlyMock([])
+    saveWizardProgress({ step: "gitlab", currentTeamId: null, completed: false })
+    renderWizard()
+
+    await screen.findByRole("heading", { name: /Connect your code source/ })
+    expect(screen.getByRole("button", { name: "Back" })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "Back" }))
+    expect(await screen.findByRole("heading", { name: /Connect your ticketing source/ })).toBeInTheDocument()
+  })
+
+  it("shows a Back button on the Team step", async () => {
+    readOnlyMock([])
+    saveWizardProgress({ step: "team", currentTeamId: null, completed: false })
+    renderWizard()
+
+    await screen.findByRole("heading", { name: "Create a team" })
+    expect(screen.getByRole("button", { name: "Back" })).toBeInTheDocument()
+  })
+
+  it("shows a Back button on the Sources step", async () => {
+    readOnlyMock([storedTeam("team-1", "Payments")])
+    saveWizardProgress({ step: "sources", currentTeamId: "team-1", completed: false })
+    renderWizard()
+
+    await screen.findByRole("heading", { name: /Attach sources for Payments/ })
+    expect(screen.getByRole("button", { name: "Back" })).toBeInTheDocument()
+  })
+
+  it("completed step pills are clickable and navigate back; future pills are non-interactive", async () => {
+    readOnlyMock([])
+    // Resume at gitlab so Welcome and Ticketing are completed; Team and Sources are locked.
+    saveWizardProgress({ step: "gitlab", currentTeamId: null, completed: false })
+    renderWizard()
+
+    await screen.findByRole("heading", { name: /Connect your code source/ })
+
+    const rail = screen.getByRole("list", { name: "Setup progress" })
+
+    // Welcome and Ticketing pills: rendered as buttons (clickable, completed).
+    const welcomeBtn = within(rail).getByRole("button", { name: /Welcome/ })
+    const ticketingBtn = within(rail).getByRole("button", { name: /Ticketing/ })
+    expect(welcomeBtn).toBeInTheDocument()
+    expect(ticketingBtn).toBeInTheDocument()
+
+    // Team and Sources pills: no button role — they are plain list items, aria-disabled.
+    expect(within(rail).queryByRole("button", { name: /Team/ })).not.toBeInTheDocument()
+    expect(within(rail).queryByRole("button", { name: /Sources/ })).not.toBeInTheDocument()
+
+    // Clicking a completed pill navigates back.
+    fireEvent.click(welcomeBtn)
+    expect(await screen.findByRole("heading", { name: "Welcome to EM Radar" })).toBeInTheDocument()
+  })
+
+  it("the step footer exposes a single clear primary action", async () => {
+    readOnlyMock([])
+    saveWizardProgress({ step: "gitlab", currentTeamId: null, completed: false })
+    renderWizard()
+
+    await screen.findByRole("heading", { name: /Connect your code source/ })
+
+    // There is exactly one default-styled primary button in the footer area.
+    // "Skip for now" is the primary action for an optional step with no connections.
+    const primary = screen.getByRole("button", { name: "Skip for now" })
+    expect(primary).toBeInTheDocument()
+    // The primary is not disabled when the step is optional.
+    expect(primary).not.toBeDisabled()
+  })
+})
