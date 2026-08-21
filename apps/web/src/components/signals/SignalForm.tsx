@@ -91,7 +91,12 @@ export function SignalForm({
   })
 
   const [rows, setRows] = useState<RuleRow[]>(() => {
-    if (initialValue) return parseExpression(initialValue.expression).rows
+    if (initialValue) {
+      // Malformed expressions may produce empty conditions; fall back to a valid first row
+      // so the form is never in an uncontrolled state.
+      const { rows: parsed } = parseExpression(initialValue.expression)
+      return parsed.length > 0 ? parsed : [makeRow(firstField)]
+    }
     return [makeRow(firstField)]
   })
 
@@ -250,6 +255,13 @@ export function SignalForm({
                             Choose a field...
                           </option>
                         )}
+                        {/* When the stored field id is no longer in discovered fields (field
+                            deleted from Jira), keep it as a selectable option so the select
+                            remains controlled and the user can replace it. */}
+                        {row.field !== CUSTOM_FIELD_KEY &&
+                          !sortedCustomFields.some((jf) => jf.id === row.field) && (
+                            <option value={row.field}>{row.field}</option>
+                          )}
                         {sortedCustomFields.map((jf) => (
                           <option key={jf.id} value={jf.id}>
                             {jf.name} ({jf.id})
@@ -448,8 +460,11 @@ function operatorsForJiraFieldType(fieldType: string | null): {
 }
 
 /**
- * Resolves a SignalField for a given field key, checking built-in fields first
- * and falling back to synthesising one from discovered Jira custom field metadata.
+ * Resolves a SignalField for a given field key, checking built-in fields first,
+ * then discovered Jira custom fields. When a custom-field id is stored but the
+ * field is no longer in jiraCustomFields (deleted in Jira or not yet loaded),
+ * a generic fallback SignalField is synthesised so operator/value controls
+ * remain usable rather than rendering an empty dropdown.
  */
 function resolveField(
   key: string,
@@ -460,6 +475,20 @@ function resolveField(
   if (builtin) return builtin
   const jiraField = jiraCustomFields.find((f) => f.id === key)
   if (jiraField) return customFieldToSignalField(jiraField)
+  // Fallback: the key looks like a custom-field id that is no longer discoverable.
+  // Synthesise a generic field so the form remains usable.
+  if (key && key !== CUSTOM_FIELD_KEY) {
+    return {
+      key,
+      label: key,
+      type: "string",
+      operators: ["is", "is_not", "is_empty", "is_not_empty"],
+      values: [],
+      value_provider: null,
+      availability: null,
+      entity_type: "issue",
+    }
+  }
   return undefined
 }
 
@@ -489,6 +518,8 @@ function buildExpression(rows: RuleRow[], groupOperator: Connector): Record<stri
 /**
  * Reconstructs RuleRow[] and groupOperator from a stored expression (for edit-mode prefill).
  * Handles the standard group expression format produced by buildExpression.
+ * Returns an empty rows array for malformed/missing conditions — callers are
+ * responsible for substituting a sensible default (e.g. makeRow(firstField)).
  */
 function parseExpression(expression: Record<string, unknown>): {
   rows: RuleRow[]
@@ -503,8 +534,5 @@ function parseExpression(expression: Record<string, unknown>): {
   }))
   const groupOperator: Connector =
     conditions.length <= 1 ? "" : expression.operator === "any" ? "OR" : "AND"
-  return {
-    rows: rows.length > 0 ? rows : [{ field: "", operator: "is", value: null }],
-    groupOperator,
-  }
+  return { rows, groupOperator }
 }

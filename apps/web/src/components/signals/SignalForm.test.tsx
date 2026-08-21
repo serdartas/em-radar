@@ -560,6 +560,30 @@ describe("SignalForm — edit mode custom-field row prefill", () => {
     expect(operatorSelect.value).toBe("greater_than")
   })
 
+  it("unresolved custom-field id (not in jiraCustomFields) still renders usable operator options", () => {
+    // Guards against degraded state when jiraCustomFields are absent/loading or the field was deleted.
+    const customFieldDef = makeDefinition({
+      expression: {
+        type: "group",
+        operator: "all",
+        conditions: [{ field: "customfield_99999", operator: "is", value: "x" }],
+      },
+    })
+    renderForm({
+      mode: "edit",
+      initialValue: customFieldDef,
+      jiraCustomFields: JIRA_CUSTOM_FIELDS, // does NOT contain customfield_99999
+    })
+
+    // Operator dropdown must have options from the fallback field (not empty)
+    const operatorSelect = screen.getByLabelText("Operator") as HTMLSelectElement
+    expect(operatorSelect.options.length).toBeGreaterThan(0)
+
+    // The Jira field picker must be visible and show the raw id as a selectable option
+    const jiraSelect = screen.getByLabelText("Jira field") as HTMLSelectElement
+    expect(jiraSelect.value).toBe("customfield_99999")
+  })
+
   it("edit mode with custom-field prefill: submit sends correct field and operator", () => {
     const customFieldDef = makeDefinition({
       name: "Custom signal",

@@ -80,7 +80,16 @@ export function SignalSettingsPage() {
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["signal-definitions"] }),
   })
 
-  if (definitionsQuery.isLoading || connectorsQuery.isLoading || connectionsQuery.isLoading) {
+  // Block render until Jira custom fields are available so the edit form never opens
+  // with an unresolved field picker (custom-field ids would degrade to empty dropdowns).
+  const jiraFieldsLoading = !!jiraConnectionId && jiraFieldsQuery.isLoading
+
+  if (
+    definitionsQuery.isLoading ||
+    connectorsQuery.isLoading ||
+    connectionsQuery.isLoading ||
+    jiraFieldsLoading
+  ) {
     return <p className="text-sm text-slate-500">Loading signals...</p>
   }
 
@@ -129,6 +138,7 @@ export function SignalSettingsPage() {
 
       {creating ? (
         <SignalForm
+          key="create"
           errorMessage={
             createMutation.isError
               ? apiErrorMessage(createMutation.error, "Could not save the signal.")
@@ -143,6 +153,7 @@ export function SignalSettingsPage() {
         />
       ) : editingDefinition ? (
         <SignalForm
+          key={editingDefinition.id}
           errorMessage={
             updateMutation.isError
               ? apiErrorMessage(updateMutation.error, "Could not save the signal.")
