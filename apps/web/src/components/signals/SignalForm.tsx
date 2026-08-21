@@ -5,6 +5,7 @@ import { useState } from "react"
 import { RuleValueControl } from "@/components/signals/RuleValueControl"
 import { NO_VALUE_OPERATORS, defaultValueForRule } from "@/components/signals/ruleValue"
 import { Button } from "@/components/ui/button"
+import { Callout } from "@/components/ui/callout"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -17,11 +18,17 @@ import { SEVERITIES, type Severity } from "@/lib/severity"
 import type { SignalDefinition, SignalDefinitionCreate } from "@/lib/signalDefinitions"
 
 const MAX_RULES = 5
-const SIGNAL_TYPES = [
-  { value: "issue", label: "Work tracking / tickets (Jira)" },
-  { value: "merge_request", label: "Merge requests (GitLab)" },
-]
-const CATEGORIES = ["flow", "hygiene", "quality", "sprint"]
+
+// Human-readable labels for known entity types; unknown types fall back to the raw value.
+const ENTITY_TYPE_LABELS: Record<string, string> = {
+  issue: "Work tracking / tickets (Jira)",
+  merge_request: "Merge requests (GitLab)",
+  sprint: "Sprints (Jira)",
+}
+
+// Full set of known categories. A free-text value outside this list is still
+// rendered as a selectable option so an existing signal's category is never lost.
+const CATEGORIES = ["flow", "hygiene", "quality", "sprint", "planning", "delivery"]
 
 // Sentinel key used when the user selects "Custom field" before picking a specific field.
 const CUSTOM_FIELD_KEY = "__custom__"
@@ -65,8 +72,7 @@ export function SignalForm({
   const [entityType, setEntityType] = useState(
     () =>
       initialValue?.entity_type ??
-      (SIGNAL_TYPES.find((t) => (fieldsByEntityType[t.value] ?? []).length > 0)?.value ??
-        SIGNAL_TYPES[0].value),
+      (Object.keys(fieldsByEntityType)[0] ?? "issue"),
   )
   const [severity, setSeverity] = useState<Severity>(
     initialValue?.report_settings.severity ?? "warning",
@@ -85,15 +91,31 @@ export function SignalForm({
 
   const firstField = sortedBuiltinFields[0]
 
+  // Entity type options: all types reported by connected connectors, plus the persisted
+  // type from initialValue so editing a sprint/unknown-type signal never loses it.
+  const availableEntityTypes = Object.keys(fieldsByEntityType)
+  const entityTypeOptions = [
+    ...availableEntityTypes,
+    ...(initialValue && !availableEntityTypes.includes(initialValue.entity_type)
+      ? [initialValue.entity_type]
+      : []),
+  ]
+
+  // Advanced-expression guard: detect when the stored expression cannot be faithfully
+  // represented by the flat rule builder. A condition that is itself a group (has a
+  // `conditions` array) or lacks a `field` key would be corrupted if we rebuilt from rows.
+  const isAdvanced =
+    mode === "edit" && initialValue != null && isAdvancedExpression(initialValue.expression)
+
   const [groupOperator, setGroupOperator] = useState<Connector>(() => {
-    if (initialValue) return parseExpression(initialValue.expression).groupOperator
+    if (initialValue && !isAdvancedExpression(initialValue.expression)) {
+      return parseExpression(initialValue.expression).groupOperator
+    }
     return ""
   })
 
   const [rows, setRows] = useState<RuleRow[]>(() => {
-    if (initialValue) {
-      // Malformed expressions may produce empty conditions; fall back to a valid first row
-      // so the form is never in an uncontrolled state.
+    if (initialValue && !isAdvancedExpression(initialValue.expression)) {
       const { rows: parsed } = parseExpression(initialValue.expression)
       return parsed.length > 0 ? parsed : [makeRow(firstField)]
     }
@@ -149,7 +171,7 @@ export function SignalForm({
 
   // A row still on the sentinel means the user opened "Custom field" but hasn't
   // chosen a concrete field yet — block save so no sentinel leaks into the expression.
-  const hasSentinelRow = rows.some((row) => row.field === CUSTOM_FIELD_KEY)
+  const hasSentinelRow = !isAdvanced && rows.some((row) => row.field === CUSTOM_FIELD_KEY)
   const canSave = name.trim().length > 0 && !pending && !hasSentinelRow
 
   const heading = mode === "edit" ? "Edit signal" : "Create signal"
@@ -162,7 +184,8 @@ export function SignalForm({
     onSave({
       name: name.trim(),
       entity_type: entityType,
-      expression: buildExpression(rows, groupOperator),
+      // Advanced expressions are preserved byte-for-byte; rebuilding from rows would corrupt them.
+      expression: isAdvanced ? initialValue!.expression : buildExpression(rows, groupOperator),
       report_settings: {
         severity,
         category,
@@ -195,159 +218,167 @@ export function SignalForm({
               onChange={(event) => handleEntityTypeChange(event.target.value)}
               value={entityType}
             >
-              {SIGNAL_TYPES.filter((type) => (fieldsByEntityType[type.value] ?? []).length > 0).map(
-                (type) => (
-                  <option key={type.value} value={type.value}>
-                    {type.label}
-                  </option>
-                ),
-              )}
+              {entityTypeOptions.map((type) => (
+                <option key={type} value={type}>
+                  {ENTITY_TYPE_LABELS[type] ?? type}
+                </option>
+              ))}
             </Select>
           </div>
         </div>
 
-        <div className="space-y-3">
-          <div className="flex items-center gap-3">
-            <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Rules</h3>
-            <div className="h-px flex-1 bg-border" />
-          </div>
+        {isAdvanced ? (
+          <Callout title="Advanced condition" variant="info">
+            This signal uses a nested condition that cannot be displayed in the rule builder.
+            To change the rules, export the signal pack and edit the YAML directly. You can
+            still update the name, type, severity, category, and message above and below.
+          </Callout>
+        ) : (
+          <div className="space-y-3">
+            <div className="flex items-center gap-3">
+              <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+                Rules
+              </h3>
+              <div className="h-px flex-1 bg-border" />
+            </div>
 
-          <ul className="space-y-2">
-            {rows.map((row, index) => {
-              const isUsingCustomField = isCustomFieldRow(row.field, sortedBuiltinFields)
-              const field = resolveField(row.field, sortedBuiltinFields, jiraCustomFields)
-              const fieldSelectValue = isUsingCustomField ? CUSTOM_FIELD_KEY : row.field
-              const isLast = index === rows.length - 1
-              return (
-                <li
-                  className="flex flex-wrap items-end gap-2 rounded-md border border-border p-3"
-                  key={index}
-                >
-                  <div className="min-w-40 flex-1 space-y-1.5">
-                    <Label htmlFor={`rule-field-${index}`}>Field</Label>
-                    <Select
-                      id={`rule-field-${index}`}
-                      onChange={(event) => changeField(index, event.target.value)}
-                      value={fieldSelectValue}
-                    >
-                      {sortedBuiltinFields.map((option) => (
-                        <option key={option.key} value={option.key}>
-                          {option.label}
-                        </option>
-                      ))}
-                      {showCustomFieldOption && (
-                        <option value={CUSTOM_FIELD_KEY}>Custom field</option>
-                      )}
-                    </Select>
-                  </div>
-
-                  {/* Second picker: revealed only when "Custom field" is active */}
-                  {isUsingCustomField && (
+            <ul className="space-y-2">
+              {rows.map((row, index) => {
+                const isUsingCustomField = isCustomFieldRow(row.field, sortedBuiltinFields)
+                const field = resolveField(row.field, sortedBuiltinFields, jiraCustomFields)
+                const fieldSelectValue = isUsingCustomField ? CUSTOM_FIELD_KEY : row.field
+                const isLast = index === rows.length - 1
+                return (
+                  <li
+                    className="flex flex-wrap items-end gap-2 rounded-md border border-border p-3"
+                    key={index}
+                  >
                     <div className="min-w-40 flex-1 space-y-1.5">
-                      <Label htmlFor={`rule-custom-field-${index}`}>Jira field</Label>
+                      <Label htmlFor={`rule-field-${index}`}>Field</Label>
                       <Select
-                        id={`rule-custom-field-${index}`}
-                        onChange={(event) => changeCustomField(index, event.target.value)}
-                        value={row.field === CUSTOM_FIELD_KEY ? "" : row.field}
+                        id={`rule-field-${index}`}
+                        onChange={(event) => changeField(index, event.target.value)}
+                        value={fieldSelectValue}
                       >
-                        {row.field === CUSTOM_FIELD_KEY && (
-                          <option disabled value="">
-                            Choose a field...
-                          </option>
-                        )}
-                        {/* When the stored field id is no longer in discovered fields (field
-                            deleted from Jira), keep it as a selectable option so the select
-                            remains controlled and the user can replace it. */}
-                        {row.field !== CUSTOM_FIELD_KEY &&
-                          !sortedCustomFields.some((jf) => jf.id === row.field) && (
-                            <option value={row.field}>{row.field}</option>
-                          )}
-                        {sortedCustomFields.map((jf) => (
-                          <option key={jf.id} value={jf.id}>
-                            {jf.name} ({jf.id})
+                        {sortedBuiltinFields.map((option) => (
+                          <option key={option.key} value={option.key}>
+                            {option.label}
                           </option>
                         ))}
+                        {showCustomFieldOption && (
+                          <option value={CUSTOM_FIELD_KEY}>Custom field</option>
+                        )}
                       </Select>
                     </div>
-                  )}
 
-                  {/* Suppress operator/value controls until a concrete field is resolved.
-                      When row.field is the sentinel (Custom field picked, no specific
-                      field chosen yet) there are no operators to show. */}
-                  {row.field !== CUSTOM_FIELD_KEY && (
-                    <>
-                      <div className="min-w-36 flex-1 space-y-1.5">
-                        <Label htmlFor={`rule-operator-${index}`}>Operator</Label>
+                    {/* Second picker: revealed only when "Custom field" is active */}
+                    {isUsingCustomField && (
+                      <div className="min-w-40 flex-1 space-y-1.5">
+                        <Label htmlFor={`rule-custom-field-${index}`}>Jira field</Label>
                         <Select
-                          id={`rule-operator-${index}`}
-                          onChange={(event) => changeOperator(index, event.target.value)}
-                          value={row.operator}
+                          id={`rule-custom-field-${index}`}
+                          onChange={(event) => changeCustomField(index, event.target.value)}
+                          value={row.field === CUSTOM_FIELD_KEY ? "" : row.field}
                         >
-                          {(field?.operators ?? []).map((operator) => (
-                            <option key={operator} value={operator}>
-                              {humanizeOperator(operator)}
+                          {row.field === CUSTOM_FIELD_KEY && (
+                            <option disabled value="">
+                              Choose a field...
+                            </option>
+                          )}
+                          {/* When the stored field id is no longer in discovered fields (field
+                              deleted from Jira), keep it as a selectable option so the select
+                              remains controlled and the user can replace it. */}
+                          {row.field !== CUSTOM_FIELD_KEY &&
+                            !sortedCustomFields.some((jf) => jf.id === row.field) && (
+                              <option value={row.field}>{row.field}</option>
+                            )}
+                          {sortedCustomFields.map((jf) => (
+                            <option key={jf.id} value={jf.id}>
+                              {jf.name} ({jf.id})
                             </option>
                           ))}
                         </Select>
                       </div>
-                      {!NO_VALUE_OPERATORS.has(row.operator) && (
-                        <div className="min-w-40 flex-1 space-y-1.5">
-                          <Label htmlFor={`rule-value-${index}`}>Value</Label>
-                          <RuleValueControl
-                            field={field}
-                            id={`rule-value-${index}`}
-                            onChange={(value) => updateRow(index, { value })}
-                            operator={row.operator}
-                            value={row.value}
-                          />
+                    )}
+
+                    {/* Suppress operator/value controls until a concrete field is resolved.
+                        When row.field is the sentinel (Custom field picked, no specific
+                        field chosen yet) there are no operators to show. */}
+                    {row.field !== CUSTOM_FIELD_KEY && (
+                      <>
+                        <div className="min-w-36 flex-1 space-y-1.5">
+                          <Label htmlFor={`rule-operator-${index}`}>Operator</Label>
+                          <Select
+                            id={`rule-operator-${index}`}
+                            onChange={(event) => changeOperator(index, event.target.value)}
+                            value={row.operator}
+                          >
+                            {(field?.operators ?? []).map((operator) => (
+                              <option key={operator} value={operator}>
+                                {humanizeOperator(operator)}
+                              </option>
+                            ))}
+                          </Select>
                         </div>
-                      )}
-                    </>
-                  )}
-                  <div className="w-28 space-y-1.5">
-                    <Label htmlFor={`rule-connector-${index}`}>Join</Label>
-                    {isLast ? (
-                      rows.length < MAX_RULES ? (
+                        {!NO_VALUE_OPERATORS.has(row.operator) && (
+                          <div className="min-w-40 flex-1 space-y-1.5">
+                            <Label htmlFor={`rule-value-${index}`}>Value</Label>
+                            <RuleValueControl
+                              field={field}
+                              id={`rule-value-${index}`}
+                              onChange={(value) => updateRow(index, { value })}
+                              operator={row.operator}
+                              value={row.value}
+                            />
+                          </div>
+                        )}
+                      </>
+                    )}
+                    <div className="w-28 space-y-1.5">
+                      <Label htmlFor={`rule-connector-${index}`}>Join</Label>
+                      {isLast ? (
+                        rows.length < MAX_RULES ? (
+                          <Select
+                            aria-label="Add rule"
+                            id={`rule-connector-${index}`}
+                            onChange={(event) => addRow(event.target.value as Connector)}
+                            value=""
+                          >
+                            <option value="">--</option>
+                            <option value="AND">AND</option>
+                            <option value="OR">OR</option>
+                          </Select>
+                        ) : (
+                          <p className="text-xs text-slate-400">Max {MAX_RULES}</p>
+                        )
+                      ) : (
                         <Select
-                          aria-label="Add rule"
+                          aria-label={`Connector ${index + 1}`}
                           id={`rule-connector-${index}`}
-                          onChange={(event) => addRow(event.target.value as Connector)}
-                          value=""
+                          onChange={(event) => setGroupOperator(event.target.value as Connector)}
+                          value={groupOperator || "AND"}
                         >
-                          <option value="">--</option>
                           <option value="AND">AND</option>
                           <option value="OR">OR</option>
                         </Select>
-                      ) : (
-                        <p className="text-xs text-slate-400">Max {MAX_RULES}</p>
-                      )
-                    ) : (
-                      <Select
-                        aria-label={`Connector ${index + 1}`}
-                        id={`rule-connector-${index}`}
-                        onChange={(event) => setGroupOperator(event.target.value as Connector)}
-                        value={groupOperator || "AND"}
+                      )}
+                    </div>
+                    {rows.length > 1 && (
+                      <Button
+                        aria-label={`Remove rule ${index + 1}`}
+                        onClick={() => removeRow(index)}
+                        size="sm"
+                        variant="outline"
                       >
-                        <option value="AND">AND</option>
-                        <option value="OR">OR</option>
-                      </Select>
+                        Remove
+                      </Button>
                     )}
-                  </div>
-                  {rows.length > 1 && (
-                    <Button
-                      aria-label={`Remove rule ${index + 1}`}
-                      onClick={() => removeRow(index)}
-                      size="sm"
-                      variant="outline"
-                    >
-                      Remove
-                    </Button>
-                  )}
-                </li>
-              )
-            })}
-          </ul>
-        </div>
+                  </li>
+                )
+              })}
+            </ul>
+          </div>
+        )}
 
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-1.5">
@@ -371,6 +402,11 @@ export function SignalForm({
               onChange={(event) => setCategory(event.target.value)}
               value={category}
             >
+              {/* If the persisted category is outside the known set, render it first so it
+                  stays selectable and isn't silently replaced by the first option. */}
+              {!CATEGORIES.includes(category) && (
+                <option value={category}>{category}</option>
+              )}
               {CATEGORIES.map((option) => (
                 <option key={option} value={option}>
                   {option}
@@ -516,10 +552,23 @@ function buildExpression(rows: RuleRow[], groupOperator: Connector): Record<stri
 }
 
 /**
+ * Returns true when the expression contains conditions that the flat rule builder
+ * cannot faithfully represent — specifically, any condition that is itself a group
+ * (has a `conditions` array) or is missing the `field` key required for a leaf rule.
+ * Such expressions must be preserved verbatim on save to avoid data corruption.
+ */
+function isAdvancedExpression(expression: Record<string, unknown>): boolean {
+  const conditions =
+    (expression.conditions as Array<Record<string, unknown>> | undefined) ?? []
+  return conditions.some((cond) => Array.isArray(cond.conditions) || !("field" in cond))
+}
+
+/**
  * Reconstructs RuleRow[] and groupOperator from a stored expression (for edit-mode prefill).
  * Handles the standard group expression format produced by buildExpression.
  * Returns an empty rows array for malformed/missing conditions — callers are
  * responsible for substituting a sensible default (e.g. makeRow(firstField)).
+ * Only call this after confirming !isAdvancedExpression(expression).
  */
 function parseExpression(expression: Record<string, unknown>): {
   rows: RuleRow[]

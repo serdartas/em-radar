@@ -610,3 +610,180 @@ describe("SignalForm — edit mode custom-field row prefill", () => {
     expect(call.expression.conditions[0].value).toBe(5)
   })
 })
+
+// ---------------------------------------------------------------------------
+// P1 — Nested / advanced expression: no corruption, builder replaced by Callout
+// ---------------------------------------------------------------------------
+
+const NESTED_EXPRESSION = {
+  type: "group",
+  operator: "all",
+  conditions: [
+    {
+      // A condition that is itself a group — cannot be represented in the flat builder.
+      operator: "any",
+      conditions: [
+        { field: "status_category", operator: "is", value: "in_progress" },
+        { field: "age_in_current_status", operator: "greater_than", value: 7 },
+      ],
+    },
+  ],
+}
+
+describe("SignalForm — nested/advanced expression guard", () => {
+  it("flat rule builder is NOT shown for a nested-group expression", () => {
+    renderForm({
+      mode: "edit",
+      initialValue: makeDefinition({ expression: NESTED_EXPRESSION }),
+    })
+
+    // The rules list must not be rendered; the Callout replaces it.
+    expect(screen.queryByLabelText("Field")).not.toBeInTheDocument()
+    expect(screen.queryByLabelText("Operator")).not.toBeInTheDocument()
+  })
+
+  it("shows the advanced-condition Callout for a nested-group expression", () => {
+    renderForm({
+      mode: "edit",
+      initialValue: makeDefinition({ expression: NESTED_EXPRESSION }),
+    })
+
+    expect(screen.getByText(/advanced condition/i)).toBeInTheDocument()
+  })
+
+  it("metadata fields remain editable for a nested-group expression", () => {
+    renderForm({
+      mode: "edit",
+      initialValue: makeDefinition({ name: "Nested signal", expression: NESTED_EXPRESSION }),
+    })
+
+    expect(screen.getByLabelText("Name")).toBeInTheDocument()
+    expect(screen.getByLabelText("Severity")).toBeInTheDocument()
+    expect(screen.getByLabelText("Category")).toBeInTheDocument()
+  })
+
+  it("saving after a name-only edit preserves the nested expression byte-for-byte", () => {
+    const { onSave } = renderForm({
+      mode: "edit",
+      initialValue: makeDefinition({ name: "Old name", expression: NESTED_EXPRESSION }),
+    })
+
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "New name" } })
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }))
+
+    expect(onSave).toHaveBeenCalledOnce()
+    const call = onSave.mock.calls[0][0] as { name: string; expression: unknown }
+    expect(call.name).toBe("New name")
+    // Expression must be the original object, not a flattened rebuild.
+    expect(call.expression).toEqual(NESTED_EXPRESSION)
+  })
+
+  it("flat signals are unaffected (no Callout, rule builder present)", () => {
+    renderForm({ mode: "edit", initialValue: makeDefinition() })
+
+    expect(screen.queryByText(/advanced condition/i)).not.toBeInTheDocument()
+    expect(screen.getByLabelText("Field")).toBeInTheDocument()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// P2 — Sprint entity type shown correctly in Type selector
+// ---------------------------------------------------------------------------
+
+const SPRINT_FIELDS: SignalField[] = [
+  {
+    key: "sprint_state",
+    label: "Sprint state",
+    type: "enum",
+    operators: ["is", "is_not"],
+    values: ["active", "closed", "future"],
+    value_provider: null,
+    availability: null,
+    entity_type: "sprint",
+  },
+]
+
+describe("SignalForm — sprint entity type", () => {
+  it("editing a sprint signal shows 'sprint' selected in the Type control", () => {
+    renderForm({
+      fieldsByEntityType: { issue: ISSUE_FIELDS, sprint: SPRINT_FIELDS },
+      mode: "edit",
+      initialValue: makeDefinition({
+        entity_type: "sprint",
+        expression: {
+          type: "group",
+          operator: "all",
+          conditions: [{ field: "sprint_state", operator: "is", value: "active" }],
+        },
+      }),
+    })
+
+    const typeSelect = screen.getByLabelText("Type") as HTMLSelectElement
+    expect(typeSelect.value).toBe("sprint")
+  })
+
+  it("sprint label falls back to raw value when not in ENTITY_TYPE_LABELS", () => {
+    const unknownType = "custom_entity"
+    renderForm({
+      fieldsByEntityType: { custom_entity: ISSUE_FIELDS },
+      mode: "edit",
+      initialValue: makeDefinition({
+        entity_type: unknownType,
+        expression: {
+          type: "group",
+          operator: "all",
+          conditions: [{ field: "status_category", operator: "is", value: "in_progress" }],
+        },
+      }),
+    })
+
+    const typeSelect = screen.getByLabelText("Type") as HTMLSelectElement
+    expect(typeSelect.value).toBe(unknownType)
+    const option = Array.from(typeSelect.options).find((o) => o.value === unknownType)
+    expect(option?.text).toBe(unknownType)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// P2 — Planning / delivery categories shown correctly
+// ---------------------------------------------------------------------------
+
+describe("SignalForm — extended categories", () => {
+  it("editing a 'planning' signal shows planning selected in Category", () => {
+    renderForm({
+      mode: "edit",
+      initialValue: makeDefinition({
+        report_settings: { severity: "warning", category: "planning" },
+      }),
+    })
+
+    const categorySelect = screen.getByLabelText("Category") as HTMLSelectElement
+    expect(categorySelect.value).toBe("planning")
+  })
+
+  it("editing a 'delivery' signal shows delivery selected in Category", () => {
+    renderForm({
+      mode: "edit",
+      initialValue: makeDefinition({
+        report_settings: { severity: "warning", category: "delivery" },
+      }),
+    })
+
+    const categorySelect = screen.getByLabelText("Category") as HTMLSelectElement
+    expect(categorySelect.value).toBe("delivery")
+  })
+
+  it("an unknown category outside the known set is still rendered as a selectable option", () => {
+    renderForm({
+      mode: "edit",
+      initialValue: makeDefinition({
+        report_settings: { severity: "warning", category: "custom_cat" },
+      }),
+    })
+
+    const categorySelect = screen.getByLabelText("Category") as HTMLSelectElement
+    expect(categorySelect.value).toBe("custom_cat")
+    const option = Array.from(categorySelect.options).find((o) => o.value === "custom_cat")
+    expect(option).toBeTruthy()
+  })
+})
