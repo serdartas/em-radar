@@ -54,9 +54,9 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-describe("SignalGroupAttachList — AUDIT-8: pending toggle disables control", () => {
-  it("disables the toggled button while its mutation is pending and does not lose a rapid second write", async () => {
-    // Deferred promise so we can assert the disabled state before mutation resolves.
+// AUDIT-8: all toggle buttons disabled while any write is in-flight (serialization)
+describe("SignalGroupAttachList - AUDIT-8: pending toggle disables controls", () => {
+  it("disables ALL group buttons while any mutation is pending and does not lose a rapid second write", async () => {
     let patchCallCount = 0
     let resolvePatch!: (value: Response) => void
     const pendingPatch = new Promise<Response>((resolve) => {
@@ -74,19 +74,19 @@ describe("SignalGroupAttachList — AUDIT-8: pending toggle disables control", (
 
     renderList()
 
-    // Use getAllByRole since both groups render an "Attach" button.
-    const [attachBtn] = screen.getAllByRole("button", { name: "Attach" })
-    expect(attachBtn).not.toBeDisabled()
+    const [btnG1, btnG2] = screen.getAllByRole("button", { name: "Attach" })
 
-    fireEvent.click(attachBtn)
+    // Click g1 Attach
+    fireEvent.click(btnG1)
 
-    // Button must be disabled while the mutation is in-flight (no double-submit).
-    expect(attachBtn).toBeDisabled()
+    // Both buttons must be disabled while the mutation is in-flight (cross-group serialization).
+    await waitFor(() => expect(btnG1).toBeDisabled())
+    expect(btnG2).toBeDisabled()
 
-    // A second rapid click on the same disabled button is ignored.
-    fireEvent.click(attachBtn)
+    // Attempting to click g2 while g1 is pending has no effect (write not lost = not double-submitted).
+    fireEvent.click(btnG2)
 
-    // Resolve the PATCH.
+    // Resolve g1's PATCH.
     resolvePatch(
       new Response(JSON.stringify({ ...team, signal_config_group_ids: ["g1"] }), {
         status: 200,
@@ -94,14 +94,16 @@ describe("SignalGroupAttachList — AUDIT-8: pending toggle disables control", (
       }),
     )
 
-    await waitFor(() => expect(attachBtn).not.toBeDisabled())
+    await waitFor(() => expect(btnG1).not.toBeDisabled())
+    expect(btnG2).not.toBeDisabled()
 
-    // Only one PATCH was sent despite two clicks — the write is not "doubled".
+    // Only one PATCH fired; g2's "click while disabled" was blocked.
     expect(patchCallCount).toBe(1)
   })
 })
 
-describe("SignalGroupAttachList — AUDIT-9: error surfacing via Callout", () => {
+// AUDIT-9: error surfacing via Callout
+describe("SignalGroupAttachList - AUDIT-9: Callout error on mutation failure", () => {
   it("renders a Callout error when the attach mutation fails", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
       const url = typeof input === "string" ? input : input.toString()

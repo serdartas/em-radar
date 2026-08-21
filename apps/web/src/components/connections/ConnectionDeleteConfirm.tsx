@@ -31,6 +31,9 @@ function ConnectionDeleteConfirm({
   onDeleted,
 }: ConnectionDeleteConfirmProps) {
   const [conflict, setConflict] = useState<ConnectionConflict | null>(null)
+  // Separate from deleteMutation.isError so that a force-delete failure is surfaced even
+  // when conflict is already set (deleteMutation.isError && conflict === null would miss it).
+  const [deleteError, setDeleteError] = useState<string | null>(null)
 
   const deleteMutation = useMutation({
     mutationFn: (force: boolean) => deleteConnection(connectionId, force),
@@ -44,6 +47,9 @@ function ConnectionDeleteConfirm({
         "dependent_teams" in error.detail
       ) {
         setConflict(error.detail as ConnectionConflict)
+      } else {
+        // Non-conflict error on the initial delete OR a failed force-delete.
+        setDeleteError("Could not delete the connection. Please try again.")
       }
     },
   })
@@ -51,7 +57,10 @@ function ConnectionDeleteConfirm({
   const isForce = conflict !== null
   const confirmLabel = isForce ? "Confirm force delete" : "Confirm delete"
 
-  const onConfirm = () => deleteMutation.mutate(isForce)
+  const onConfirm = () => {
+    setDeleteError(null)
+    deleteMutation.mutate(isForce)
+  }
 
   let body: ReactNode
   if (conflict) {
@@ -97,9 +106,9 @@ function ConnectionDeleteConfirm({
         title={`Delete connection ${connectionName}`}
         titleHidden
       />
-      {deleteMutation.isError && conflict === null && (
+      {deleteError && (
         <Callout className="mt-2" role="alert" variant="error">
-          Could not delete the connection. Please try again.
+          {deleteError}
         </Callout>
       )}
     </>

@@ -103,6 +103,46 @@ describe("ConnectionDeleteConfirm", () => {
     expect(screen.getByRole("button", { name: "Confirm force delete" })).toBeInTheDocument()
   })
 
+  it("shows a Callout error when the force-delete fails after a 409 conflict", async () => {
+    let callCount = 0
+    vi.spyOn(globalThis, "fetch").mockImplementation(() => {
+      callCount++
+      if (callCount === 1) {
+        // Initial delete -> 409 conflict
+        return Promise.resolve(
+          jsonResponse(
+            {
+              detail: {
+                message: "connection is in use",
+                dependent_teams: [{ id: "team-1", name: "Platform" }],
+              },
+            },
+            409,
+          ),
+        )
+      }
+      // Force delete -> 500 error
+      return Promise.resolve(
+        new Response(JSON.stringify({ detail: "server error" }), { status: 500 }),
+      )
+    })
+
+    renderConfirm()
+    fireEvent.click(screen.getByRole("button", { name: "Confirm delete" }))
+
+    // Conflict dialog shows.
+    await screen.findByText("Platform")
+    expect(screen.getByRole("button", { name: "Confirm force delete" })).toBeInTheDocument()
+
+    // Force-delete attempt.
+    fireEvent.click(screen.getByRole("button", { name: "Confirm force delete" }))
+
+    // Error Callout must appear even though conflict is non-null.
+    const alert = await screen.findByRole("alert")
+    expect(alert).toBeInTheDocument()
+    expect(alert.textContent).toMatch(/could not delete/i)
+  })
+
   it("retries with force=true when Confirm force delete is clicked", async () => {
     let forceUsed = false
     vi.spyOn(globalThis, "fetch").mockImplementation((input) => {

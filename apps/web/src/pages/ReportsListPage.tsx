@@ -59,11 +59,13 @@ export function ReportsListPage() {
   })
 
   // Clear from browser history after mount so a manual refresh does not replay the note.
-  // Keeping this in a useEffect rather than the useState initializer avoids a side effect
-  // during render.
+  // Guard on failedTeams so we never clobber React Router's internal history fields
+  // (usr/key/idx) on pages that had no payload to consume.
   useEffect(() => {
-    window.history.replaceState({}, "")
-  }, [])
+    if (failedTeams.length > 0) {
+      window.history.replaceState({ ...window.history.state, usr: null }, "")
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <section aria-labelledby="page-title" className="space-y-6">

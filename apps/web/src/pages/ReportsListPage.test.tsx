@@ -83,7 +83,8 @@ describe("ReportsListPage", () => {
     expect(headings).toEqual(["Team Alpha", "Team Beta"])
   })
 
-  // AUDIT-30: history.replaceState must be called in a useEffect, not during render.
+  // AUDIT-30: history.replaceState must be called in a useEffect, not during render,
+  // and only when there was state to consume (to preserve React Router's history fields).
   it("AUDIT-30: consumes history failedTeams state and clears it via useEffect", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify([]), {
@@ -108,10 +109,30 @@ describe("ReportsListPage", () => {
     const alert = await screen.findByRole("alert")
     expect(alert.textContent).toMatch(/Team Alpha/)
 
-    // replaceState must have been called (via the useEffect, not during render).
+    // replaceState must have been called with usr: null to clear the payload
+    // while preserving React Router's internal history fields.
     await waitFor(() => {
-      expect(replaceStateSpy).toHaveBeenCalledWith({}, "")
+      expect(replaceStateSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ usr: null }),
+        "",
+      )
     })
+  })
+
+  it("AUDIT-30: does not call replaceState when location.state has no failedTeams", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    )
+    const replaceStateSpy = vi.spyOn(window.history, "replaceState")
+
+    renderReportsList() // standard render with no state
+
+    await screen.findByText(/No reports yet/)
+
+    expect(replaceStateSpy).not.toHaveBeenCalled()
   })
 
   it("falls back to Unknown team when a report has no team", async () => {
