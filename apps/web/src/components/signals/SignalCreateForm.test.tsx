@@ -203,7 +203,7 @@ describe("SignalCreateForm — operator and value controls by field type", () =>
     expect(screen.queryByLabelText("Value")).not.toBeInTheDocument()
   })
 
-  it("option field type shows is / is not operators and a text value input", () => {
+  it("option field type shows is / is not operators and a free-text (input) value control", () => {
     renderForm({ jiraCustomFields: JIRA_CUSTOM_FIELDS })
 
     fireEvent.change(screen.getByLabelText("Field"), { target: { value: "__custom__" } })
@@ -216,8 +216,21 @@ describe("SignalCreateForm — operator and value controls by field type", () =>
     expect(optionLabels).toContain("is")
     expect(optionLabels).toContain("is not")
 
-    // Should have a text value control
-    expect(screen.getByLabelText("Value")).toBeInTheDocument()
+    // Must be a plain text <input>, not a <select>, because option values are not discoverable.
+    const valueControl = screen.getByLabelText("Value") as HTMLInputElement
+    expect(valueControl.tagName).toBe("INPUT")
+  })
+
+  it("selecting 'Custom field' sentinel before picking a concrete field hides Operator and Value", () => {
+    renderForm({ jiraCustomFields: JIRA_CUSTOM_FIELDS })
+
+    fireEvent.change(screen.getByLabelText("Field"), { target: { value: "__custom__" } })
+
+    // Jira field picker is visible but no concrete field chosen yet
+    expect(screen.getByLabelText("Jira field")).toBeInTheDocument()
+    // Operator and Value must not appear until a concrete field is picked
+    expect(screen.queryByLabelText("Operator")).not.toBeInTheDocument()
+    expect(screen.queryByLabelText("Value")).not.toBeInTheDocument()
   })
 })
 

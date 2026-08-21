@@ -232,31 +232,38 @@ export function SignalCreateForm({
                     </div>
                   )}
 
-                  <div className="min-w-36 flex-1 space-y-1.5">
-                    <Label htmlFor={`rule-operator-${index}`}>Operator</Label>
-                    <Select
-                      id={`rule-operator-${index}`}
-                      onChange={(event) => changeOperator(index, event.target.value)}
-                      value={row.operator}
-                    >
-                      {(field?.operators ?? []).map((operator) => (
-                        <option key={operator} value={operator}>
-                          {humanizeOperator(operator)}
-                        </option>
-                      ))}
-                    </Select>
-                  </div>
-                  {!NO_VALUE_OPERATORS.has(row.operator) && (
-                    <div className="min-w-40 flex-1 space-y-1.5">
-                      <Label htmlFor={`rule-value-${index}`}>Value</Label>
-                      <RuleValueControl
-                        field={field}
-                        id={`rule-value-${index}`}
-                        onChange={(value) => updateRow(index, { value })}
-                        operator={row.operator}
-                        value={row.value}
-                      />
-                    </div>
+                  {/* Suppress operator/value controls until a concrete field is resolved.
+                      When row.field is the sentinel (Custom field picked, no specific
+                      field chosen yet) there are no operators to show. */}
+                  {row.field !== CUSTOM_FIELD_KEY && (
+                    <>
+                      <div className="min-w-36 flex-1 space-y-1.5">
+                        <Label htmlFor={`rule-operator-${index}`}>Operator</Label>
+                        <Select
+                          id={`rule-operator-${index}`}
+                          onChange={(event) => changeOperator(index, event.target.value)}
+                          value={row.operator}
+                        >
+                          {(field?.operators ?? []).map((operator) => (
+                            <option key={operator} value={operator}>
+                              {humanizeOperator(operator)}
+                            </option>
+                          ))}
+                        </Select>
+                      </div>
+                      {!NO_VALUE_OPERATORS.has(row.operator) && (
+                        <div className="min-w-40 flex-1 space-y-1.5">
+                          <Label htmlFor={`rule-value-${index}`}>Value</Label>
+                          <RuleValueControl
+                            field={field}
+                            id={`rule-value-${index}`}
+                            onChange={(value) => updateRow(index, { value })}
+                            operator={row.operator}
+                            value={row.value}
+                          />
+                        </div>
+                      )}
+                    </>
                   )}
                   <div className="w-28 space-y-1.5">
                     <Label htmlFor={`rule-connector-${index}`}>Join</Label>
