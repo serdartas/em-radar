@@ -574,4 +574,134 @@ describe("SourceConnectionsPage", () => {
 
     await waitFor(() => expect(forceUsed).toBe(true))
   })
+
+  // ---------------------------------------------------------------------------
+  // Progressive disclosure (M8.5-07)
+  // ---------------------------------------------------------------------------
+
+  it("does not show the add form while the connections query is pending", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = typeof input === "string" ? input : input.toString()
+      if (url.endsWith("/api/connectors")) {
+        return Promise.resolve(jsonResponse([jiraConnector]))
+      }
+      return new Promise(() => {})
+    })
+    renderPage()
+
+    await screen.findByText(/Loading connections/)
+    expect(screen.queryByLabelText(/^Base URL/)).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/Connection name/)).not.toBeInTheDocument()
+  })
+
+  it("shows the add form directly when there are no connections", async () => {
+    mockApi()
+    renderPage()
+
+    expect(await screen.findByLabelText(/^Base URL/)).toBeInTheDocument()
+    expect(screen.getByLabelText(/Connection name/)).toBeInTheDocument()
+  })
+
+  it("hides the add form behind a reveal button when connections exist", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = typeof input === "string" ? input : input.toString()
+      if (url.endsWith("/api/connectors")) {
+        return Promise.resolve(jsonResponse([jiraConnector]))
+      }
+      if (url.endsWith("/api/connections") && (init?.method ?? "GET") === "GET") {
+        return Promise.resolve(
+          jsonResponse([
+            {
+              id: "conn-1",
+              name: "Jira Prod",
+              connector_name: "jira",
+              config: {},
+              created_at: "2026-01-01T00:00:00Z",
+            },
+          ]),
+        )
+      }
+      throw new Error(`unexpected fetch: ${init?.method ?? "GET"} ${url}`)
+    })
+    renderPage()
+
+    expect(await screen.findByText("Jira Prod")).toBeInTheDocument()
+    expect(screen.queryByLabelText(/^Base URL/)).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/Connection name/)).not.toBeInTheDocument()
+
+    const revealButton = screen.getByRole("button", { name: "Add connection" })
+    expect(revealButton).toBeInTheDocument()
+
+    fireEvent.click(revealButton)
+    expect(await screen.findByLabelText(/^Base URL/)).toBeInTheDocument()
+  })
+
+  it("collapses the add form when Cancel is clicked inside the panel", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = typeof input === "string" ? input : input.toString()
+      if (url.endsWith("/api/connectors")) {
+        return Promise.resolve(jsonResponse([jiraConnector]))
+      }
+      if (url.endsWith("/api/connections") && (init?.method ?? "GET") === "GET") {
+        return Promise.resolve(
+          jsonResponse([
+            {
+              id: "conn-1",
+              name: "Jira Prod",
+              connector_name: "jira",
+              config: {},
+              created_at: "2026-01-01T00:00:00Z",
+            },
+          ]),
+        )
+      }
+      throw new Error(`unexpected fetch: ${init?.method ?? "GET"} ${url}`)
+    })
+    renderPage()
+
+    await screen.findByText("Jira Prod")
+    fireEvent.click(screen.getByRole("button", { name: "Add connection" }))
+    expect(await screen.findByLabelText(/^Base URL/)).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }))
+    expect(screen.queryByLabelText(/^Base URL/)).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Add connection" })).toBeInTheDocument()
+  })
+
+  it("per-connection controls (Re-test, Edit, Delete) are visible when connections exist", async () => {
+    mockApiWithConnection()
+    renderPage()
+
+    await screen.findByText("Jira Prod")
+    expect(screen.getByRole("button", { name: "Re-test" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Edit" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Delete" })).toBeInTheDocument()
+  })
+
+  it("moves focus into the first form field when the panel is revealed", async () => {
+    mockApiWithConnection()
+    renderPage()
+
+    await screen.findByText("Jira Prod")
+    fireEvent.click(screen.getByRole("button", { name: "Add connection" }))
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/Connection name/)).toHaveFocus()
+    })
+  })
+
+  it("returns focus to the reveal button when the panel is cancelled", async () => {
+    mockApiWithConnection()
+    renderPage()
+
+    await screen.findByText("Jira Prod")
+    fireEvent.click(screen.getByRole("button", { name: "Add connection" }))
+    await screen.findByLabelText(/^Base URL/)
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }))
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Add connection" })).toHaveFocus()
+    })
+  })
 })
