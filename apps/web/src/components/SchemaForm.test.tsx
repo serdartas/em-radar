@@ -1,18 +1,3 @@
-/**
- * NOTE: vitest cannot be executed in this project because esbuild is blocked
- * (see memory/no-esbuild.md). These tests are written to the correct vitest +
- * @testing-library/react API and will pass once a compatible test runner is
- * available (e.g. after replacing esbuild with @swc/core in the vite config).
- *
- * Manual verification checklist:
- *   1. Open the Jira connection form in the browser.
- *   2. Confirm that "Field Mapping" appears as a grouped fieldset, not a text input.
- *   3. Confirm that sub-fields (Story Points, Epic Link, …) are visible and editable.
- *   4. Edit "Story Points", save the connection, and confirm the PATCH/POST body
- *      contains field_mapping: { story_points: "<new value>", … } as a nested object.
- *   5. Switch to GitLab — confirm Base URL and Token render as flat text/password inputs.
- */
-
 import { cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
@@ -229,5 +214,132 @@ describe("SchemaForm — allOf single-branch resolution", () => {
     )
 
     expect(screen.getByLabelText("Token")).toHaveAttribute("type", "password")
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Required-field accessibility: required / aria-required on inputs (AUDIT-12)
+// ---------------------------------------------------------------------------
+
+describe("SchemaForm — required field attributes", () => {
+  it("a required text input has the required attribute", () => {
+    render(
+      <SchemaForm
+        idPrefix="conn"
+        onChange={() => undefined}
+        schema={gitlabSchema}
+        values={{}}
+      />,
+    )
+
+    expect(screen.getByLabelText("Base Url")).toHaveAttribute("required")
+    expect(screen.getByLabelText("Token")).toHaveAttribute("required")
+  })
+
+  it("a required text input has aria-required set to true", () => {
+    render(
+      <SchemaForm
+        idPrefix="conn"
+        onChange={() => undefined}
+        schema={gitlabSchema}
+        values={{}}
+      />,
+    )
+
+    expect(screen.getByLabelText("Base Url")).toHaveAttribute("aria-required", "true")
+    expect(screen.getByLabelText("Token")).toHaveAttribute("aria-required", "true")
+  })
+
+  it("a non-required field does not have the required attribute", () => {
+    const schema: JsonSchema = {
+      type: "object",
+      properties: {
+        notes: { type: "string", title: "Notes" },
+      },
+    }
+
+    render(
+      <SchemaForm
+        idPrefix="conn"
+        onChange={() => undefined}
+        schema={schema}
+        values={{}}
+      />,
+    )
+
+    expect(screen.getByLabelText("Notes")).not.toHaveAttribute("required")
+  })
+
+  it("the required * marker is aria-hidden; aria-required on the input is the a11y signal", () => {
+    const { container } = render(
+      <SchemaForm
+        idPrefix="conn"
+        onChange={() => undefined}
+        schema={gitlabSchema}
+        values={{}}
+      />,
+    )
+
+    // The visual * must be aria-hidden (purely decorative; the input carries aria-required).
+    const stars = Array.from(container.querySelectorAll('[aria-hidden="true"]')).filter(
+      (el) => el.textContent === "*",
+    )
+    expect(stars.length).toBeGreaterThan(0)
+
+    // No free-floating sr-only "required" span — would cause a double announcement.
+    expect(screen.queryByText("required")).not.toBeInTheDocument()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// exemptSecrets: secret fields are non-required in edit mode
+// ---------------------------------------------------------------------------
+
+describe("SchemaForm — exemptSecrets prop", () => {
+  it("without exemptSecrets, a writeOnly (secret) field has required and aria-required", () => {
+    render(
+      <SchemaForm
+        idPrefix="conn"
+        onChange={() => undefined}
+        schema={gitlabSchema}
+        values={{}}
+      />,
+    )
+
+    const token = screen.getByLabelText("Token")
+    expect(token).toHaveAttribute("required")
+    expect(token).toHaveAttribute("aria-required", "true")
+  })
+
+  it("with exemptSecrets, a writeOnly (secret) field does not have required or aria-required", () => {
+    render(
+      <SchemaForm
+        exemptSecrets
+        idPrefix="conn"
+        onChange={() => undefined}
+        schema={gitlabSchema}
+        values={{ token: "" }}
+      />,
+    )
+
+    const token = screen.getByLabelText("Token")
+    expect(token).not.toHaveAttribute("required")
+    expect(token).not.toHaveAttribute("aria-required", "true")
+  })
+
+  it("with exemptSecrets, a non-secret required field still has required and aria-required", () => {
+    render(
+      <SchemaForm
+        exemptSecrets
+        idPrefix="conn"
+        onChange={() => undefined}
+        schema={gitlabSchema}
+        values={{}}
+      />,
+    )
+
+    const baseUrl = screen.getByLabelText("Base Url")
+    expect(baseUrl).toHaveAttribute("required")
+    expect(baseUrl).toHaveAttribute("aria-required", "true")
   })
 })

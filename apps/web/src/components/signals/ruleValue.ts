@@ -15,13 +15,16 @@ export function defaultValueForRule(field: SignalField | undefined, operator: st
     return undefined
   }
   if (operator === "between") {
-    return field?.type === "date" ? ["", ""] : [0, 0]
+    // Start empty for both date and numeric so Save is blocked until the user enters both bounds.
+    return ["", ""]
   }
   if (field?.type === "duration") {
     return { amount: 3, unit: "days" }
   }
   if (field && isNumberType(field.type)) {
-    return 0
+    // Empty sentinel: the form blocks Save until the user enters a value, preventing
+    // Number("") === 0 from silently producing a materially different rule.
+    return ""
   }
   if (field?.type === "date") {
     return ""

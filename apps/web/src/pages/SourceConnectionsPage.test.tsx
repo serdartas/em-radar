@@ -232,6 +232,10 @@ describe("SourceConnectionsPage", () => {
           ]),
         )
       }
+      // JiraFieldMappingSection fires this when connectionId is set (edit mode).
+      if (url.includes("/api/connections/connection-1/jira/fields")) {
+        return Promise.resolve(jsonResponse([]))
+      }
       if (url.endsWith("/api/connections/connection-1") && init?.method === "PATCH") {
         return Promise.resolve(jsonResponse({}))
       }
@@ -240,10 +244,19 @@ describe("SourceConnectionsPage", () => {
     renderPage()
 
     fireEvent.click(await screen.findByRole("button", { name: "Edit" }))
+
+    // Wait until the form is fully hydrated: the Save button is enabled (selectedConnector
+    // is resolved and all required fields pass validation).
+    const saveButton = await screen.findByRole("button", { name: "Save connection" })
+    await waitFor(() => expect(saveButton).not.toBeDisabled())
+
     fireEvent.change(screen.getByLabelText(/^Base URL/), {
       target: { value: "https://updated.invalid" },
     })
-    fireEvent.click(screen.getByRole("button", { name: "Save connection" }))
+    // Submit the form directly — fireEvent.click on a submit button can miss the form's
+    // onSubmit in jsdom when the surrounding component is complex (e.g. JiraFieldMappingSection
+    // in edit mode). Submitting the form element directly is more reliable.
+    fireEvent.submit(saveButton.closest("form")!)
 
     await waitFor(() => {
       const patch = fetchMock.mock.calls.find(
@@ -265,14 +278,27 @@ describe("SourceConnectionsPage", () => {
     const submitButton = screen.getByRole("button", { name: "Add connection" })
     expect(submitButton).toBeDisabled()
 
+    // Fill in required schema fields so the name is the only blocker.
+    fireEvent.change(screen.getByLabelText(/^Base URL/), {
+      target: { value: "https://jira.example.com" },
+    })
+    fireEvent.change(screen.getByLabelText(/^Token/), {
+      target: { value: "my-token" },
+    })
+
+    // Required schema fields filled but name still blank — still disabled.
+    expect(submitButton).toBeDisabled()
+
     fireEvent.change(screen.getByLabelText(/Connection name/), {
       target: { value: "My Jira" },
     })
+    // All required fields filled → enabled.
     expect(submitButton).not.toBeDisabled()
 
     fireEvent.change(screen.getByLabelText(/Connection name/), {
       target: { value: "" },
     })
+    // Name cleared → disabled again.
     expect(submitButton).toBeDisabled()
   })
 
