@@ -97,7 +97,8 @@ function GroupCard({
   const [renameError, setRenameError] = useState<string | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
 
-  const invalidate = () => void queryClient.invalidateQueries({ queryKey: GROUPS_KEY })
+  // Return the promise so React Query awaits the refetch before clearing isPending.
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: GROUPS_KEY })
 
   const updateMutation = useMutation({
     mutationFn: (signal_ids: string[]) => updateSignalConfigGroup(group.id, { signal_ids }),

@@ -22,7 +22,10 @@ export function SignalGroupAttachList({
   const updateMutation = useMutation({
     mutationFn: (signalConfigGroupIds: string[]) =>
       updateTeam(team.id, { signal_config_group_ids: signalConfigGroupIds }),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: TEAMS_KEY }),
+    // Return the invalidateQueries promise so React Query awaits the refetch before
+    // clearing isPending. This keeps all buttons locked until fresh data is in the cache,
+    // preventing a stale second edit from overwriting the first write.
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: TEAMS_KEY }),
     onError: () => {
       setError("Could not update signal config groups. Please try again.")
     },

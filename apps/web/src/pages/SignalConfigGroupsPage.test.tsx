@@ -104,6 +104,117 @@ describe("SignalConfigGroupsPage — create form", () => {
   })
 })
 
+// Stale-window race: Add signal button must stay disabled through the post-PATCH refetch.
+describe("SignalConfigGroupsPage - stale-write prevention via awaited invalidation", () => {
+  // Custom render that disables background refetch triggers so the only refetch is the
+  // one driven by invalidateQueries from onSuccess.
+  function renderPageStable() {
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        mutations: { retry: false },
+        queries: { retry: false, staleTime: Infinity, refetchOnWindowFocus: false },
+      },
+    })
+    return render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <SignalConfigGroupsPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+  }
+
+  it("Remove button stays locked through the post-PATCH groups refetch", async () => {
+    // sig-1 is already in the group so the Remove button exists from the start.
+    // That button is gated only on updateMutation.isPending — not on a select value —
+    // so it is the cleanest probe for isPending in this component.
+    const baseGroup = {
+      id: "group-1",
+      name: "Backend signals",
+      description: null,
+      signal_ids: ["sig-1"],
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    }
+
+    let resolvePatch!: (v: Response) => void
+    const deferredPatch = new Promise<Response>((resolve) => {
+      resolvePatch = resolve
+    })
+    let resolveRefetch!: (v: Response) => void
+    const deferredRefetch = new Promise<Response>((resolve) => {
+      resolveRefetch = resolve
+    })
+    let getCallCount = 0
+
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = typeof input === "string" ? input : input.toString()
+      const method = init?.method ?? "GET"
+
+      if (url.endsWith("/api/signal-definitions")) {
+        return Promise.resolve(jsonResponse(definitions))
+      }
+
+      if (url.endsWith("/api/signal-config-groups") && method === "GET") {
+        getCallCount++
+        if (getCallCount === 1) {
+          return Promise.resolve(jsonResponse([baseGroup]))
+        }
+        // Second call is the post-PATCH refetch — held pending.
+        return deferredRefetch
+      }
+
+      if (url.includes("/api/signal-config-groups/") && method === "PATCH") {
+        return deferredPatch
+      }
+
+      throw new Error(`unexpected: ${method} ${url}`)
+    })
+
+    renderPageStable()
+
+    // Phase 1: initial data loads. "Backend signals" is an Input value, not text content.
+    await screen.findByDisplayValue("Backend signals")
+    const removeBtn = screen.getByRole("button", { name: "Remove Signal A" })
+    expect(removeBtn).not.toBeDisabled()
+
+    // Phase 2: click Remove — this fires a PATCH (deferred).
+    fireEvent.click(removeBtn)
+
+    // Button is disabled while PATCH is pending.
+    await waitFor(() => expect(removeBtn).toBeDisabled())
+
+    // Phase 3: resolve the PATCH — onSuccess awaits invalidateQueries which triggers the
+    // second GET (still deferred). With the fix: isPending stays true; without: it clears.
+    resolvePatch(
+      new Response(JSON.stringify({ ...baseGroup, signal_ids: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    )
+
+    // Wait for the refetch to be triggered (PATCH resolved + invalidateQueries called).
+    await waitFor(() => expect(getCallCount).toBe(2))
+
+    // With the fix: Remove button is still disabled (isPending covers the pending GET).
+    expect(removeBtn).toBeDisabled()
+
+    // Phase 4: resolve refetch with updated group (signal removed).
+    resolveRefetch(
+      new Response(
+        JSON.stringify([{ ...baseGroup, signal_ids: [], updated_at: "2026-01-02T00:00:00Z" }]),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    )
+
+    // After fresh data arrives, GroupCard remounts with signal_ids=[] so Remove Signal A
+    // disappears from the DOM — confirming the locked window is closed.
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Remove Signal A" })).not.toBeInTheDocument(),
+    )
+  })
+})
+
 describe("SignalConfigGroupsPage", () => {
   it("creates a group and adds a signal to it", async () => {
     const fetchMock = mockApi()
