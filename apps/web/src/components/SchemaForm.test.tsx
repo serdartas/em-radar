@@ -270,7 +270,33 @@ describe("SchemaForm — required field attributes", () => {
     expect(screen.getByLabelText("Notes")).not.toHaveAttribute("required")
   })
 
-  it("the required * marker is accompanied by sr-only 'required' text for screen readers", () => {
+  it("the required * marker is aria-hidden; aria-required on the input is the a11y signal", () => {
+    const { container } = render(
+      <SchemaForm
+        idPrefix="conn"
+        onChange={() => undefined}
+        schema={gitlabSchema}
+        values={{}}
+      />,
+    )
+
+    // The visual * must be aria-hidden (purely decorative; the input carries aria-required).
+    const stars = Array.from(container.querySelectorAll('[aria-hidden="true"]')).filter(
+      (el) => el.textContent === "*",
+    )
+    expect(stars.length).toBeGreaterThan(0)
+
+    // No free-floating sr-only "required" span — would cause a double announcement.
+    expect(screen.queryByText("required")).not.toBeInTheDocument()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// exemptSecrets: secret fields are non-required in edit mode
+// ---------------------------------------------------------------------------
+
+describe("SchemaForm — exemptSecrets prop", () => {
+  it("without exemptSecrets, a writeOnly (secret) field has required and aria-required", () => {
     render(
       <SchemaForm
         idPrefix="conn"
@@ -280,12 +306,40 @@ describe("SchemaForm — required field attributes", () => {
       />,
     )
 
-    // The sr-only "required" span must exist (one per required field, but at least one)
-    const srSpans = screen.getAllByText("required")
-    expect(srSpans.length).toBeGreaterThan(0)
-    // Each sr-only span should have the sr-only class (Tailwind utility)
-    srSpans.forEach((span) => {
-      expect(span).toHaveClass("sr-only")
-    })
+    const token = screen.getByLabelText("Token")
+    expect(token).toHaveAttribute("required")
+    expect(token).toHaveAttribute("aria-required", "true")
+  })
+
+  it("with exemptSecrets, a writeOnly (secret) field does not have required or aria-required", () => {
+    render(
+      <SchemaForm
+        exemptSecrets
+        idPrefix="conn"
+        onChange={() => undefined}
+        schema={gitlabSchema}
+        values={{ token: "" }}
+      />,
+    )
+
+    const token = screen.getByLabelText("Token")
+    expect(token).not.toHaveAttribute("required")
+    expect(token).not.toHaveAttribute("aria-required", "true")
+  })
+
+  it("with exemptSecrets, a non-secret required field still has required and aria-required", () => {
+    render(
+      <SchemaForm
+        exemptSecrets
+        idPrefix="conn"
+        onChange={() => undefined}
+        schema={gitlabSchema}
+        values={{}}
+      />,
+    )
+
+    const baseUrl = screen.getByLabelText("Base Url")
+    expect(baseUrl).toHaveAttribute("required")
+    expect(baseUrl).toHaveAttribute("aria-required", "true")
   })
 })

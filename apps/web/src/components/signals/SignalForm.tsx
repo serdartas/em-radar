@@ -579,10 +579,12 @@ function isRowValid(row: RuleRow): boolean {
   if (row.operator === "between") {
     const pair = Array.isArray(row.value) ? row.value : [null, null]
     const [lower, upper] = pair
-    if (lower === "" || upper === "") return false
+    // Reject null/undefined or empty bounds.
+    if (lower == null || upper == null || lower === "" || upper === "") return false
     if (typeof lower === "number" && typeof upper === "number") return lower <= upper
     if (typeof lower === "string" && typeof upper === "string") return lower <= upper
-    return true
+    // Reject mixed or non-comparable types (e.g. malformed prefill).
+    return false
   }
   return row.value !== ""
 }

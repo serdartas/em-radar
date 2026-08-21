@@ -24,6 +24,12 @@ interface SchemaFormProps {
   fieldHelp?: Record<string, ReactNode>
   /** Field keys to exclude from rendering (handled by a caller-supplied custom section). */
   skipKeys?: ReadonlySet<string> | string[]
+  /**
+   * When true, secret (writeOnly) fields are treated as non-required for both native
+   * constraint validation and aria-required. Use in edit mode where a blank secret field
+   * means "keep the existing server-side value" rather than "field is missing".
+   */
+  exemptSecrets?: boolean
 }
 
 function toInputString(value: unknown): string {
@@ -36,7 +42,7 @@ function toInputString(value: unknown): string {
   return String(value)
 }
 
-export function SchemaForm({ fieldHelp, idPrefix, onChange, schema, skipKeys, values }: SchemaFormProps) {
+export function SchemaForm({ exemptSecrets = false, fieldHelp, idPrefix, onChange, schema, skipKeys, values }: SchemaFormProps) {
   const skip = new Set(skipKeys ?? [])
   const properties = Object.entries(schema.properties ?? {}).filter(([key]) => !skip.has(key))
   const required = new Set(schema.required ?? [])
@@ -50,19 +56,26 @@ export function SchemaForm({ fieldHelp, idPrefix, onChange, schema, skipKeys, va
 
   return (
     <div className="space-y-4">
-      {properties.map(([key, property]) => (
-        <SchemaField
-          defs={defs}
-          fieldId={`${idPrefix}-${key}`}
-          help={fieldHelp?.[key]}
-          key={key}
-          name={key}
-          onChange={onChange}
-          property={property}
-          required={required.has(key)}
-          value={values[key]}
-        />
-      ))}
+      {properties.map(([key, property]) => {
+        // In edit mode, blanked secret fields (tokens) are kept server-side.
+        // Treat them as non-required so neither native constraint validation nor
+        // aria-required signals to assistive technology that the field is missing.
+        const effectiveRequired =
+          required.has(key) && !(exemptSecrets && isSecret(resolveProperty(property, defs)))
+        return (
+          <SchemaField
+            defs={defs}
+            fieldId={`${idPrefix}-${key}`}
+            help={fieldHelp?.[key]}
+            key={key}
+            name={key}
+            onChange={onChange}
+            property={property}
+            required={effectiveRequired}
+            value={values[key]}
+          />
+        )
+      })}
     </div>
   )
 }
@@ -190,10 +203,7 @@ function FieldLabel({ help, htmlFor, label, property, required }: FieldLabelProp
     <div className="flex items-center gap-1.5">
       <Label htmlFor={htmlFor}>{label}</Label>
       {required && (
-        <>
-          <span aria-hidden="true" className="text-red-600">*</span>
-          <span className="sr-only">required</span>
-        </>
+        <span aria-hidden="true" className="text-red-600">*</span>
       )}
       {isSecret(property) && (
         <span aria-hidden="true" className="text-xs font-normal text-slate-500">

@@ -135,4 +135,20 @@ describe("ConnectionForm — required schema field validation", () => {
     // Leaving token blank should not block Save.
     expect(screen.getByRole("button", { name: "Save connection" })).not.toBeDisabled()
   })
+
+  it("add mode: the token input has the required attribute so browsers and screen readers flag it as required", () => {
+    render(<AddHarness />)
+
+    expect(screen.getByLabelText(/^Token/)).toHaveAttribute("required")
+    expect(screen.getByLabelText(/^Token/)).toHaveAttribute("aria-required", "true")
+  })
+
+  it("edit mode: the token input does not have the required attribute — blank means keep existing, not missing", () => {
+    render(<Harness />)
+
+    // Without this fix, native browser constraint validation would block the Save click
+    // when token is blank in edit mode, even though our JS gate already allows it.
+    expect(screen.getByLabelText(/^Token/)).not.toHaveAttribute("required")
+    expect(screen.getByLabelText(/^Token/)).not.toHaveAttribute("aria-required", "true")
+  })
 })

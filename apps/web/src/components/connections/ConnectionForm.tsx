@@ -250,6 +250,7 @@ export function ConnectionForm({
 
           {selectedConnector && (
             <SchemaForm
+              exemptSecrets={editing !== null}
               fieldHelp={FIELD_HELP_BY_CONNECTOR[selectedConnector.name]}
               idPrefix="connection"
               onChange={changeField}
