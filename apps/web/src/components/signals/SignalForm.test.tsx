@@ -3,9 +3,10 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
-import { SignalCreateForm } from "@/components/signals/SignalCreateForm"
+import { SignalForm } from "@/components/signals/SignalForm"
 import type { SignalField } from "@/lib/connectors"
 import type { JiraFieldInfo } from "@/lib/connections"
+import type { SignalDefinition } from "@/lib/signalDefinitions"
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -56,12 +57,32 @@ const FIELDS_BY_ENTITY: Record<string, SignalField[]> = {
   issue: ISSUE_FIELDS,
 }
 
-function renderForm(overrides: Partial<Parameters<typeof SignalCreateForm>[0]> = {}) {
+function makeDefinition(overrides: Partial<SignalDefinition> = {}): SignalDefinition {
+  return {
+    id: "def-1",
+    name: "Stale issues",
+    description: null,
+    entity_type: "issue",
+    expression: {
+      type: "group",
+      operator: "all",
+      conditions: [{ field: "status_category", operator: "is", value: "in_progress" }],
+    },
+    report_settings: { severity: "critical", category: "quality" },
+    origin: "user_created",
+    template_key: null,
+    created_at: "2024-01-01T00:00:00Z",
+    updated_at: "2024-01-01T00:00:00Z",
+    ...overrides,
+  }
+}
+
+function renderForm(overrides: Partial<Parameters<typeof SignalForm>[0]> = {}) {
   const onSave = vi.fn()
   const onCancel = vi.fn()
 
   render(
-    <SignalCreateForm
+    <SignalForm
       errorMessage={null}
       fieldsByEntityType={FIELDS_BY_ENTITY}
       onCancel={onCancel}
@@ -80,7 +101,7 @@ afterEach(cleanup)
 // Sorting
 // ---------------------------------------------------------------------------
 
-describe("SignalCreateForm — field sorting", () => {
+describe("SignalForm — field sorting", () => {
   it("renders the Field dropdown options sorted by label (not schema order)", () => {
     renderForm()
 
@@ -109,7 +130,7 @@ describe("SignalCreateForm — field sorting", () => {
 // Custom field progressive disclosure
 // ---------------------------------------------------------------------------
 
-describe("SignalCreateForm — custom field picker", () => {
+describe("SignalForm — custom field picker", () => {
   it("shows 'Custom field' option in the Field dropdown when jiraCustomFields are provided", () => {
     renderForm({ jiraCustomFields: JIRA_CUSTOM_FIELDS })
 
@@ -161,7 +182,7 @@ describe("SignalCreateForm — custom field picker", () => {
 // Operator / value controls driven by discovered field type
 // ---------------------------------------------------------------------------
 
-describe("SignalCreateForm — operator and value controls by field type", () => {
+describe("SignalForm — operator and value controls by field type", () => {
   it("number field type shows numeric operator options (greater than, less than)", () => {
     renderForm({ jiraCustomFields: JIRA_CUSTOM_FIELDS })
 
@@ -240,7 +261,7 @@ describe("SignalCreateForm — operator and value controls by field type", () =>
 // Humanized operator labels
 // ---------------------------------------------------------------------------
 
-describe("SignalCreateForm — humanized operator labels", () => {
+describe("SignalForm — humanized operator labels", () => {
   it("renders operator options with human-readable labels for built-in fields", () => {
     renderForm()
 
@@ -309,7 +330,7 @@ describe("SignalCreateForm — humanized operator labels", () => {
 // Sentinel guard: Save disabled while __custom__ is unresolved
 // ---------------------------------------------------------------------------
 
-describe("SignalCreateForm — sentinel guard", () => {
+describe("SignalForm — sentinel guard", () => {
   it("Save is disabled when 'Custom field' is selected but no concrete field is chosen", () => {
     renderForm({ jiraCustomFields: JIRA_CUSTOM_FIELDS })
 
@@ -342,7 +363,7 @@ describe("SignalCreateForm — sentinel guard", () => {
 // Array field type uses contains/does_not_contain
 // ---------------------------------------------------------------------------
 
-describe("SignalCreateForm — array field type operators", () => {
+describe("SignalForm — array field type operators", () => {
   it("array field type shows contains / does not contain operators", () => {
     renderForm({ jiraCustomFields: JIRA_CUSTOM_FIELDS })
 
@@ -376,7 +397,7 @@ describe("SignalCreateForm — array field type operators", () => {
 // Operator label correctness (humanizeOperator mapping)
 // ---------------------------------------------------------------------------
 
-describe("SignalCreateForm — operator label correctness", () => {
+describe("SignalForm — operator label correctness", () => {
   it("renders 'does not contain' label for does_not_contain operator", () => {
     renderForm({ jiraCustomFields: JIRA_CUSTOM_FIELDS })
 
@@ -407,5 +428,362 @@ describe("SignalCreateForm — operator label correctness", () => {
       expression: { conditions: Array<{ operator: string }> }
     }
     expect(call.expression.conditions[0].operator).toBe("does_not_contain")
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Edit mode: prefill
+// ---------------------------------------------------------------------------
+
+describe("SignalForm — edit mode prefill", () => {
+  it("shows 'Edit signal' heading and 'Save changes' button in edit mode", () => {
+    renderForm({ mode: "edit", initialValue: makeDefinition() })
+
+    expect(screen.getByRole("heading", { name: "Edit signal" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Save changes" })).toBeInTheDocument()
+  })
+
+  it("prefills name from initialValue", () => {
+    renderForm({ mode: "edit", initialValue: makeDefinition({ name: "Stale issues" }) })
+
+    const nameInput = screen.getByLabelText("Name") as HTMLInputElement
+    expect(nameInput.value).toBe("Stale issues")
+  })
+
+  it("prefills severity from initialValue", () => {
+    renderForm({ mode: "edit", initialValue: makeDefinition() })
+
+    const severitySelect = screen.getByLabelText("Severity") as HTMLSelectElement
+    expect(severitySelect.value).toBe("critical")
+  })
+
+  it("prefills category from initialValue", () => {
+    renderForm({ mode: "edit", initialValue: makeDefinition() })
+
+    const categorySelect = screen.getByLabelText("Category") as HTMLSelectElement
+    expect(categorySelect.value).toBe("quality")
+  })
+
+  it("prefills the field rule from the stored expression", () => {
+    renderForm({ mode: "edit", initialValue: makeDefinition() })
+
+    const fieldSelect = screen.getByLabelText("Field") as HTMLSelectElement
+    expect(fieldSelect.value).toBe("status_category")
+  })
+
+  it("prefills the operator from the stored expression", () => {
+    renderForm({ mode: "edit", initialValue: makeDefinition() })
+
+    const operatorSelect = screen.getByLabelText("Operator") as HTMLSelectElement
+    expect(operatorSelect.value).toBe("is")
+  })
+
+  it("calls onSave with updated values preserving origin from initialValue", () => {
+    const { onSave } = renderForm({
+      mode: "edit",
+      initialValue: makeDefinition({ origin: "user_created" }),
+    })
+
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Renamed signal" } })
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }))
+
+    expect(onSave).toHaveBeenCalledOnce()
+    const call = onSave.mock.calls[0][0] as { name: string; origin: string }
+    expect(call.name).toBe("Renamed signal")
+    expect(call.origin).toBe("user_created")
+  })
+
+  it("does not show 'Create signal' heading when in edit mode", () => {
+    renderForm({ mode: "edit", initialValue: makeDefinition() })
+
+    expect(screen.queryByRole("heading", { name: "Create signal" })).not.toBeInTheDocument()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Edit mode: custom-field row prefill (guards against M8.5-02 regression)
+// ---------------------------------------------------------------------------
+
+describe("SignalForm — edit mode custom-field row prefill", () => {
+  it("prefills a custom-field rule: shows 'Custom field' in the field selector", () => {
+    const customFieldDef = makeDefinition({
+      expression: {
+        type: "group",
+        operator: "all",
+        conditions: [{ field: "customfield_10001", operator: "greater_than", value: 5 }],
+      },
+    })
+    renderForm({
+      mode: "edit",
+      initialValue: customFieldDef,
+      jiraCustomFields: JIRA_CUSTOM_FIELDS,
+    })
+
+    // Field selector should show "Custom field" (CUSTOM_FIELD_KEY) as selected value
+    const fieldSelect = screen.getByLabelText("Field") as HTMLSelectElement
+    expect(fieldSelect.value).toBe("__custom__")
+  })
+
+  it("prefills a custom-field rule: Jira field picker is visible with the stored field selected", () => {
+    const customFieldDef = makeDefinition({
+      expression: {
+        type: "group",
+        operator: "all",
+        conditions: [{ field: "customfield_10001", operator: "greater_than", value: 5 }],
+      },
+    })
+    renderForm({
+      mode: "edit",
+      initialValue: customFieldDef,
+      jiraCustomFields: JIRA_CUSTOM_FIELDS,
+    })
+
+    const jiraSelect = screen.getByLabelText("Jira field") as HTMLSelectElement
+    expect(jiraSelect.value).toBe("customfield_10001")
+  })
+
+  it("prefills a custom-field rule: correct operator is selected", () => {
+    const customFieldDef = makeDefinition({
+      expression: {
+        type: "group",
+        operator: "all",
+        conditions: [{ field: "customfield_10001", operator: "greater_than", value: 5 }],
+      },
+    })
+    renderForm({
+      mode: "edit",
+      initialValue: customFieldDef,
+      jiraCustomFields: JIRA_CUSTOM_FIELDS,
+    })
+
+    const operatorSelect = screen.getByLabelText("Operator") as HTMLSelectElement
+    expect(operatorSelect.value).toBe("greater_than")
+  })
+
+  it("unresolved custom-field id (not in jiraCustomFields) still renders usable operator options", () => {
+    // Guards against degraded state when jiraCustomFields are absent/loading or the field was deleted.
+    const customFieldDef = makeDefinition({
+      expression: {
+        type: "group",
+        operator: "all",
+        conditions: [{ field: "customfield_99999", operator: "is", value: "x" }],
+      },
+    })
+    renderForm({
+      mode: "edit",
+      initialValue: customFieldDef,
+      jiraCustomFields: JIRA_CUSTOM_FIELDS, // does NOT contain customfield_99999
+    })
+
+    // Operator dropdown must have options from the fallback field (not empty)
+    const operatorSelect = screen.getByLabelText("Operator") as HTMLSelectElement
+    expect(operatorSelect.options.length).toBeGreaterThan(0)
+
+    // The Jira field picker must be visible and show the raw id as a selectable option
+    const jiraSelect = screen.getByLabelText("Jira field") as HTMLSelectElement
+    expect(jiraSelect.value).toBe("customfield_99999")
+  })
+
+  it("edit mode with custom-field prefill: submit sends correct field and operator", () => {
+    const customFieldDef = makeDefinition({
+      name: "Custom signal",
+      expression: {
+        type: "group",
+        operator: "all",
+        conditions: [{ field: "customfield_10001", operator: "greater_than", value: 5 }],
+      },
+    })
+    const { onSave } = renderForm({
+      mode: "edit",
+      initialValue: customFieldDef,
+      jiraCustomFields: JIRA_CUSTOM_FIELDS,
+    })
+
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }))
+
+    expect(onSave).toHaveBeenCalledOnce()
+    const call = onSave.mock.calls[0][0] as {
+      expression: { conditions: Array<{ field: string; operator: string; value: unknown }> }
+    }
+    expect(call.expression.conditions[0].field).toBe("customfield_10001")
+    expect(call.expression.conditions[0].operator).toBe("greater_than")
+    expect(call.expression.conditions[0].value).toBe(5)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// P1 — Nested / advanced expression: no corruption, builder replaced by Callout
+// ---------------------------------------------------------------------------
+
+const NESTED_EXPRESSION = {
+  type: "group",
+  operator: "all",
+  conditions: [
+    {
+      // A condition that is itself a group — cannot be represented in the flat builder.
+      operator: "any",
+      conditions: [
+        { field: "status_category", operator: "is", value: "in_progress" },
+        { field: "age_in_current_status", operator: "greater_than", value: 7 },
+      ],
+    },
+  ],
+}
+
+describe("SignalForm — nested/advanced expression guard", () => {
+  it("flat rule builder is NOT shown for a nested-group expression", () => {
+    renderForm({
+      mode: "edit",
+      initialValue: makeDefinition({ expression: NESTED_EXPRESSION }),
+    })
+
+    // The rules list must not be rendered; the Callout replaces it.
+    expect(screen.queryByLabelText("Field")).not.toBeInTheDocument()
+    expect(screen.queryByLabelText("Operator")).not.toBeInTheDocument()
+  })
+
+  it("shows the advanced-condition Callout for a nested-group expression", () => {
+    renderForm({
+      mode: "edit",
+      initialValue: makeDefinition({ expression: NESTED_EXPRESSION }),
+    })
+
+    expect(screen.getByText(/advanced condition/i)).toBeInTheDocument()
+  })
+
+  it("metadata fields remain editable for a nested-group expression", () => {
+    renderForm({
+      mode: "edit",
+      initialValue: makeDefinition({ name: "Nested signal", expression: NESTED_EXPRESSION }),
+    })
+
+    expect(screen.getByLabelText("Name")).toBeInTheDocument()
+    expect(screen.getByLabelText("Severity")).toBeInTheDocument()
+    expect(screen.getByLabelText("Category")).toBeInTheDocument()
+  })
+
+  it("saving after a name-only edit preserves the nested expression byte-for-byte", () => {
+    const { onSave } = renderForm({
+      mode: "edit",
+      initialValue: makeDefinition({ name: "Old name", expression: NESTED_EXPRESSION }),
+    })
+
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "New name" } })
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }))
+
+    expect(onSave).toHaveBeenCalledOnce()
+    const call = onSave.mock.calls[0][0] as { name: string; expression: unknown }
+    expect(call.name).toBe("New name")
+    // Expression must be the original object, not a flattened rebuild.
+    expect(call.expression).toEqual(NESTED_EXPRESSION)
+  })
+
+  it("flat signals are unaffected (no Callout, rule builder present)", () => {
+    renderForm({ mode: "edit", initialValue: makeDefinition() })
+
+    expect(screen.queryByText(/advanced condition/i)).not.toBeInTheDocument()
+    expect(screen.getByLabelText("Field")).toBeInTheDocument()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// P2 — Sprint entity type shown correctly in Type selector
+// ---------------------------------------------------------------------------
+
+const SPRINT_FIELDS: SignalField[] = [
+  {
+    key: "sprint_state",
+    label: "Sprint state",
+    type: "enum",
+    operators: ["is", "is_not"],
+    values: ["active", "closed", "future"],
+    value_provider: null,
+    availability: null,
+    entity_type: "sprint",
+  },
+]
+
+describe("SignalForm — sprint entity type", () => {
+  it("editing a sprint signal shows 'sprint' selected in the Type control", () => {
+    renderForm({
+      fieldsByEntityType: { issue: ISSUE_FIELDS, sprint: SPRINT_FIELDS },
+      mode: "edit",
+      initialValue: makeDefinition({
+        entity_type: "sprint",
+        expression: {
+          type: "group",
+          operator: "all",
+          conditions: [{ field: "sprint_state", operator: "is", value: "active" }],
+        },
+      }),
+    })
+
+    const typeSelect = screen.getByLabelText("Type") as HTMLSelectElement
+    expect(typeSelect.value).toBe("sprint")
+  })
+
+  it("sprint label falls back to raw value when not in ENTITY_TYPE_LABELS", () => {
+    const unknownType = "custom_entity"
+    renderForm({
+      fieldsByEntityType: { custom_entity: ISSUE_FIELDS },
+      mode: "edit",
+      initialValue: makeDefinition({
+        entity_type: unknownType,
+        expression: {
+          type: "group",
+          operator: "all",
+          conditions: [{ field: "status_category", operator: "is", value: "in_progress" }],
+        },
+      }),
+    })
+
+    const typeSelect = screen.getByLabelText("Type") as HTMLSelectElement
+    expect(typeSelect.value).toBe(unknownType)
+    const option = Array.from(typeSelect.options).find((o) => o.value === unknownType)
+    expect(option?.text).toBe(unknownType)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// P2 — Planning / delivery categories shown correctly
+// ---------------------------------------------------------------------------
+
+describe("SignalForm — extended categories", () => {
+  it("editing a 'planning' signal shows planning selected in Category", () => {
+    renderForm({
+      mode: "edit",
+      initialValue: makeDefinition({
+        report_settings: { severity: "warning", category: "planning" },
+      }),
+    })
+
+    const categorySelect = screen.getByLabelText("Category") as HTMLSelectElement
+    expect(categorySelect.value).toBe("planning")
+  })
+
+  it("editing a 'delivery' signal shows delivery selected in Category", () => {
+    renderForm({
+      mode: "edit",
+      initialValue: makeDefinition({
+        report_settings: { severity: "warning", category: "delivery" },
+      }),
+    })
+
+    const categorySelect = screen.getByLabelText("Category") as HTMLSelectElement
+    expect(categorySelect.value).toBe("delivery")
+  })
+
+  it("an unknown category outside the known set is still rendered as a selectable option", () => {
+    renderForm({
+      mode: "edit",
+      initialValue: makeDefinition({
+        report_settings: { severity: "warning", category: "custom_cat" },
+      }),
+    })
+
+    const categorySelect = screen.getByLabelText("Category") as HTMLSelectElement
+    expect(categorySelect.value).toBe("custom_cat")
+    const option = Array.from(categorySelect.options).find((o) => o.value === "custom_cat")
+    expect(option).toBeTruthy()
   })
 })
