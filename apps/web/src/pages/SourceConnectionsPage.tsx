@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 
+import { AddConnectionPanel } from "@/components/connections/AddConnectionPanel"
 import { ConnectionDeleteConfirm } from "@/components/connections/ConnectionDeleteConfirm"
 import { ConnectionForm } from "@/components/connections/ConnectionForm"
 import { TestResult } from "@/components/connections/TestResult"
@@ -18,6 +19,9 @@ export function SourceConnectionsPage() {
   const connectors = useMemo(() => connectorsQuery.data ?? [], [connectorsQuery.data])
   const [editing, setEditing] = useState<SourceConnection | null>(null)
 
+  const connections = connectionsQuery.data ?? []
+  const hasConnections = connections.length > 0
+
   return (
     <section aria-labelledby="page-title" className="space-y-8">
       <header>
@@ -31,18 +35,24 @@ export function SourceConnectionsPage() {
       </header>
 
       <ConnectionList
-        connections={connectionsQuery.data ?? []}
+        connections={connections}
         connectors={connectors}
         isLoading={connectionsQuery.isLoading}
         onEdit={setEditing}
       />
 
-      <ConnectionForm
-        connectors={connectors}
-        editing={editing}
-        onCancel={() => setEditing(null)}
-        onSaved={() => setEditing(null)}
-      />
+      {editing !== null ? (
+        <ConnectionForm
+          connectors={connectors}
+          editing={editing}
+          onCancel={() => setEditing(null)}
+          onSaved={() => setEditing(null)}
+        />
+      ) : hasConnections ? (
+        <AddConnectionPanel connectors={connectors} />
+      ) : (
+        <ConnectionForm connectors={connectors} />
+      )}
     </section>
   )
 }

@@ -255,7 +255,7 @@ export function ConnectionForm({
                   ? "Save connection"
                   : "Add connection"}
             </Button>
-            {editing && onCancel && (
+            {onCancel && (
               <Button onClick={onCancel} type="button" variant="outline">
                 Cancel
               </Button>
