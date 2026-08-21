@@ -6,8 +6,15 @@ import { Link, useParams } from "react-router-dom"
 import { PartialDataNotes } from "@/components/reports/PartialDataNotes"
 import { ReportExportActions } from "@/components/reports/ReportExportActions"
 import { ReportSectionBlock } from "@/components/reports/ReportSectionBlock"
+import { SignalsChangedBanner } from "@/components/reports/SignalsChangedBanner"
 import { SkippedSignals } from "@/components/reports/SkippedSignals"
-import { extractPartialDataNotes, formatTimestamp, getReport } from "@/lib/reports"
+import {
+  extractPartialDataNotes,
+  extractSnapshotSignals,
+  formatTimestamp,
+  getReport,
+} from "@/lib/reports"
+import { listSignalDefinitions } from "@/lib/signalDefinitions"
 
 export function ReportResultsPage() {
   const { reportId } = useParams<{ reportId: string }>()
@@ -15,6 +22,10 @@ export function ReportResultsPage() {
     queryKey: ["reports", reportId],
     queryFn: () => getReport(reportId as string),
     enabled: Boolean(reportId),
+  })
+  const signalsQuery = useQuery({
+    queryKey: ["signal-definitions"],
+    queryFn: listSignalDefinitions,
   })
 
   if (query.isLoading) {
@@ -44,6 +55,8 @@ export function ReportResultsPage() {
   const report = query.data
   const partialDataNotes = extractPartialDataNotes(report.signal_pack_snapshot)
   const findingsById = new Map(report.findings.map((finding) => [finding.id, finding]))
+  const snapshotSignals = extractSnapshotSignals(report.signal_pack_snapshot)
+  const currentSignals = signalsQuery.data ?? []
 
   return (
     <section aria-labelledby="page-title" className="space-y-6">
@@ -58,10 +71,18 @@ export function ReportResultsPage() {
               Run {formatTimestamp(report.started_at)}
               {report.finished_at && <> · finished {formatTimestamp(report.finished_at)}</>}
             </p>
+            <p className="text-xs text-slate-400">
+              Results reflect signal configuration at run time. Edits to signals affect only future
+              runs.
+            </p>
           </div>
           <ReportExportActions reportId={report.id} />
         </div>
       </header>
+
+      {snapshotSignals.length > 0 && signalsQuery.data !== undefined && (
+        <SignalsChangedBanner currentSignals={currentSignals} snapshotSignals={snapshotSignals} />
+      )}
 
       {partialDataNotes.length > 0 && <PartialDataNotes notes={partialDataNotes} />}
       {report.skip_notes.length > 0 && <SkippedSignals notes={report.skip_notes} />}
