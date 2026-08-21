@@ -20,9 +20,14 @@ export function RuleValueControl({ field, operator, value, onChange, id }: RuleV
 
   if (operator === "between") {
     const isDate = field?.type === "date"
-    const pair = Array.isArray(value) ? value : isDate ? ["", ""] : [0, 0]
+    const pair = Array.isArray(value) ? value : ["", ""]
     const inputType = isDate ? "date" : "number"
-    const cast = (raw: string): unknown => (isDate ? raw : Number(raw))
+    // For date: pass the string through as-is.
+    // For numeric: preserve "" so clearing a bound emits the empty sentinel (not 0).
+    const cast = (raw: string): unknown => {
+      if (isDate) return raw
+      return raw === "" ? "" : Number(raw)
+    }
     return (
       <div className="flex gap-2">
         <Input
@@ -62,9 +67,13 @@ export function RuleValueControl({ field, operator, value, onChange, id }: RuleV
       <Input
         aria-label="Value"
         id={id}
-        onChange={(event) => onChange(Number(event.target.value))}
+        onChange={(event) => {
+          const raw = event.target.value
+          // Preserve "" so clearing the field emits the empty sentinel (not Number("") === 0).
+          onChange(raw === "" ? "" : Number(raw))
+        }}
         type="number"
-        value={typeof value === "number" ? value : 0}
+        value={value === "" || value === null || value === undefined ? "" : String(value)}
       />
     )
   }

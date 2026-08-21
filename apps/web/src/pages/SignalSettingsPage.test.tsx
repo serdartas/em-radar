@@ -347,6 +347,8 @@ describe("SignalSettingsPage", () => {
 
     // Saving emits merge_request
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "MR signal" } })
+    // Default first MR field is "approval_count" (number, empty sentinel = invalid). Use state (enum).
+    fireEvent.change(screen.getByLabelText("Field"), { target: { value: "state" } })
     const fetchMock = vi.mocked(globalThis.fetch)
     fireEvent.click(screen.getByRole("button", { name: "Save signal" }))
 
@@ -374,6 +376,8 @@ describe("SignalSettingsPage", () => {
     fireEvent.change(screen.getByLabelText("Field"), { target: { value: "state" } })
     // Add second rule
     fireEvent.change(screen.getByLabelText("Add rule"), { target: { value: "AND" } })
+    // New row defaults to "approval_count" (number, empty sentinel = invalid); switch to an enum field.
+    fireEvent.change(screen.getAllByLabelText("Field")[1], { target: { value: "state" } })
 
     fireEvent.click(screen.getByRole("button", { name: "Save signal" }))
 

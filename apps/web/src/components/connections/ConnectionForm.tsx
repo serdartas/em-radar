@@ -24,7 +24,7 @@ import {
   testConnectionDraft,
   updateConnection,
 } from "@/lib/connections"
-import { isSecret, type JsonSchema, resolveProperty } from "@/lib/jsonSchema"
+import { isSecret, type JsonSchema, resolveProperty, schemaType } from "@/lib/jsonSchema"
 
 function defaultValues(schema: JsonSchema): Record<string, unknown> {
   const values: Record<string, unknown> = {}
@@ -78,6 +78,8 @@ function requiredSchemaFieldsFilled(
     const property = resolveProperty(raw, defs)
     // Tokens are intentionally blank in edit mode (preserved on the server).
     if (isEditing && isSecret(property)) return true
+    // A switch always represents a definite true/false; unchecked = false is a valid value.
+    if (schemaType(property) === "boolean") return true
     const value = values[key]
     if (value === undefined || value === null) return false
     if (typeof value === "string" && value.trim() === "") return false

@@ -341,6 +341,8 @@ describe("SignalForm — humanized operator labels", () => {
       target: { value: "customfield_10001" }, // Priority Score — number
     })
     fireEvent.change(screen.getByLabelText("Operator"), { target: { value: "greater_than" } })
+    // Numeric default is now "" (empty sentinel); enter a value to enable Save.
+    fireEvent.change(screen.getByLabelText("Value"), { target: { value: "5" } })
     fireEvent.click(screen.getByRole("button", { name: "Save signal" }))
 
     expect(onSave).toHaveBeenCalledOnce()
@@ -376,9 +378,9 @@ describe("SignalForm — sentinel guard", () => {
     // Save still disabled at sentinel
     expect(screen.getByRole("button", { name: "Save signal" })).toBeDisabled()
 
-    // Pick a concrete Jira field
+    // Pick a concrete Jira field — use a string field (is_empty operator, no value required).
     fireEvent.change(screen.getByLabelText("Jira field"), {
-      target: { value: "customfield_10001" },
+      target: { value: "customfield_10003" }, // Notes — string, is_empty is a no-value operator
     })
 
     expect(screen.getByRole("button", { name: "Save signal" })).not.toBeDisabled()
@@ -852,20 +854,21 @@ describe("SignalForm — rule value validation", () => {
   })
 
   it("Save is disabled for between when lower > upper (numeric bounds)", () => {
-    // days_open supports between; default [0, 0] is valid, then we set lower > upper
+    // days_open supports between; default ["", ""] is invalid (empty bounds block Save).
     renderForm({ fieldsByEntityType: { issue: ISSUE_FIELDS } })
 
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "My signal" } })
     fireEvent.change(screen.getByLabelText("Field"), { target: { value: "days_open" } })
     fireEvent.change(screen.getByLabelText("Operator"), { target: { value: "between" } })
 
-    // Default [0, 0] is valid: Save should be enabled
+    // Enter valid bounds [5, 10] — Save must be enabled.
+    fireEvent.change(screen.getByLabelText("Lower bound"), { target: { value: "5" } })
+    fireEvent.change(screen.getByLabelText("Upper bound"), { target: { value: "10" } })
     expect(screen.getByRole("button", { name: "Save signal" })).not.toBeDisabled()
 
-    // Set lower bound above upper bound
+    // Invert to lower > upper — Save must be disabled.
     fireEvent.change(screen.getByLabelText("Lower bound"), { target: { value: "10" } })
     fireEvent.change(screen.getByLabelText("Upper bound"), { target: { value: "3" } })
-
     expect(screen.getByRole("button", { name: "Save signal" })).toBeDisabled()
   })
 
@@ -925,5 +928,69 @@ describe("SignalForm — rule value validation", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }))
 
     expect(onSave).toHaveBeenCalledOnce()
+  })
+
+  // ---------------------------------------------------------------------------
+  // Numeric empty sentinel (P2 — guards Number("") === 0 silent coercion)
+  // ---------------------------------------------------------------------------
+
+  it("a fresh numeric rule keeps Save disabled until a value is entered", () => {
+    // days_open default operator is greater_than; defaultValueForRule returns "" not 0.
+    renderForm({ fieldsByEntityType: { issue: ISSUE_FIELDS } })
+
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "My signal" } })
+    fireEvent.change(screen.getByLabelText("Field"), { target: { value: "days_open" } })
+
+    expect(screen.getByRole("button", { name: "Save signal" })).toBeDisabled()
+  })
+
+  it("entering a number enables Save and emits the value as a number (not a string)", () => {
+    const { onSave } = renderForm({ fieldsByEntityType: { issue: ISSUE_FIELDS } })
+
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "My signal" } })
+    fireEvent.change(screen.getByLabelText("Field"), { target: { value: "days_open" } })
+    // Still disabled with empty sentinel
+    expect(screen.getByRole("button", { name: "Save signal" })).toBeDisabled()
+
+    fireEvent.change(screen.getByLabelText("Value"), { target: { value: "7" } })
+    expect(screen.getByRole("button", { name: "Save signal" })).not.toBeDisabled()
+
+    fireEvent.click(screen.getByRole("button", { name: "Save signal" }))
+    expect(onSave).toHaveBeenCalledOnce()
+    const call = onSave.mock.calls[0][0] as {
+      expression: { conditions: Array<{ value: unknown }> }
+    }
+    // Must be the number 7, not the string "7".
+    expect(call.expression.conditions[0].value).toBe(7)
+  })
+
+  it("clearing a numeric value after entering it disables Save", () => {
+    renderForm({ fieldsByEntityType: { issue: ISSUE_FIELDS } })
+
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "My signal" } })
+    fireEvent.change(screen.getByLabelText("Field"), { target: { value: "days_open" } })
+    fireEvent.change(screen.getByLabelText("Value"), { target: { value: "7" } })
+    expect(screen.getByRole("button", { name: "Save signal" })).not.toBeDisabled()
+
+    // Clear the value: empty sentinel is emitted, not 0.
+    fireEvent.change(screen.getByLabelText("Value"), { target: { value: "" } })
+    expect(screen.getByRole("button", { name: "Save signal" })).toBeDisabled()
+  })
+
+  it("clearing one between numeric bound after entering valid bounds disables Save", () => {
+    renderForm({ fieldsByEntityType: { issue: ISSUE_FIELDS } })
+
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "My signal" } })
+    fireEvent.change(screen.getByLabelText("Field"), { target: { value: "days_open" } })
+    fireEvent.change(screen.getByLabelText("Operator"), { target: { value: "between" } })
+
+    // Enter valid bounds — Save enabled.
+    fireEvent.change(screen.getByLabelText("Lower bound"), { target: { value: "5" } })
+    fireEvent.change(screen.getByLabelText("Upper bound"), { target: { value: "10" } })
+    expect(screen.getByRole("button", { name: "Save signal" })).not.toBeDisabled()
+
+    // Clear the upper bound: empty sentinel, not 0.
+    fireEvent.change(screen.getByLabelText("Upper bound"), { target: { value: "" } })
+    expect(screen.getByRole("button", { name: "Save signal" })).toBeDisabled()
   })
 })

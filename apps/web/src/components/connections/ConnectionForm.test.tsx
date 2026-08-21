@@ -151,4 +151,36 @@ describe("ConnectionForm — required schema field validation", () => {
     expect(screen.getByLabelText(/^Token/)).not.toHaveAttribute("required")
     expect(screen.getByLabelText(/^Token/)).not.toHaveAttribute("aria-required", "true")
   })
+
+  it("a required boolean field with no default does not block submit while the switch is unchecked", () => {
+    // A boolean switch always represents a definite value (unchecked = false).
+    // It must never be treated as "missing" by requiredSchemaFieldsFilled.
+    const boolConnector: Connector = {
+      ...jiraConnector,
+      name: "jira",
+      config_schema: {
+        type: "object",
+        properties: {
+          base_url: { type: "string", title: "Base URL" },
+          active: { type: "boolean", title: "Active" },
+        },
+        required: ["base_url", "active"],
+      },
+    }
+
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter>
+          <ConnectionForm connectors={[boolConnector]} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    // Fill the non-boolean required fields.
+    fireEvent.change(screen.getByLabelText("Connection name"), { target: { value: "Test" } })
+    fireEvent.change(screen.getByLabelText(/^Base URL/), { target: { value: "https://test.invalid" } })
+
+    // The boolean switch is unchecked (= false) — this is a valid value, not a missing one.
+    expect(screen.getByRole("button", { name: "Add connection" })).not.toBeDisabled()
+  })
 })
