@@ -14,7 +14,7 @@ import type { SignalField } from "@/lib/connectors"
 import type { JiraFieldInfo } from "@/lib/connections"
 import { humanizeOperator } from "@/lib/operatorLabels"
 import { SEVERITIES, type Severity } from "@/lib/severity"
-import type { SignalDefinitionCreate } from "@/lib/signalDefinitions"
+import type { SignalDefinition, SignalDefinitionCreate } from "@/lib/signalDefinitions"
 
 const MAX_RULES = 5
 const SIGNAL_TYPES = [
@@ -34,32 +34,45 @@ interface RuleRow {
   value: unknown
 }
 
-interface SignalCreateFormProps {
+interface SignalFormProps {
   fieldsByEntityType: Record<string, SignalField[]>
   /** Discovered Jira custom fields, used to drive the custom-field picker and operator/value controls. */
   jiraCustomFields?: JiraFieldInfo[]
+  /** When provided, the form opens prefilled in edit mode. */
+  initialValue?: SignalDefinition
+  /** Controls the heading and default submit button label. Defaults to "create". */
+  mode?: "create" | "edit"
+  /** Overrides the submit button label. Defaults to "Save signal" (create) or "Save changes" (edit). */
+  submitLabel?: string
   onCancel: () => void
   onSave: (definition: SignalDefinitionCreate) => void
   pending: boolean
   errorMessage: string | null
 }
 
-export function SignalCreateForm({
+export function SignalForm({
   fieldsByEntityType,
   jiraCustomFields = [],
+  initialValue,
+  mode = "create",
+  submitLabel,
   onCancel,
   onSave,
   pending,
   errorMessage,
-}: SignalCreateFormProps) {
-  const [name, setName] = useState("")
+}: SignalFormProps) {
+  const [name, setName] = useState(initialValue?.name ?? "")
   const [entityType, setEntityType] = useState(
-    () => SIGNAL_TYPES.find((t) => (fieldsByEntityType[t.value] ?? []).length > 0)?.value ?? SIGNAL_TYPES[0].value,
+    () =>
+      initialValue?.entity_type ??
+      (SIGNAL_TYPES.find((t) => (fieldsByEntityType[t.value] ?? []).length > 0)?.value ??
+        SIGNAL_TYPES[0].value),
   )
-  const [groupOperator, setGroupOperator] = useState<Connector>("")
-  const [severity, setSeverity] = useState<Severity>("warning")
-  const [category, setCategory] = useState(CATEGORIES[0])
-  const [message, setMessage] = useState("")
+  const [severity, setSeverity] = useState<Severity>(
+    initialValue?.report_settings.severity ?? "warning",
+  )
+  const [category, setCategory] = useState(initialValue?.report_settings.category ?? CATEGORIES[0])
+  const [message, setMessage] = useState(initialValue?.report_settings.message_template ?? "")
 
   // Built-in fields sorted by label, with "Custom field" appended at the end.
   // The "Custom field" entry is only added for the issue entity type because Jira custom
@@ -72,7 +85,15 @@ export function SignalCreateForm({
 
   const firstField = sortedBuiltinFields[0]
 
-  const [rows, setRows] = useState<RuleRow[]>([makeRow(firstField)])
+  const [groupOperator, setGroupOperator] = useState<Connector>(() => {
+    if (initialValue) return parseExpression(initialValue.expression).groupOperator
+    return ""
+  })
+
+  const [rows, setRows] = useState<RuleRow[]>(() => {
+    if (initialValue) return parseExpression(initialValue.expression).rows
+    return [makeRow(firstField)]
+  })
 
   function handleEntityTypeChange(newType: string) {
     setEntityType(newType)
@@ -126,6 +147,9 @@ export function SignalCreateForm({
   const hasSentinelRow = rows.some((row) => row.field === CUSTOM_FIELD_KEY)
   const canSave = name.trim().length > 0 && !pending && !hasSentinelRow
 
+  const heading = mode === "edit" ? "Edit signal" : "Create signal"
+  const buttonLabel = submitLabel ?? (mode === "edit" ? "Save changes" : "Save signal")
+
   function save() {
     if (!canSave) {
       return
@@ -139,15 +163,15 @@ export function SignalCreateForm({
         category,
         message_template: message.trim() || null,
       },
-      origin: "user_created",
-      template_key: null,
+      origin: initialValue?.origin ?? "user_created",
+      template_key: initialValue?.template_key ?? null,
     })
   }
 
   return (
     <Card>
       <CardContent className="space-y-5 p-5">
-        <h2 className="text-lg font-semibold">Create signal</h2>
+        <h2 className="text-lg font-semibold">{heading}</h2>
 
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-1.5">
@@ -362,7 +386,7 @@ export function SignalCreateForm({
 
         <div className="flex gap-2">
           <Button disabled={!canSave} onClick={save}>
-            {pending ? "Saving..." : "Save signal"}
+            {pending ? "Saving..." : buttonLabel}
           </Button>
           <Button onClick={onCancel} variant="outline">
             Cancel
@@ -459,5 +483,28 @@ function buildExpression(rows: RuleRow[], groupOperator: Connector): Record<stri
       }
       return condition
     }),
+  }
+}
+
+/**
+ * Reconstructs RuleRow[] and groupOperator from a stored expression (for edit-mode prefill).
+ * Handles the standard group expression format produced by buildExpression.
+ */
+function parseExpression(expression: Record<string, unknown>): {
+  rows: RuleRow[]
+  groupOperator: Connector
+} {
+  const conditions =
+    (expression.conditions as Array<Record<string, unknown>> | undefined) ?? []
+  const rows: RuleRow[] = conditions.map((cond) => ({
+    field: String(cond.field ?? ""),
+    operator: String(cond.operator ?? "is"),
+    value: "value" in cond ? cond.value : null,
+  }))
+  const groupOperator: Connector =
+    conditions.length <= 1 ? "" : expression.operator === "any" ? "OR" : "AND"
+  return {
+    rows: rows.length > 0 ? rows : [{ field: "", operator: "is", value: null }],
+    groupOperator,
   }
 }
