@@ -8,11 +8,12 @@ import { WizardStepFooter } from "@/components/setup/WizardStepFooter"
 afterEach(cleanup)
 
 describe("WizardStepFooter", () => {
-  it("renders the primary action button", () => {
+  it("renders exactly one primary action button", () => {
     render(
       <WizardStepFooter onPrimary={vi.fn()} primaryLabel="Continue" />,
     )
-    expect(screen.getByRole("button", { name: "Continue" })).toBeInTheDocument()
+    // queryAllByRole asserting length 1 ensures uniqueness, not just presence.
+    expect(screen.queryAllByRole("button", { name: "Continue" })).toHaveLength(1)
   })
 
   it("does NOT render a Back button when onBack is omitted (Welcome scenario)", () => {
@@ -65,7 +66,8 @@ describe("WizardStepFooter", () => {
     )
     expect(screen.getByRole("button", { name: "Add another team" })).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Back" })).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "Finish setup" })).toBeInTheDocument()
+    // Exactly one "Finish setup" primary.
+    expect(screen.queryAllByRole("button", { name: "Finish setup" })).toHaveLength(1)
   })
 
   it("shows the success message when provided", () => {
@@ -77,6 +79,7 @@ describe("WizardStepFooter", () => {
       />,
     )
     expect(screen.getByText("Connection saved. Ready to continue.")).toBeInTheDocument()
+    expect(screen.getByRole("status")).toBeInTheDocument()
   })
 
   it("does not show a success message when the prop is omitted", () => {

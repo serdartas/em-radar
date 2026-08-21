@@ -6,6 +6,13 @@ export interface WizardProgress {
   step: WizardStep
   currentTeamId: string | null
   completed: boolean
+  /**
+   * High-water mark: the furthest step the user has reached in this session.
+   * Only advanced on forward transitions; never decremented when the user
+   * clicks Back or a completed pill. Used to keep previously-entered step
+   * pills interactive across back-navigation and reloads.
+   */
+  furthestStep: WizardStep
 }
 
 const STORAGE_KEY = "em-radar.wizard-progress"
@@ -25,10 +32,16 @@ export function loadWizardProgress(): WizardProgress | null {
     if (typeof parsed !== "object" || parsed === null) return null
     const obj = parsed as Record<string, unknown>
     if (typeof obj.step !== "string" || !STEPS.includes(obj.step as WizardStep)) return null
+    // Fall back to `step` for records written before furthestStep was introduced.
+    const furthestStep =
+      typeof obj.furthestStep === "string" && STEPS.includes(obj.furthestStep as WizardStep)
+        ? (obj.furthestStep as WizardStep)
+        : (obj.step as WizardStep)
     return {
       step: obj.step as WizardStep,
       currentTeamId: typeof obj.currentTeamId === "string" ? obj.currentTeamId : null,
       completed: obj.completed === true,
+      furthestStep,
     }
   } catch {
     return null

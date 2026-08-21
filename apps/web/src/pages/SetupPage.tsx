@@ -61,6 +61,9 @@ export function SetupPage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [step, setStep] = useState<Step>("welcome")
+  // High-water mark: only advances on forward transitions; never decremented on Back.
+  // Drives pill interactivity so previously-entered steps stay clickable after back-navigation.
+  const [furthestStep, setFurthestStep] = useState<Step>("welcome")
   const [currentTeamId, setCurrentTeamId] = useState<string | null>(null)
   const [initialized, setInitialized] = useState(false)
 
@@ -79,10 +82,19 @@ export function SetupPage() {
       }
     },
     onSuccess: () => {
-      saveWizardProgress({ step, currentTeamId, completed: true })
+      saveWizardProgress({ step, currentTeamId, furthestStep, completed: true })
       navigate("/", { replace: true })
     },
   })
+
+  // Navigate to a step. Advances the furthestStep high-water mark on forward transitions;
+  // going back leaves furthestStep unchanged so previously-entered pills stay clickable.
+  function goToStep(newStep: Step) {
+    setStep(newStep)
+    setFurthestStep((prev) =>
+      STEP_ORDER.indexOf(newStep) > STEP_ORDER.indexOf(prev) ? newStep : prev,
+    )
+  }
 
   // Resumability: prefer explicit persisted wizard progress; otherwise infer from stored data.
   // Rendering is gated until this resolves so returning users never see a Welcome flash.
@@ -104,22 +116,28 @@ export function SetupPage() {
       const canResume = persisted.step !== "sources" || teamValid
       if (canResume) {
         setStep(persisted.step)
+        setFurthestStep(persisted.furthestStep)
         setCurrentTeamId(teamValid ? persisted.currentTeamId : null)
         setInitialized(true)
         return
       }
     }
 
+    // Heuristic fallback: infer the right entry point from stored data.
     if (teams.length > 0) {
       const incomplete = teams.find((team) => !teamHasSources(team)) ?? teams[teams.length - 1]
       setCurrentTeamId(incomplete.id)
       setStep("sources")
+      setFurthestStep("sources")
     } else if (jiraConnections.length > 0) {
       setStep("team")
+      setFurthestStep("team")
     } else if (connections.length > 0) {
       setStep("jira")
+      setFurthestStep("jira")
     } else {
       setStep("welcome")
+      setFurthestStep("welcome")
     }
     setInitialized(true)
   }, [initialized, isLoading, teams, jiraConnections, connections, navigate])
@@ -127,8 +145,8 @@ export function SetupPage() {
   // Persist each transition so closing the browser mid-wizard resumes at the right step.
   useEffect(() => {
     if (!initialized || finishMutation.isSuccess) return
-    saveWizardProgress({ step, currentTeamId, completed: false })
-  }, [initialized, step, currentTeamId, finishMutation.isSuccess])
+    saveWizardProgress({ step, currentTeamId, furthestStep, completed: false })
+  }, [initialized, step, currentTeamId, furthestStep, finishMutation.isSuccess])
 
   const currentTeam = teams.find((team) => team.id === currentTeamId) ?? null
 
@@ -144,19 +162,19 @@ export function SetupPage() {
         </p>
       </header>
 
-      <WizardProgress current={step} onGoToStep={setStep} />
+      <WizardProgress current={step} furthestStep={furthestStep} onGoToStep={goToStep} />
 
       {!initialized && <p className="text-sm text-slate-500">Loading setup...</p>}
 
-      {initialized && step === "welcome" && <WelcomeStep onStart={() => setStep("jira")} />}
+      {initialized && step === "welcome" && <WelcomeStep onStart={() => goToStep("jira")} />}
 
       {step === "jira" && (
         <ConnectionStep
           connections={jiraConnections}
           description="Add a named Jira connection. It is required to run work-item signals. Credentials are stored locally and shown masked."
           lockConnectorName="jira"
-          onBack={() => setStep("welcome")}
-          onContinue={() => setStep("gitlab")}
+          onBack={() => goToStep("welcome")}
+          onContinue={() => goToStep("gitlab")}
           optional={false}
           title="Connect your ticketing source (Jira)"
         />
@@ -167,8 +185,8 @@ export function SetupPage() {
           connections={codeConnections}
           description="Add a named GitLab connection for merge-request signals. This step is optional but recommended."
           lockConnectorName="gitlab"
-          onBack={() => setStep("jira")}
-          onContinue={() => setStep("team")}
+          onBack={() => goToStep("jira")}
+          onContinue={() => goToStep("team")}
           optional
           title="Connect your code source (GitLab)"
         />
@@ -177,10 +195,10 @@ export function SetupPage() {
       {step === "team" && (
         <TeamStep
           groups={groups}
-          onBack={() => setStep("gitlab")}
+          onBack={() => goToStep("gitlab")}
           onCreated={(team) => {
             setCurrentTeamId(team.id)
-            setStep("sources")
+            goToStep("sources")
           }}
         />
       )}
@@ -196,9 +214,9 @@ export function SetupPage() {
           jiraConnections={jiraConnections}
           onAddAnother={() => {
             setCurrentTeamId(null)
-            setStep("team")
+            goToStep("team")
           }}
-          onBack={() => setStep("team")}
+          onBack={() => goToStep("team")}
           onFinish={() => finishMutation.mutate()}
           team={currentTeam}
         />
@@ -213,19 +231,39 @@ export function SetupPage() {
 
 function WizardProgress({
   current,
+  furthestStep,
   onGoToStep,
 }: {
   current: Step
+  furthestStep: Step
   onGoToStep: (step: Step) => void
 }) {
   const currentIndex = STEP_ORDER.indexOf(current)
+  const furthestIndex = STEP_ORDER.indexOf(furthestStep)
+
   return (
     <ol aria-label="Setup progress" className="flex flex-wrap gap-2 text-xs">
       {STEP_ORDER.map((step, index) => {
-        const state = index < currentIndex ? "done" : index === currentIndex ? "current" : "todo"
+        const isCurrent = index === currentIndex
+        // A step is "done" (previously entered, clickable) when its index is at or before the
+        // furthest step reached AND it is not the current step. This is driven by the persisted
+        // high-water mark, so pills remain interactive after back-navigation.
+        const isDone = !isCurrent && index <= furthestIndex
         const label = `${index + 1}. ${STEP_LABELS[step]}`
 
-        if (state === "done") {
+        if (isCurrent) {
+          return (
+            <li
+              aria-current="step"
+              className="rounded-full border border-primary bg-primary px-3 py-1 font-medium text-primary-foreground"
+              key={step}
+            >
+              {label}
+            </li>
+          )
+        }
+
+        if (isDone) {
           return (
             <li key={step}>
               <button
@@ -239,16 +277,10 @@ function WizardProgress({
           )
         }
 
+        // Future / not yet reached: non-interactive, visually de-emphasised.
         return (
           <li
-            aria-current={state === "current" ? "step" : undefined}
-            aria-disabled={state === "todo" ? true : undefined}
-            className={
-              "rounded-full border px-3 py-1 font-medium " +
-              (state === "current"
-                ? "border-primary bg-primary text-primary-foreground"
-                : "border-slate-200 text-slate-400 opacity-50")
-            }
+            className="rounded-full border border-slate-200 px-3 py-1 font-medium text-slate-400 opacity-50"
             key={step}
           >
             {label}

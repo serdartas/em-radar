@@ -428,7 +428,7 @@ describe("SetupPage onboarding wizard", () => {
     // Two source-less teams: the heuristic would pick the first, but persisted progress points
     // at the second — the wizard must honor where onboarding actually stopped.
     readOnlyMock([storedTeam("team-1", "Payments"), storedTeam("team-2", "Search")])
-    saveWizardProgress({ step: "sources", currentTeamId: "team-2", completed: false })
+    saveWizardProgress({ step: "sources", currentTeamId: "team-2", furthestStep: "sources", completed: false })
     renderWizard()
 
     expect(
@@ -438,7 +438,7 @@ describe("SetupPage onboarding wizard", () => {
 
   it("navigates to the dashboard when persisted progress is marked completed", async () => {
     readOnlyMock([storedTeam("team-1", "Payments")])
-    saveWizardProgress({ step: "sources", currentTeamId: "team-1", completed: true })
+    saveWizardProgress({ step: "sources", currentTeamId: "team-1", furthestStep: "sources", completed: true })
     renderWizard()
 
     await screen.findByRole("heading", { name: "Dashboard landing" })
@@ -448,7 +448,7 @@ describe("SetupPage onboarding wizard", () => {
     // A completed marker with zero teams (all deleted) must not bounce between Dashboard and
     // Setup: the wizard drops the stale marker and falls back to the heuristic (welcome).
     readOnlyMock([])
-    saveWizardProgress({ step: "sources", currentTeamId: "team-1", completed: true })
+    saveWizardProgress({ step: "sources", currentTeamId: "team-1", furthestStep: "sources", completed: true })
     renderWizard()
 
     expect(await screen.findByRole("heading", { name: "Welcome to EM Radar" })).toBeInTheDocument()
@@ -473,7 +473,7 @@ describe("SetupPage wizard navigation (M8.5-05)", () => {
 
   it("shows a Back button on the Ticketing step and navigates back to Welcome", async () => {
     readOnlyMock([])
-    saveWizardProgress({ step: "jira", currentTeamId: null, completed: false })
+    saveWizardProgress({ step: "jira", currentTeamId: null, furthestStep: "jira", completed: false })
     renderWizard()
 
     await screen.findByRole("heading", { name: /Connect your ticketing source/ })
@@ -485,7 +485,7 @@ describe("SetupPage wizard navigation (M8.5-05)", () => {
 
   it("shows a Back button on the Code step and navigates back to Ticketing", async () => {
     readOnlyMock([])
-    saveWizardProgress({ step: "gitlab", currentTeamId: null, completed: false })
+    saveWizardProgress({ step: "gitlab", currentTeamId: null, furthestStep: "gitlab", completed: false })
     renderWizard()
 
     await screen.findByRole("heading", { name: /Connect your code source/ })
@@ -496,7 +496,7 @@ describe("SetupPage wizard navigation (M8.5-05)", () => {
 
   it("shows a Back button on the Team step", async () => {
     readOnlyMock([])
-    saveWizardProgress({ step: "team", currentTeamId: null, completed: false })
+    saveWizardProgress({ step: "team", currentTeamId: null, furthestStep: "team", completed: false })
     renderWizard()
 
     await screen.findByRole("heading", { name: "Create a team" })
@@ -505,7 +505,7 @@ describe("SetupPage wizard navigation (M8.5-05)", () => {
 
   it("shows a Back button on the Sources step", async () => {
     readOnlyMock([storedTeam("team-1", "Payments")])
-    saveWizardProgress({ step: "sources", currentTeamId: "team-1", completed: false })
+    saveWizardProgress({ step: "sources", currentTeamId: "team-1", furthestStep: "sources", completed: false })
     renderWizard()
 
     await screen.findByRole("heading", { name: /Attach sources for Payments/ })
@@ -514,8 +514,8 @@ describe("SetupPage wizard navigation (M8.5-05)", () => {
 
   it("completed step pills are clickable and navigate back; future pills are non-interactive", async () => {
     readOnlyMock([])
-    // Resume at gitlab so Welcome and Ticketing are completed; Team and Sources are locked.
-    saveWizardProgress({ step: "gitlab", currentTeamId: null, completed: false })
+    // furthestStep = "gitlab": Welcome and Ticketing are done, Team and Sources are locked.
+    saveWizardProgress({ step: "gitlab", currentTeamId: null, furthestStep: "gitlab", completed: false })
     renderWizard()
 
     await screen.findByRole("heading", { name: /Connect your code source/ })
@@ -528,27 +528,69 @@ describe("SetupPage wizard navigation (M8.5-05)", () => {
     expect(welcomeBtn).toBeInTheDocument()
     expect(ticketingBtn).toBeInTheDocument()
 
-    // Team and Sources pills: no button role — they are plain list items, aria-disabled.
+    // Team and Sources pills: plain list items — no button role, not interactive.
     expect(within(rail).queryByRole("button", { name: /Team/ })).not.toBeInTheDocument()
     expect(within(rail).queryByRole("button", { name: /Sources/ })).not.toBeInTheDocument()
 
-    // Clicking a completed pill navigates back.
+    // Clicking a completed pill navigates back to that step.
     fireEvent.click(welcomeBtn)
     expect(await screen.findByRole("heading", { name: "Welcome to EM Radar" })).toBeInTheDocument()
   })
 
-  it("the step footer exposes a single clear primary action", async () => {
+  it("previously-entered pills stay clickable after back-navigation (high-water mark respected)", async () => {
     readOnlyMock([])
-    saveWizardProgress({ step: "gitlab", currentTeamId: null, completed: false })
+    // furthestStep = "team" (was reached), but current = "jira" (user went back).
+    // Jira, GitLab, and Team pills were all previously entered and should remain as buttons.
+    saveWizardProgress({ step: "jira", currentTeamId: null, furthestStep: "team", completed: false })
+    renderWizard()
+
+    await screen.findByRole("heading", { name: /Connect your ticketing source/ })
+
+    const rail = screen.getByRole("list", { name: "Setup progress" })
+
+    // Welcome is done (index 0 <= furthestIndex 3, not current).
+    expect(within(rail).getByRole("button", { name: /Welcome/ })).toBeInTheDocument()
+    // GitLab is done (index 2 <= 3, not current) — was previously entered.
+    expect(within(rail).getByRole("button", { name: /Code/ })).toBeInTheDocument()
+    // Team is done (index 3 <= 3, not current) — was previously entered.
+    expect(within(rail).getByRole("button", { name: /Team/ })).toBeInTheDocument()
+    // Sources is locked (index 4 > furthestIndex 3).
+    expect(within(rail).queryByRole("button", { name: /Sources/ })).not.toBeInTheDocument()
+  })
+
+  it("persisted furthestStep round-trips: completed pills stay clickable after remount", async () => {
+    // Simulate: wizard was at gitlab with furthestStep = "gitlab", then browser is closed and
+    // reopened. The remount must read furthestStep from storage so Ticketing pill is still a button.
+    readOnlyMock([])
+    saveWizardProgress({ step: "gitlab", currentTeamId: null, furthestStep: "gitlab", completed: false })
+
+    // First mount
+    const { unmount } = renderWizard()
+    await screen.findByRole("heading", { name: /Connect your code source/ })
+    unmount()
+    cleanup()
+
+    // Remount — simulates browser reload
+    renderWizard()
+    await screen.findByRole("heading", { name: /Connect your code source/ })
+
+    const rail = screen.getByRole("list", { name: "Setup progress" })
+    // Ticketing pill must still be a button (from the persisted furthestStep).
+    expect(within(rail).getByRole("button", { name: /Ticketing/ })).toBeInTheDocument()
+    // Team pill must still be non-interactive (not yet reached).
+    expect(within(rail).queryByRole("button", { name: /Team/ })).not.toBeInTheDocument()
+  })
+
+  it("the step footer exposes exactly one primary action", async () => {
+    readOnlyMock([])
+    saveWizardProgress({ step: "gitlab", currentTeamId: null, furthestStep: "gitlab", completed: false })
     renderWizard()
 
     await screen.findByRole("heading", { name: /Connect your code source/ })
 
-    // There is exactly one default-styled primary button in the footer area.
-    // "Skip for now" is the primary action for an optional step with no connections.
-    const primary = screen.getByRole("button", { name: "Skip for now" })
-    expect(primary).toBeInTheDocument()
-    // The primary is not disabled when the step is optional.
-    expect(primary).not.toBeDisabled()
+    // "Skip for now" is the sole primary action for an optional step with no connections.
+    // queryAllByRole asserting length 1 verifies uniqueness, not just presence.
+    expect(screen.queryAllByRole("button", { name: "Skip for now" })).toHaveLength(1)
+    expect(screen.getByRole("button", { name: "Skip for now" })).not.toBeDisabled()
   })
 })
