@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { useId } from "react"
+import { useId, useState, type ReactNode } from "react"
 import { useQuery } from "@tanstack/react-query"
 
 import { Callout } from "@/components/ui/callout"
@@ -34,9 +34,9 @@ interface FieldMappingRowProps {
   enabled: boolean
   onEnabledChange: (enabled: boolean) => void
   /** Revealed control shown only when enabled. */
-  children: React.ReactNode
+  children: ReactNode
   /** Optional InfoTooltip content shown next to the label. */
-  tooltip?: React.ReactNode
+  tooltip?: ReactNode
 }
 
 export function FieldMappingRow({
@@ -73,25 +73,38 @@ export function FieldMappingRow({
 
 interface CustomFieldSelectProps {
   id: string
+  /** Accessible label forwarded to the <select> via FormRow's htmlFor linkage. */
+  label: string
   value: string
   onChange: (value: string) => void
   fields: JiraFieldInfo[]
 }
 
-function CustomFieldSelect({ fields, id, onChange, value }: CustomFieldSelectProps) {
+function CustomFieldSelect({ fields, id, label, onChange, value }: CustomFieldSelectProps) {
+  const valueInList = fields.some((f) => f.id === value)
+
   return (
-    <Select id={id} onChange={(e) => onChange(e.target.value)} value={value}>
-      {fields.length === 0 && (
-        <option disabled value="">
-          Save the connection first to load fields
-        </option>
-      )}
-      {fields.map((field) => (
-        <option key={field.id} value={field.id}>
-          {field.name} ({field.id})
-        </option>
-      ))}
-    </Select>
+    <FormRow htmlFor={id} label={label}>
+      <Select id={id} onChange={(e) => onChange(e.target.value)} value={value}>
+        {/* Placeholder when no selection */}
+        {!value && (
+          <option disabled value="">
+            {fields.length === 0
+              ? "Save the connection first to load fields"
+              : "Choose a field..."}
+          </option>
+        )}
+        {/* Show current value if not in discovered list so the select is never visually blank */}
+        {value && !valueInList && (
+          <option value={value}>{value} (not in discovered fields)</option>
+        )}
+        {fields.map((field) => (
+          <option key={field.id} value={field.id}>
+            {field.name} ({field.id})
+          </option>
+        ))}
+      </Select>
+    </FormRow>
   )
 }
 
@@ -124,6 +137,11 @@ export function JiraFieldMappingSection({
   const acCustomFieldId = useId()
   const spFieldSelectId = useId()
 
+  // Drive the Story Points toggle from independent local state so it is not a
+  // dead control on a new (unsaved) connection where no fields are discovered
+  // yet and story_points would otherwise remain "".
+  const [spToggled, setSpToggled] = useState(() => !!(fieldMappingValues?.story_points))
+
   const { data: allFields = [] } = useQuery({
     queryKey: ["jiraFields", connectionId],
     queryFn: () => listJiraFields(connectionId!),
@@ -134,47 +152,66 @@ export function JiraFieldMappingSection({
     .filter((f) => f.custom)
     .sort((a, b) => a.name.localeCompare(b.name))
 
-  // Derive state from controlled values
-  const storyPoints = fieldMappingValues?.story_points ?? ""
-  const storyPointsEnabled = storyPoints !== ""
-
+  // Read controlled values
+  const storyPointsValue = fieldMappingValues?.story_points ?? ""
   const acCustomField = fieldMappingValues?.acceptance_criteria ?? null
   const acHeading = fieldMappingValues?.acceptance_criteria_heading ?? null
+
+  // AC enabled/mode are fully derived from props (AC always sets a non-null value on enable).
   const acEnabled = acCustomField !== null || acHeading !== null
   const acMode: AcMode = acCustomField !== null ? "custom_field" : "description"
 
-  function current(): FieldMappingValues {
-    return {
-      story_points: storyPoints,
+  // Returns the current AC values for use in every emitted FieldMappingValues object.
+  // story_points is included only when a non-empty value is stored in props so we never
+  // emit story_points: "" to the backend.
+  function currentBase(): FieldMappingValues {
+    const base: FieldMappingValues = {
       acceptance_criteria: acCustomField,
       acceptance_criteria_heading: acHeading,
     }
+    if (storyPointsValue) {
+      base.story_points = storyPointsValue
+    }
+    return base
   }
 
-  // Story Points handlers
-  function handleSpToggle(enabled: boolean) {
-    if (enabled) {
-      onFieldMappingChange({ ...current(), story_points: customFields[0]?.id ?? "" })
-    } else {
-      onFieldMappingChange({ ...current(), story_points: "" })
+  // ── Story Points handlers ─────────────────────────────────────────────────
+
+  function handleSpToggle(on: boolean) {
+    setSpToggled(on)
+    if (!on) {
+      // Omit story_points so the backend default applies; never emit story_points: "".
+      onFieldMappingChange({
+        acceptance_criteria: acCustomField,
+        acceptance_criteria_heading: acHeading,
+      })
     }
+    // When enabling: do NOT pre-select a field. The revealed control shows
+    // "Choose a field..." (or "Save first…") and waits for an explicit choice.
   }
 
   function handleSpChange(value: string) {
-    onFieldMappingChange({ ...current(), story_points: value })
+    const next: FieldMappingValues = { ...currentBase() }
+    if (value) {
+      next.story_points = value
+    } else {
+      delete next.story_points
+    }
+    onFieldMappingChange(next)
   }
 
-  // Acceptance Criteria handlers
-  function handleAcToggle(enabled: boolean) {
-    if (enabled) {
+  // ── Acceptance Criteria handlers ─────────────────────────────────────────
+
+  function handleAcToggle(on: boolean) {
+    if (on) {
       onFieldMappingChange({
-        ...current(),
+        ...currentBase(),
         acceptance_criteria: null,
         acceptance_criteria_heading: "### Acceptance Criteria",
       })
     } else {
       onFieldMappingChange({
-        ...current(),
+        ...currentBase(),
         acceptance_criteria: null,
         acceptance_criteria_heading: null,
       })
@@ -184,25 +221,27 @@ export function JiraFieldMappingSection({
   function handleAcModeChange(mode: AcMode) {
     if (mode === "description") {
       onFieldMappingChange({
-        ...current(),
+        ...currentBase(),
         acceptance_criteria: null,
         acceptance_criteria_heading: acHeading ?? "### Acceptance Criteria",
       })
     } else {
+      // Switch to custom_field mode: keep any previously stored field id or start
+      // with no selection — never pre-select the first discovered field.
       onFieldMappingChange({
-        ...current(),
-        acceptance_criteria: acCustomField ?? customFields[0]?.id ?? "",
+        ...currentBase(),
+        acceptance_criteria: acCustomField ?? "",
         acceptance_criteria_heading: null,
       })
     }
   }
 
   function handleAcHeadingChange(heading: string) {
-    onFieldMappingChange({ ...current(), acceptance_criteria_heading: heading })
+    onFieldMappingChange({ ...currentBase(), acceptance_criteria_heading: heading })
   }
 
   function handleAcCustomFieldChange(value: string) {
-    onFieldMappingChange({ ...current(), acceptance_criteria: value })
+    onFieldMappingChange({ ...currentBase(), acceptance_criteria: value })
   }
 
   return (
@@ -212,19 +251,18 @@ export function JiraFieldMappingSection({
       <div className="space-y-6 pt-4">
         {/* Story Points */}
         <FieldMappingRow
-          enabled={storyPointsEnabled}
+          enabled={spToggled}
           label="Story Points"
           onEnabledChange={handleSpToggle}
           switchId={spSwitchId}
         >
-          <FormRow htmlFor={spFieldSelectId} label="Custom field">
-            <CustomFieldSelect
-              fields={customFields}
-              id={spFieldSelectId}
-              onChange={handleSpChange}
-              value={storyPoints}
-            />
-          </FormRow>
+          <CustomFieldSelect
+            fields={customFields}
+            id={spFieldSelectId}
+            label="Story points field"
+            onChange={handleSpChange}
+            value={storyPointsValue}
+          />
         </FieldMappingRow>
 
         {/* Acceptance Criteria */}
@@ -248,9 +286,6 @@ export function JiraFieldMappingSection({
 
             {acMode === "description" && (
               <FormRow
-                hint="The exact Markdown heading that marks the Acceptance Criteria section. Text immediately below this heading is extracted."
-                htmlFor={acHeadingId}
-                label="Heading text"
                 action={
                   <InfoTooltip label="About heading text">
                     <p>
@@ -261,6 +296,9 @@ export function JiraFieldMappingSection({
                     </p>
                   </InfoTooltip>
                 }
+                hint="The exact Markdown heading that marks the Acceptance Criteria section. Text immediately below this heading is extracted."
+                htmlFor={acHeadingId}
+                label="Heading text"
               >
                 <Input
                   id={acHeadingId}
@@ -272,14 +310,13 @@ export function JiraFieldMappingSection({
             )}
 
             {acMode === "custom_field" && (
-              <FormRow htmlFor={acCustomFieldId} label="Custom field">
-                <CustomFieldSelect
-                  fields={customFields}
-                  id={acCustomFieldId}
-                  onChange={handleAcCustomFieldChange}
-                  value={acCustomField ?? ""}
-                />
-              </FormRow>
+              <CustomFieldSelect
+                fields={customFields}
+                id={acCustomFieldId}
+                label="Acceptance criteria field"
+                onChange={handleAcCustomFieldChange}
+                value={acCustomField ?? ""}
+              />
             )}
           </div>
         </FieldMappingRow>

@@ -151,25 +151,82 @@ describe("JiraFieldMappingSection — removed rows", () => {
 })
 
 // ---------------------------------------------------------------------------
-// JiraFieldMappingSection — Story Points
+// JiraFieldMappingSection — Story Points (toggle state is independent)
 // ---------------------------------------------------------------------------
 
 describe("JiraFieldMappingSection — Story Points", () => {
-  it("starts as 'Not configured' when story_points is empty", () => {
+  it("starts as 'Not configured' when story_points is absent", () => {
     render(
       <JiraFieldMappingSection
+        fieldMappingValues={{}}
+        onFieldMappingChange={() => undefined}
+      />,
+      { wrapper },
+    )
+
+    const labels = screen.getAllByText("Not configured")
+    expect(labels.length).toBeGreaterThanOrEqual(1)
+  })
+
+  it("reveals the dropdown (with 'Save first' guidance) when SP is toggled ON without a connectionId", () => {
+    render(
+      <JiraFieldMappingSection
+        // No connectionId — unsaved connection, no field discovery possible
         fieldMappingValues={{ story_points: "" }}
         onFieldMappingChange={() => undefined}
       />,
       { wrapper },
     )
 
-    // Both SP and AC are not configured; there should be two "Not configured" labels.
-    const labels = screen.getAllByText("Not configured")
-    expect(labels.length).toBeGreaterThanOrEqual(1)
+    // Before toggle: both SP and AC show "Not configured"
+    expect(screen.getAllByText("Not configured")).toHaveLength(2)
+
+    const spSwitch = screen.getAllByRole("switch")[0]
+    fireEvent.click(spSwitch)
+
+    // After toggle: only AC remains "Not configured"; SP row reveals its control
+    expect(screen.getAllByText("Not configured")).toHaveLength(1)
+    // Guidance text is visible inside the revealed SP dropdown
+    expect(screen.getByText("Save the connection first to load fields")).toBeInTheDocument()
   })
 
-  it("reveals the custom-field dropdown when enabled", async () => {
+  it("does NOT call onFieldMappingChange when SP is toggled ON (waits for field selection)", () => {
+    const onChange = vi.fn()
+    render(
+      <JiraFieldMappingSection
+        fieldMappingValues={{}}
+        onFieldMappingChange={onChange}
+      />,
+      { wrapper },
+    )
+
+    const spSwitch = screen.getAllByRole("switch")[0]
+    fireEvent.click(spSwitch)
+
+    // Enabling the toggle alone must not emit a value — user must pick a field first
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it("calls onFieldMappingChange without story_points when SP is toggled OFF", () => {
+    const onChange = vi.fn()
+    render(
+      <JiraFieldMappingSection
+        fieldMappingValues={{ story_points: "customfield_10016" }}
+        onFieldMappingChange={onChange}
+      />,
+      { wrapper },
+    )
+
+    const spSwitch = screen.getAllByRole("switch")[0]
+    fireEvent.click(spSwitch)
+
+    expect(onChange).toHaveBeenCalledOnce()
+    const emitted = onChange.mock.calls[0][0] as Record<string, unknown>
+    // story_points must be omitted so the backend default applies
+    expect("story_points" in emitted).toBe(false)
+  })
+
+  it("reveals the discovered custom-field dropdown when SP is enabled with a stored value", async () => {
     render(
       <JiraFieldMappingSection
         connectionId="conn-1"
@@ -179,32 +236,30 @@ describe("JiraFieldMappingSection — Story Points", () => {
       { wrapper },
     )
 
-    // Wait for field discovery to resolve
     await waitFor(() => {
-      expect(screen.getByRole("combobox", { name: "Custom field" })).toBeInTheDocument()
+      expect(screen.getByRole("combobox", { name: "Story points field" })).toBeInTheDocument()
     })
   })
 
-  it("enables story points and calls onFieldMappingChange when switch is toggled on", async () => {
-    const onChange = vi.fn()
+  it("shows 'Choose a field...' placeholder when SP is enabled but no field selected yet", async () => {
     render(
       <JiraFieldMappingSection
         connectionId="conn-1"
         fieldMappingValues={{ story_points: "" }}
-        onFieldMappingChange={onChange}
+        onFieldMappingChange={() => undefined}
       />,
       { wrapper },
     )
 
-    // Find the Story Points switch (first switch in the section)
-    const switches = screen.getAllByRole("switch")
-    fireEvent.click(switches[0])
+    // Toggle SP on
+    fireEvent.click(screen.getAllByRole("switch")[0])
 
     await waitFor(() => {
-      expect(onChange).toHaveBeenCalled()
-      const call = onChange.mock.calls[0][0] as { story_points: string }
-      // Should have set story_points to a non-empty string (first discovered field)
-      expect(call.story_points).toBeDefined()
+      const select = screen.getByRole("combobox", { name: "Story points field" }) as HTMLSelectElement
+      // The placeholder option must be present
+      expect(
+        Array.from(select.options).some((o) => o.text === "Choose a field..."),
+      ).toBe(true)
     })
   })
 })
@@ -226,9 +281,7 @@ describe("JiraFieldMappingSection — Acceptance Criteria", () => {
       { wrapper },
     )
 
-    // Mode selector should be present
     expect(screen.getByRole("combobox", { name: "How is it recorded?" })).toBeInTheDocument()
-    // Heading textbox should be visible
     expect(screen.getByPlaceholderText("### Acceptance Criteria")).toBeInTheDocument()
   })
 
@@ -246,17 +299,14 @@ describe("JiraFieldMappingSection — Acceptance Criteria", () => {
     )
 
     await waitFor(() => {
-      // Mode selector set to "Custom field"
       const modeSelect = screen.getByRole("combobox", { name: "How is it recorded?" })
       expect((modeSelect as HTMLSelectElement).value).toBe("custom_field")
     })
 
-    // The custom field dropdown should appear (there will be two: SP and AC)
-    const fieldDropdowns = screen.getAllByRole("combobox", { name: "Custom field" })
-    expect(fieldDropdowns.length).toBeGreaterThanOrEqual(1)
+    expect(screen.getByRole("combobox", { name: "Acceptance criteria field" })).toBeInTheDocument()
   })
 
-  it("switching from 'Text in description' to 'Custom field' calls onFieldMappingChange", () => {
+  it("switching from 'Text in description' to 'Custom field' sets acceptance_criteria_heading to null", () => {
     const onChange = vi.fn()
     render(
       <JiraFieldMappingSection
@@ -272,12 +322,14 @@ describe("JiraFieldMappingSection — Acceptance Criteria", () => {
     const modeSelect = screen.getByRole("combobox", { name: "How is it recorded?" })
     fireEvent.change(modeSelect, { target: { value: "custom_field" } })
 
-    expect(onChange).toHaveBeenCalled()
+    expect(onChange).toHaveBeenCalledOnce()
     const call = onChange.mock.calls[0][0] as {
       acceptance_criteria: string | null
       acceptance_criteria_heading: string | null
     }
     expect(call.acceptance_criteria_heading).toBeNull()
+    // No pre-selection: acceptance_criteria must not be a discovered field id
+    expect(call.acceptance_criteria).toBe("")
   })
 
   it("the Acceptance Criteria heading textbox shows an InfoTooltip", () => {
@@ -293,5 +345,31 @@ describe("JiraFieldMappingSection — Acceptance Criteria", () => {
     )
 
     expect(screen.getByRole("button", { name: /About heading text/i })).toBeInTheDocument()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// CustomFieldSelect — stale value handling
+// ---------------------------------------------------------------------------
+
+describe("JiraFieldMappingSection — stale field value", () => {
+  it("shows a '(not in discovered fields)' option when the stored id is absent from discovered list", async () => {
+    render(
+      <JiraFieldMappingSection
+        connectionId="conn-1"
+        fieldMappingValues={{ story_points: "customfield_99999" }}
+        onFieldMappingChange={() => undefined}
+      />,
+      { wrapper },
+    )
+
+    await waitFor(() => {
+      const select = screen.getByRole("combobox", { name: "Story points field" }) as HTMLSelectElement
+      expect(
+        Array.from(select.options).some((o) =>
+          o.text.includes("not in discovered fields"),
+        ),
+      ).toBe(true)
+    })
   })
 })
