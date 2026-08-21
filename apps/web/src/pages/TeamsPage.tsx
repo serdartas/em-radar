@@ -53,7 +53,7 @@ export function TeamsPage() {
         <CardContent className="p-4">
           <InlineCreateRow
             actionLabel={createMutation.isPending ? "Creating..." : "Create team"}
-            disabled={createMutation.isPending || name.trim().length === 0}
+            disabled={createMutation.isPending}
             inputId="team-name"
             label="New team name"
             onChange={setName}

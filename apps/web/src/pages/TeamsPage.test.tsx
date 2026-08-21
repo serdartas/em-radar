@@ -251,7 +251,11 @@ describe("TeamsPage — create form", () => {
     expect(input.tagName).toBe("INPUT")
     expect(input).toHaveClass("h-9")
 
-    // The create button is present and disabled when the input is empty
+    // Input must NOT be disabled when empty — the user needs to be able to type.
+    // (Pre-fix: disabled was forwarded to the Input too, blocking the first keystroke.)
+    expect(input).not.toBeDisabled()
+
+    // The create button IS disabled when the input is empty
     expect(screen.getByRole("button", { name: "Create team" })).toBeDisabled()
 
     // Typing a name enables the button

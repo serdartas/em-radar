@@ -61,7 +61,7 @@ export function SignalConfigGroupsPage() {
         <CardContent className="p-4">
           <InlineCreateRow
             actionLabel={createMutation.isPending ? "Creating..." : "Create group"}
-            disabled={createMutation.isPending || name.trim().length === 0}
+            disabled={createMutation.isPending}
             inputId="group-name"
             label="New group name"
             onChange={setName}

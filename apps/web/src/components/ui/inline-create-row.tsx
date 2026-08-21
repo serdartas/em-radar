@@ -43,7 +43,7 @@ function InlineCreateRow({
           value={value}
         />
       </div>
-      <Button disabled={disabled} onClick={onAction} type="button">
+      <Button disabled={disabled || value.trim() === ""} onClick={onAction} type="button">
         {actionLabel}
       </Button>
     </div>

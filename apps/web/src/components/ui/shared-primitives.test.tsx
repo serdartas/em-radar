@@ -530,6 +530,51 @@ describe("InlineCreateRow", () => {
     )
     expect(screen.getByRole("button", { name: "Add" })).toBeInTheDocument()
   })
+
+  it("input is NOT disabled and button IS disabled when value is empty (user can type the first char)", () => {
+    render(
+      <InlineCreateRow
+        inputId="field"
+        label="Label"
+        onChange={vi.fn()}
+        onAction={vi.fn()}
+        value=""
+      />,
+    )
+    // Input must be interactive so the user can type
+    expect(screen.getByLabelText("Label")).not.toBeDisabled()
+    // Button must be disabled — nothing to submit yet
+    expect(screen.getByRole("button", { name: "Create" })).toBeDisabled()
+  })
+
+  it("button becomes enabled when value is non-empty", () => {
+    render(
+      <InlineCreateRow
+        inputId="field"
+        label="Label"
+        onChange={vi.fn()}
+        onAction={vi.fn()}
+        value="hello"
+      />,
+    )
+    expect(screen.getByLabelText("Label")).not.toBeDisabled()
+    expect(screen.getByRole("button", { name: "Create" })).not.toBeDisabled()
+  })
+
+  it("disables the input (and button) when disabled=true (busy/pending state)", () => {
+    render(
+      <InlineCreateRow
+        disabled
+        inputId="field"
+        label="Label"
+        onChange={vi.fn()}
+        onAction={vi.fn()}
+        value="hello"
+      />,
+    )
+    expect(screen.getByLabelText("Label")).toBeDisabled()
+    expect(screen.getByRole("button", { name: "Create" })).toBeDisabled()
+  })
 })
 
 // ---------------------------------------------------------------------------
