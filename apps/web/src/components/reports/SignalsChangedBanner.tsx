@@ -49,9 +49,12 @@ function signalsChanged(
     ) {
       return true
     }
+    // Null-normalize both sides: the API omits message_template when absent
+    // (undefined), but the snapshot stores null. Treat absent and null as equal
+    // so a never-set message_template does not falsely flag the banner.
     if (
       snapshot.message_template !== undefined &&
-      current.report_settings.message_template !== snapshot.message_template
+      (current.report_settings.message_template ?? null) !== snapshot.message_template
     ) {
       return true
     }

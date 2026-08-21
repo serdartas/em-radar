@@ -315,6 +315,85 @@ describe("SignalsChangedBanner extended field detection", () => {
 })
 
 // ---------------------------------------------------------------------------
+// message_template null-vs-absent normalization (false-positive regression)
+// ---------------------------------------------------------------------------
+
+describe("SignalsChangedBanner message_template null/absent normalization", () => {
+  // Snapshot stores null (Python None serialized); API may return the field absent (undefined).
+  it("does NOT false-positive when snapshot has null and current omits message_template", () => {
+    const snapshotWithNull: SnapshotSignal = {
+      ...snapshotSignal,
+      expression: { field: "days_blocked", op: "gt", value: 3 },
+      severity: "critical",
+      message_template: null,
+    }
+    // Current signal from API has no message_template property at all (absent = undefined).
+    const currentOmitted: SignalDefinition = {
+      ...matchingCurrentSignal,
+      expression: { field: "days_blocked", op: "gt", value: 3 },
+      report_settings: { severity: "critical", category: "delivery_flow" },
+      // message_template intentionally absent (not set, so undefined at runtime)
+    }
+    const { container } = render(
+      <SignalsChangedBanner
+        currentSignals={[currentOmitted]}
+        snapshotSignals={[snapshotWithNull]}
+      />,
+    )
+    expect(container.firstChild).toBeNull()
+  })
+
+  it("flags banner when message_template changes from null/absent to a real string", () => {
+    const snapshotWithNull: SnapshotSignal = {
+      ...snapshotSignal,
+      expression: {},
+      severity: "critical",
+      message_template: null,
+    }
+    const currentWithString: SignalDefinition = {
+      ...matchingCurrentSignal,
+      report_settings: {
+        severity: "critical",
+        category: "delivery_flow",
+        message_template: "Now there is a template",
+      },
+    }
+    render(
+      <SignalsChangedBanner
+        currentSignals={[currentWithString]}
+        snapshotSignals={[snapshotWithNull]}
+      />,
+    )
+    expect(
+      screen.getByText(/configuration of some signals changed since this run/i),
+    ).toBeInTheDocument()
+  })
+
+  it("flags banner when message_template changes from a real string back to null/absent", () => {
+    const snapshotWithString: SnapshotSignal = {
+      ...snapshotSignal,
+      expression: {},
+      severity: "critical",
+      message_template: "Old template",
+    }
+    // Current signal has no message_template (omitted = undefined, normalized to null).
+    const currentOmitted: SignalDefinition = {
+      ...matchingCurrentSignal,
+      report_settings: { severity: "critical", category: "delivery_flow" },
+    }
+    render(
+      <SignalsChangedBanner
+        currentSignals={[currentOmitted]}
+        snapshotSignals={[snapshotWithString]}
+      />,
+    )
+    expect(
+      screen.getByText(/configuration of some signals changed since this run/i),
+    ).toBeInTheDocument()
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Accessibility: role="status" on the Callout
 // ---------------------------------------------------------------------------
 
