@@ -20,7 +20,6 @@ export function SourceConnectionsPage() {
   const [editing, setEditing] = useState<SourceConnection | null>(null)
 
   const connections = connectionsQuery.data ?? []
-  const hasConnections = connections.length > 0
 
   return (
     <section aria-labelledby="page-title" className="space-y-8">
@@ -48,11 +47,13 @@ export function SourceConnectionsPage() {
           onCancel={() => setEditing(null)}
           onSaved={() => setEditing(null)}
         />
-      ) : hasConnections ? (
-        <AddConnectionPanel connectors={connectors} />
-      ) : (
-        <ConnectionForm connectors={connectors} />
-      )}
+      ) : connectionsQuery.isSuccess ? (
+        connections.length > 0 ? (
+          <AddConnectionPanel connectors={connectors} />
+        ) : (
+          <ConnectionForm connectors={connectors} />
+        )
+      ) : null}
     </section>
   )
 }

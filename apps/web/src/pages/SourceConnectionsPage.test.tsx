@@ -579,11 +579,25 @@ describe("SourceConnectionsPage", () => {
   // Progressive disclosure (M8.5-07)
   // ---------------------------------------------------------------------------
 
+  it("does not show the add form while the connections query is pending", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = typeof input === "string" ? input : input.toString()
+      if (url.endsWith("/api/connectors")) {
+        return Promise.resolve(jsonResponse([jiraConnector]))
+      }
+      return new Promise(() => {})
+    })
+    renderPage()
+
+    await screen.findByText(/Loading connections/)
+    expect(screen.queryByLabelText(/^Base URL/)).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/Connection name/)).not.toBeInTheDocument()
+  })
+
   it("shows the add form directly when there are no connections", async () => {
     mockApi()
     renderPage()
 
-    // Form fields are immediately accessible without any click
     expect(await screen.findByLabelText(/^Base URL/)).toBeInTheDocument()
     expect(screen.getByLabelText(/Connection name/)).toBeInTheDocument()
   })
@@ -611,18 +625,13 @@ describe("SourceConnectionsPage", () => {
     })
     renderPage()
 
-    // Connection is listed
     expect(await screen.findByText("Jira Prod")).toBeInTheDocument()
-
-    // Add form is hidden — no form fields yet
     expect(screen.queryByLabelText(/^Base URL/)).not.toBeInTheDocument()
     expect(screen.queryByLabelText(/Connection name/)).not.toBeInTheDocument()
 
-    // Reveal button is present
     const revealButton = screen.getByRole("button", { name: "Add connection" })
     expect(revealButton).toBeInTheDocument()
 
-    // Click reveal — form appears
     fireEvent.click(revealButton)
     expect(await screen.findByLabelText(/^Base URL/)).toBeInTheDocument()
   })
@@ -656,7 +665,6 @@ describe("SourceConnectionsPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }))
     expect(screen.queryByLabelText(/^Base URL/)).not.toBeInTheDocument()
-    // Reveal button is back
     expect(screen.getByRole("button", { name: "Add connection" })).toBeInTheDocument()
   })
 
