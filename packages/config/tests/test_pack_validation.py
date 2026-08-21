@@ -267,7 +267,10 @@ spec:
         load_signal_pack(yaml_text)
 
 
-def test_sprint_field_rejected_for_issue_entity_type() -> None:
+def test_sprint_field_with_valid_custom_operator_accepted_for_issue_entity_type() -> None:
+    # sprint_scope_added_pct is not in the issue entity-type fields dict; it is now
+    # silently accepted as a potential custom field when the operator is in the
+    # custom-field allowlist. Built-in sprint validation is the evaluator's concern.
     yaml_text = EXPRESSION_PACK_TEMPLATE.format(
         entity_type="issue",
         field="sprint_scope_added_pct",
@@ -275,8 +278,21 @@ def test_sprint_field_rejected_for_issue_entity_type() -> None:
         value=10,
     )
     ctx = PackValidationContext(signal_schemas=(JiraConnector.describe_signal_schema(),))
+    # Should not raise — treated as a custom field with a valid operator.
+    load_signal_pack(yaml_text, ctx)
 
-    with pytest.raises(PackValidationError, match="sprint_scope_added_pct"):
+
+def test_unknown_field_with_disallowed_operator_rejected() -> None:
+    # An operator not in the custom-field allowlist (is_before) must still be rejected.
+    yaml_text = EXPRESSION_PACK_TEMPLATE.format(
+        entity_type="issue",
+        field="jira_private_priority",
+        operator="is_before",
+        value="some-value",
+    )
+    ctx = PackValidationContext(signal_schemas=(JiraConnector.describe_signal_schema(),))
+
+    with pytest.raises(PackValidationError, match="jira_private_priority"):
         load_signal_pack(yaml_text, ctx)
 
 
