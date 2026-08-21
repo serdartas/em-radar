@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { apiErrorMessage } from "@/lib/api"
 import { getConnectors, type SignalField } from "@/lib/connectors"
+import { listConnections, listJiraFields } from "@/lib/connections"
 import {
   createSignalDefinition,
   deleteSignalDefinition,
@@ -23,7 +24,17 @@ export function SignalSettingsPage() {
     queryFn: listSignalDefinitions,
   })
   const connectorsQuery = useQuery({ queryKey: ["connectors"], queryFn: getConnectors })
+  const connectionsQuery = useQuery({ queryKey: ["connections"], queryFn: listConnections })
   const [creating, setCreating] = useState(false)
+
+  // Find the first Jira connection so we can fetch its discovered custom fields.
+  const jiraConnectionId = connectionsQuery.data?.find((c) => c.connector_name === "jira")?.id
+  const jiraFieldsQuery = useQuery({
+    queryKey: ["jiraFields", jiraConnectionId],
+    queryFn: () => listJiraFields(jiraConnectionId!),
+    enabled: !!jiraConnectionId,
+  })
+  const jiraCustomFields = (jiraFieldsQuery.data ?? []).filter((f) => f.custom)
 
   // Build fieldsByEntityType from all registered connector schemas.
   // issue fields come from Jira; merge_request fields come from GitLab.
@@ -52,7 +63,7 @@ export function SignalSettingsPage() {
     },
   })
 
-  if (definitionsQuery.isLoading || connectorsQuery.isLoading) {
+  if (definitionsQuery.isLoading || connectorsQuery.isLoading || connectionsQuery.isLoading) {
     return <p className="text-sm text-slate-500">Loading signals...</p>
   }
 
@@ -100,6 +111,7 @@ export function SignalSettingsPage() {
               : null
           }
           fieldsByEntityType={fieldsByEntityType}
+          jiraCustomFields={jiraCustomFields}
           onCancel={() => setCreating(false)}
           onSave={(definition) => createMutation.mutate(definition)}
           pending={createMutation.isPending}

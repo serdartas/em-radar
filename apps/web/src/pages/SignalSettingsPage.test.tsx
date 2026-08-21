@@ -118,6 +118,9 @@ function mockApi(options: { duplicateName?: boolean } = {}) {
     if (url.endsWith("/api/connectors")) {
       return Promise.resolve(jsonResponse(connectors))
     }
+    if (url.endsWith("/api/connections") && method === "GET") {
+      return Promise.resolve(jsonResponse([]))
+    }
     if (url.endsWith("/api/signal-definitions") && method === "POST") {
       if (options.duplicateName) {
         return Promise.resolve(
@@ -292,6 +295,9 @@ describe("SignalSettingsPage", () => {
       }
       if (url.endsWith("/api/connectors")) {
         return Promise.resolve(jsonResponse([connectors[1]])) // GitLab only
+      }
+      if (url.endsWith("/api/connections") && method === "GET") {
+        return Promise.resolve(jsonResponse([]))
       }
       if (url.endsWith("/api/signal-definitions") && method === "POST") {
         return Promise.resolve(jsonResponse({ id: "signal-1", ...JSON.parse(String(init?.body)) }))

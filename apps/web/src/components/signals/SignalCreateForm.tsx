@@ -11,6 +11,8 @@ import { Label } from "@/components/ui/label"
 import { Select } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import type { SignalField } from "@/lib/connectors"
+import type { JiraFieldInfo } from "@/lib/connections"
+import { humanizeOperator } from "@/lib/operatorLabels"
 import { SEVERITIES, type Severity } from "@/lib/severity"
 import type { SignalDefinitionCreate } from "@/lib/signalDefinitions"
 
@@ -20,6 +22,9 @@ const SIGNAL_TYPES = [
   { value: "merge_request", label: "Merge requests (GitLab)" },
 ]
 const CATEGORIES = ["flow", "hygiene", "quality", "sprint"]
+
+// Sentinel key used when the user selects "Custom field" before picking a specific field.
+const CUSTOM_FIELD_KEY = "__custom__"
 
 type Connector = "" | "AND" | "OR"
 
@@ -31,6 +36,8 @@ interface RuleRow {
 
 interface SignalCreateFormProps {
   fieldsByEntityType: Record<string, SignalField[]>
+  /** Discovered Jira custom fields, used to drive the custom-field picker and operator/value controls. */
+  jiraCustomFields?: JiraFieldInfo[]
   onCancel: () => void
   onSave: (definition: SignalDefinitionCreate) => void
   pending: boolean
@@ -39,6 +46,7 @@ interface SignalCreateFormProps {
 
 export function SignalCreateForm({
   fieldsByEntityType,
+  jiraCustomFields = [],
   onCancel,
   onSave,
   pending,
@@ -53,15 +61,25 @@ export function SignalCreateForm({
   const [category, setCategory] = useState(CATEGORIES[0])
   const [message, setMessage] = useState("")
 
-  const fields = fieldsByEntityType[entityType] ?? []
-  const firstField = fields[0]
+  // Built-in fields sorted by label, with "Custom field" appended at the end.
+  // The "Custom field" entry is only added for the issue entity type because Jira custom
+  // fields are not relevant to merge_request signals.
+  const sortedBuiltinFields = [...(fieldsByEntityType[entityType] ?? [])].sort((a, b) =>
+    a.label.localeCompare(b.label),
+  )
+  const showCustomFieldOption = entityType === "issue" && jiraCustomFields.length > 0
+  const sortedCustomFields = [...jiraCustomFields].sort((a, b) => a.name.localeCompare(b.name))
+
+  const firstField = sortedBuiltinFields[0]
 
   const [rows, setRows] = useState<RuleRow[]>([makeRow(firstField)])
 
   function handleEntityTypeChange(newType: string) {
     setEntityType(newType)
     setGroupOperator("")
-    const newFields = fieldsByEntityType[newType] ?? []
+    const newFields = [...(fieldsByEntityType[newType] ?? [])].sort((a, b) =>
+      a.label.localeCompare(b.label),
+    )
     setRows([makeRow(newFields[0])])
   }
 
@@ -70,13 +88,24 @@ export function SignalCreateForm({
   }
 
   function changeField(index: number, key: string) {
-    const field = fieldByKey(fields, key)
+    if (key === CUSTOM_FIELD_KEY) {
+      // User clicked "Custom field" — wait for the second picker selection.
+      updateRow(index, { field: CUSTOM_FIELD_KEY, operator: "is", value: "" })
+      return
+    }
+    const field = resolveField(key, sortedBuiltinFields, jiraCustomFields)
     const operator = field?.operators[0] ?? "is"
     updateRow(index, { field: key, operator, value: defaultValueForRule(field, operator) })
   }
 
+  function changeCustomField(index: number, jiraFieldId: string) {
+    const field = resolveField(jiraFieldId, sortedBuiltinFields, jiraCustomFields)
+    const operator = field?.operators[0] ?? "is"
+    updateRow(index, { field: jiraFieldId, operator, value: defaultValueForRule(field, operator) })
+  }
+
   function changeOperator(index: number, operator: string) {
-    const field = fieldByKey(fields, rows[index].field)
+    const field = resolveField(rows[index].field, sortedBuiltinFields, jiraCustomFields)
     updateRow(index, { operator, value: defaultValueForRule(field, operator) })
   }
 
@@ -153,7 +182,9 @@ export function SignalCreateForm({
 
           <ul className="space-y-2">
             {rows.map((row, index) => {
-              const field = fieldByKey(fields, row.field)
+              const isUsingCustomField = isCustomFieldRow(row.field, sortedBuiltinFields)
+              const field = resolveField(row.field, sortedBuiltinFields, jiraCustomFields)
+              const fieldSelectValue = isUsingCustomField ? CUSTOM_FIELD_KEY : row.field
               const isLast = index === rows.length - 1
               return (
                 <li
@@ -165,15 +196,42 @@ export function SignalCreateForm({
                     <Select
                       id={`rule-field-${index}`}
                       onChange={(event) => changeField(index, event.target.value)}
-                      value={row.field}
+                      value={fieldSelectValue}
                     >
-                      {fields.map((option) => (
+                      {sortedBuiltinFields.map((option) => (
                         <option key={option.key} value={option.key}>
                           {option.label}
                         </option>
                       ))}
+                      {showCustomFieldOption && (
+                        <option value={CUSTOM_FIELD_KEY}>Custom field</option>
+                      )}
                     </Select>
                   </div>
+
+                  {/* Second picker: revealed only when "Custom field" is active */}
+                  {isUsingCustomField && (
+                    <div className="min-w-40 flex-1 space-y-1.5">
+                      <Label htmlFor={`rule-custom-field-${index}`}>Jira field</Label>
+                      <Select
+                        id={`rule-custom-field-${index}`}
+                        onChange={(event) => changeCustomField(index, event.target.value)}
+                        value={row.field === CUSTOM_FIELD_KEY ? "" : row.field}
+                      >
+                        {row.field === CUSTOM_FIELD_KEY && (
+                          <option disabled value="">
+                            Choose a field...
+                          </option>
+                        )}
+                        {sortedCustomFields.map((jf) => (
+                          <option key={jf.id} value={jf.id}>
+                            {jf.name} ({jf.id})
+                          </option>
+                        ))}
+                      </Select>
+                    </div>
+                  )}
+
                   <div className="min-w-36 flex-1 space-y-1.5">
                     <Label htmlFor={`rule-operator-${index}`}>Operator</Label>
                     <Select
@@ -183,7 +241,7 @@ export function SignalCreateForm({
                     >
                       {(field?.operators ?? []).map((operator) => (
                         <option key={operator} value={operator}>
-                          {operator}
+                          {humanizeOperator(operator)}
                         </option>
                       ))}
                     </Select>
@@ -305,13 +363,76 @@ export function SignalCreateForm({
   )
 }
 
+// ---------------------------------------------------------------------------
+// Custom-field helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns true when the given field key represents a discovered Jira custom field
+ * (i.e. it is not a built-in field key and is not the sentinel CUSTOM_FIELD_KEY).
+ */
+function isCustomFieldRow(field: string, builtins: SignalField[]): boolean {
+  return field === CUSTOM_FIELD_KEY || (field !== "" && !builtins.some((f) => f.key === field))
+}
+
+/**
+ * Derives operator and allowed values for a Jira custom field from its field_type.
+ * Returned as a partial SignalField so it can be used directly by RuleValueControl.
+ */
+function customFieldToSignalField(jiraField: JiraFieldInfo): SignalField {
+  const { operators, values } = operatorsForJiraFieldType(jiraField.field_type)
+  return {
+    key: jiraField.id,
+    label: jiraField.name,
+    type: jiraField.field_type ?? "string",
+    operators,
+    values,
+    value_provider: null,
+    availability: null,
+    entity_type: "issue",
+  }
+}
+
+function operatorsForJiraFieldType(fieldType: string | null): {
+  operators: string[]
+  values: unknown[]
+} {
+  switch (fieldType) {
+    case "number":
+      return { operators: ["is", "greater_than", "less_than"], values: [] }
+    case "string":
+      return { operators: ["is_empty", "is_not_empty"], values: [] }
+    case "option":
+    case "array":
+      return { operators: ["is", "is_not"], values: [] }
+    default:
+      return { operators: ["is", "is_not", "is_empty", "is_not_empty"], values: [] }
+  }
+}
+
+/**
+ * Resolves a SignalField for a given field key, checking built-in fields first
+ * and falling back to synthesising one from discovered Jira custom field metadata.
+ */
+function resolveField(
+  key: string,
+  builtins: SignalField[],
+  jiraCustomFields: JiraFieldInfo[],
+): SignalField | undefined {
+  const builtin = builtins.find((f) => f.key === key)
+  if (builtin) return builtin
+  const jiraField = jiraCustomFields.find((f) => f.id === key)
+  if (jiraField) return customFieldToSignalField(jiraField)
+  return undefined
+}
+
+// ---------------------------------------------------------------------------
+// Row / expression helpers
+// ---------------------------------------------------------------------------
+
 function makeRow(field: SignalField | undefined): RuleRow {
   const operator = field?.operators[0] ?? "is"
   return { field: field?.key ?? "", operator, value: defaultValueForRule(field, operator) }
-}
-
-function fieldByKey(fields: SignalField[], key: string): SignalField | undefined {
-  return fields.find((field) => field.key === key)
 }
 
 function buildExpression(rows: RuleRow[], groupOperator: Connector): Record<string, unknown> {
