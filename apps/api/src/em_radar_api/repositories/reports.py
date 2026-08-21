@@ -5,7 +5,12 @@ from uuid import UUID
 
 from sqlmodel import Session, delete, desc, select
 
-from em_radar_api.tables import EvaluationWindowTable, ReportJobTable, ReportTable, SignalFindingTable
+from em_radar_api.tables import (
+    EvaluationWindowTable,
+    ReportJobTable,
+    ReportTable,
+    SignalFindingTable,
+)
 
 
 def create_report(session: Session, report: ReportTable) -> ReportTable:

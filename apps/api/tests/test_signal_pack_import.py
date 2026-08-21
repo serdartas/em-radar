@@ -133,8 +133,8 @@ spec:
         operator: all
         conditions:
           - field: jira_private_priority
-            operator: is
-            value: High
+            operator: is_before
+            value: some-value
       report_settings:
         severity: warning
         category: flow

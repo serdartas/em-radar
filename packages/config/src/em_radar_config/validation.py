@@ -28,6 +28,18 @@ _SEMVER_PATTERN = re.compile(
 )
 _TEMPLATE_PATTERN = re.compile(r"\$\{[^}]+\}|\{\{.*?\}\}|<%.*?%>")
 _EXECUTABLE_PATTERN = re.compile(r"^(?:#!|javascript:)|\b(?:eval|exec)\s*\(", re.IGNORECASE)
+_CUSTOM_FIELD_OPERATORS: frozenset[str] = frozenset(
+    {
+        "is",
+        "is_not",
+        "greater_than",
+        "less_than",
+        "is_empty",
+        "is_not_empty",
+        "contains",
+        "does_not_contain",
+    }
+)
 _REMOTE_URL_PATTERN = re.compile(r"^(?:https?|ftp)://", re.IGNORECASE)
 _MAX_ALIASES = 20
 
@@ -243,7 +255,6 @@ def rules_to_expression(rules: list[dict[str, object]]) -> dict[str, object]:
     return {"type": "group", "operator": group_operator, "conditions": conditions}
 
 
-
 def _resolve_signal_expression(signal: SignalEntry) -> dict[str, object] | None:
     """Convert rules list to expression dict, or return expression directly."""
     if signal.rules is not None:
@@ -338,7 +349,11 @@ def _validate_expression_node(
         raise PackValidationError(f"{path} requires field and operator")
     field_schema = fields.get(field_key)
     if field_schema is None:
-        raise PackValidationError(f"{path}.field {field_key!r} is not supported")
+        # Unknown field: accept as a custom field if the operator is in the allowed set,
+        # so export→import round-trips for custom-field signals work correctly.
+        if operator not in _CUSTOM_FIELD_OPERATORS:
+            raise PackValidationError(f"{path}.field {field_key!r} is not supported")
+        return
     if operator not in field_schema.operators:
         raise PackValidationError(f"{path}.operator {operator!r} is not valid for {field_key!r}")
     if operator in {"is_empty", "is_not_empty"}:

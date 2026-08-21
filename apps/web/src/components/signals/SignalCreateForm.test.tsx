@@ -302,3 +302,36 @@ describe("SignalCreateForm — humanized operator labels", () => {
     expect(call.expression.conditions[0].operator).toBe("greater_than")
   })
 })
+
+// ---------------------------------------------------------------------------
+// Sentinel guard: Save disabled while __custom__ is unresolved
+// ---------------------------------------------------------------------------
+
+describe("SignalCreateForm — sentinel guard", () => {
+  it("Save is disabled when 'Custom field' is selected but no concrete field is chosen", () => {
+    renderForm({ jiraCustomFields: JIRA_CUSTOM_FIELDS })
+
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "My signal" } })
+    fireEvent.change(screen.getByLabelText("Field"), { target: { value: "__custom__" } })
+
+    const saveButton = screen.getByRole("button", { name: "Save signal" })
+    expect(saveButton).toBeDisabled()
+  })
+
+  it("Save is enabled once a concrete custom field is chosen after the sentinel", () => {
+    renderForm({ jiraCustomFields: JIRA_CUSTOM_FIELDS })
+
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "My signal" } })
+    fireEvent.change(screen.getByLabelText("Field"), { target: { value: "__custom__" } })
+
+    // Save still disabled at sentinel
+    expect(screen.getByRole("button", { name: "Save signal" })).toBeDisabled()
+
+    // Pick a concrete Jira field
+    fireEvent.change(screen.getByLabelText("Jira field"), {
+      target: { value: "customfield_10001" },
+    })
+
+    expect(screen.getByRole("button", { name: "Save signal" })).not.toBeDisabled()
+  })
+})

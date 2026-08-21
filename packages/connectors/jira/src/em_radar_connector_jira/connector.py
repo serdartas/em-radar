@@ -355,10 +355,22 @@ class JiraConnector:
         scope: WorkItemScope,
         window: EvaluationWindow,
     ) -> AsyncIterator[WorkItem]:
+        requested = list(scope.custom_field_ids)
+        custom_field_types: dict[str, str | None] = {}
+        if requested:
+            try:
+                all_fields = await self.discover_fields()
+                custom_field_types = {
+                    f.id: f.field_type for f in all_fields if f.custom and f.id in requested
+                }
+            except Exception:
+                requested = []
+                custom_field_types = {}
+
         async for payload in self._request_paginated_issues(
             params={
                 "jql": _workitem_jql(scope, window),
-                "fields": ",".join(_issue_fields(self.config.field_mapping)),
+                "fields": ",".join(_issue_fields(self.config.field_mapping, requested)),
                 "expand": "changelog",
             }
         ):
@@ -380,7 +392,12 @@ class JiraConnector:
                     except ConnectorDataError:
                         pass
 
-            workitem = _workitem_from_payload(payload, self._base_url, self.config.field_mapping)
+            workitem = _workitem_from_payload(
+                payload,
+                self._base_url,
+                self.config.field_mapping,
+                custom_field_types=custom_field_types,
+            )
             if _workitem_in_window(workitem, window):
                 yield workitem
 
@@ -783,6 +800,7 @@ def _workitem_from_payload(
     payload: Mapping[str, object],
     base_url: str,
     field_mapping: JiraFieldMappingConfig,
+    custom_field_types: Mapping[str, str | None] | None = None,
 ) -> WorkItem:
     external_id = _required_str(payload, "id", "issue")
     key = _required_str(payload, "key", "issue")
@@ -824,6 +842,7 @@ def _workitem_from_payload(
         current_sprint_id=_current_sprint_id(sprints),
         created_at=_parse_datetime(_optional_str(fields, "created")),
         updated_at=_parse_datetime(_optional_str(fields, "updated")),
+        custom_fields=_custom_fields_from_payload(fields, custom_field_types or {}, field_mapping),
     )
 
 
@@ -1087,7 +1106,10 @@ def _acceptance_criteria(
     return _section_after_heading(description, heading)
 
 
-def _issue_fields(field_mapping: JiraFieldMappingConfig) -> tuple[str, ...]:
+def _issue_fields(
+    field_mapping: JiraFieldMappingConfig,
+    custom_field_ids: Sequence[str] = (),
+) -> tuple[str, ...]:
     configurable_fields = [
         field_mapping.story_points,
         field_mapping.acceptance_criteria,
@@ -1096,6 +1118,9 @@ def _issue_fields(field_mapping: JiraFieldMappingConfig) -> tuple[str, ...]:
     for field_name in configurable_fields:
         if field_name is not None and field_name not in fields:
             fields.append(field_name)
+    for field_id in custom_field_ids:
+        if field_id not in fields:
+            fields.append(field_id)
     return tuple(fields)
 
 
@@ -1160,6 +1185,73 @@ def _number_or_none(value: object, field_name: str) -> float | None:
     if isinstance(value, int | float) and not isinstance(value, bool):
         return float(value)
     raise ConnectorDataError(f"Jira issue {field_name} field was invalid")
+
+
+def _custom_fields_from_payload(
+    fields: Mapping[str, object],
+    custom_field_types: Mapping[str, str | None],
+    field_mapping: JiraFieldMappingConfig,
+) -> dict[str, object]:
+    """Coerce requested custom fields from a Jira issue fields payload.
+
+    Built-in-consumed ids (story_points, sprint, acceptance_criteria) are excluded.
+    Missing or None values are omitted. No field values are logged.
+    """
+    builtin_consumed = {_SPRINT_FIELD, field_mapping.story_points}
+    if field_mapping.acceptance_criteria is not None:
+        builtin_consumed.add(field_mapping.acceptance_criteria)
+
+    result: dict[str, object] = {}
+    for field_id, field_type in custom_field_types.items():
+        if field_id in builtin_consumed:
+            continue
+        raw = fields.get(field_id)
+        if raw is None:
+            continue
+        coerced = _coerce_custom_field(raw, field_type)
+        if coerced is not None:
+            result[field_id] = coerced
+    return result
+
+
+def _coerce_custom_field(raw: object, field_type: str | None) -> object:
+    """Coerce a raw Jira custom-field value to a canonical Python type.
+
+    Returns None when the value cannot be coerced (caller omits the key).
+    """
+    if raw is None:
+        return None
+    if field_type == "number":
+        if isinstance(raw, bool):
+            return None
+        if isinstance(raw, (int, float)):
+            return float(raw)
+        return None
+    if field_type in {"string", "text"}:
+        value = str(raw).strip()
+        return value if value else None
+    if field_type == "option":
+        if isinstance(raw, Mapping):
+            opt_value = raw.get("value")
+            return str(opt_value).strip() if opt_value is not None else None
+        return str(raw).strip() or None
+    if field_type == "array":
+        if not isinstance(raw, list):
+            return None
+        items: list[str] = []
+        for item in raw:
+            if item is None:
+                continue
+            if isinstance(item, Mapping):
+                item_value = item.get("value")
+                if item_value is not None:
+                    items.append(str(item_value))
+            else:
+                items.append(str(item))
+        return items if items else None
+    if isinstance(raw, (str, int, float)) and not isinstance(raw, bool):
+        return raw
+    return None
 
 
 def _sprints_from_field(value: object) -> list[tuple[UUID, SprintState | None]]:

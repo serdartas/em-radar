@@ -121,7 +121,10 @@ export function SignalCreateForm({
     setRows((prev) => prev.filter((_, current) => current !== index))
   }
 
-  const canSave = name.trim().length > 0 && !pending
+  // A row still on the sentinel means the user opened "Custom field" but hasn't
+  // chosen a concrete field yet — block save so no sentinel leaks into the expression.
+  const hasSentinelRow = rows.some((row) => row.field === CUSTOM_FIELD_KEY)
+  const canSave = name.trim().length > 0 && !pending && !hasSentinelRow
 
   function save() {
     if (!canSave) {

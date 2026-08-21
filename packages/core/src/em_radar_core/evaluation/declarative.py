@@ -67,6 +67,19 @@ _FIELD_CONNECTOR_CAPABILITY_MAP: dict[str, tuple[str, str]] = {
     ),
 }
 
+_CUSTOM_FIELD_OPERATORS: frozenset[str] = frozenset(
+    {
+        "is",
+        "is_not",
+        "greater_than",
+        "less_than",
+        "is_empty",
+        "is_not_empty",
+        "contains",
+        "does_not_contain",
+    }
+)
+
 
 class ExpressionValidationError(ValueError):
     pass
@@ -524,21 +537,27 @@ def _validate_condition(
     operator = condition.get("operator")
     if not isinstance(field_key, str) or not isinstance(operator, str):
         raise ExpressionValidationError("conditions require field and operator")
-    field_schema = _field_schema(schema, field_key)
-    if operator not in field_schema.operators:
-        raise ExpressionValidationError(f"{operator} is not valid for {field_key}")
-    required = (
-        field_schema.availability.requires_scope_capability
-        if field_schema.availability is not None
-        else ()
-    )
-    for scope in scopes:
-        missing = set(required).difference(scope.capabilities)
-        if missing:
-            missing_list = ", ".join(sorted(missing))
-            raise ExpressionValidationError(
-                f"{field_key} requires scope capability: {missing_list}"
-            )
+    # Check built-in fields first (collision guard).
+    field_schema = _field_schema_or_none(schema, field_key)
+    if field_schema is not None:
+        if operator not in field_schema.operators:
+            raise ExpressionValidationError(f"{operator} is not valid for {field_key}")
+        required = (
+            field_schema.availability.requires_scope_capability
+            if field_schema.availability is not None
+            else ()
+        )
+        for scope in scopes:
+            missing = set(required).difference(scope.capabilities)
+            if missing:
+                missing_list = ", ".join(sorted(missing))
+                raise ExpressionValidationError(
+                    f"{field_key} requires scope capability: {missing_list}"
+                )
+    else:
+        # Unknown field: treat as a custom field.
+        if operator not in _CUSTOM_FIELD_OPERATORS:
+            raise ExpressionValidationError(f"{operator} is not valid for custom field {field_key}")
 
 
 def _evaluate_group(
@@ -650,7 +669,7 @@ def _field_value(
         return _sprint_phase(workitem, data, ctx)
     if field_key == "sprint_count":
         return len(tuple(dict.fromkeys(workitem.sprint_ids)))
-    raise ExpressionValidationError(f"unsupported field: {field_key}")
+    return workitem.custom_fields.get(field_key)
 
 
 def _evaluate_mr_group(
@@ -843,11 +862,18 @@ def _compare(observed: object, operator: str, expected: object) -> bool:
     return False
 
 
-def _field_schema(schema: SignalCapabilitySchema, field_key: str) -> SignalField:
+def _field_schema_or_none(schema: SignalCapabilitySchema, field_key: str) -> SignalField | None:
     for field_schema in schema.fields:
         if field_schema.key == field_key:
             return field_schema
-    raise ExpressionValidationError(f"unknown field: {field_key}")
+    return None
+
+
+def _field_schema(schema: SignalCapabilitySchema, field_key: str) -> SignalField:
+    result = _field_schema_or_none(schema, field_key)
+    if result is None:
+        raise ExpressionValidationError(f"unknown field: {field_key}")
+    return result
 
 
 def _workitems_for_scope(data: SignalData, scope: ScopeDescriptor) -> list[WorkItem]:

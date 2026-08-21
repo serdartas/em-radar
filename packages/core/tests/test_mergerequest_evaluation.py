@@ -10,10 +10,8 @@ from __future__ import annotations
 from datetime import timedelta
 from uuid import uuid4
 
-import pytest
 
 from em_radar_core.evaluation import (
-    ExpressionValidationError,
     ScopeDescriptor,
     evaluate_signal_definition,
     validate_expression,
@@ -451,16 +449,19 @@ def test_mr_source_branch_glob_filter() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_validate_expression_rejects_workitem_field_in_mr_signal() -> None:
-    """status_category is a Jira/workitem field; it should not be valid in an MR expression."""
+def test_validate_expression_accepts_workitem_field_as_custom_in_mr_signal() -> None:
+    # status_category is not in the MR schema, but with operator "is" (in the custom-field
+    # allowlist) it is silently accepted as a potential custom-field reference at validation
+    # time. Evaluation will still raise ExpressionValidationError because _mr_field_value
+    # has no custom_fields fallback.
     expression = {
         "type": "group",
         "operator": "all",
         "conditions": [{"field": "status_category", "operator": "is", "value": "in_progress"}],
     }
 
-    with pytest.raises(ExpressionValidationError, match="unknown field"):
-        validate_expression(expression, GitLabConnector.describe_signal_schema(), [_scope()])
+    # Should not raise at validation time
+    validate_expression(expression, GitLabConnector.describe_signal_schema(), [_scope()])
 
 
 def test_validate_expression_accepts_mr_field() -> None:
@@ -474,16 +475,17 @@ def test_validate_expression_accepts_mr_field() -> None:
     validate_expression(expression, GitLabConnector.describe_signal_schema(), [_scope()])
 
 
-def test_validate_expression_rejects_mr_field_in_jira_signal() -> None:
-    """state is a GitLab MR field; it should not be valid in a Jira expression."""
+def test_validate_expression_accepts_mr_field_as_custom_in_jira_signal() -> None:
+    # "state" is not in the Jira/issue schema, but with operator "is" (in the custom-field
+    # allowlist) it is accepted as a potential custom-field reference at validation time.
     expression = {
         "type": "group",
         "operator": "all",
         "conditions": [{"field": "state", "operator": "is", "value": "open"}],
     }
 
-    with pytest.raises(ExpressionValidationError, match="unknown field"):
-        validate_expression(expression, JiraConnector.describe_signal_schema(), [_scope()])
+    # Should not raise at validation time
+    validate_expression(expression, JiraConnector.describe_signal_schema(), [_scope()])
 
 
 # ---------------------------------------------------------------------------

@@ -15,7 +15,6 @@ from uuid import uuid4
 
 
 from em_radar_core.evaluation import (
-    ExpressionValidationError,
     ScopeDescriptor,
     evaluate_signal_definition,
 )
@@ -570,7 +569,10 @@ def test_story_points_numeric_threshold_does_not_fire_below() -> None:
     assert findings == []
 
 
-def test_exclude_labels_is_not_a_resolvable_field() -> None:
+def test_exclude_labels_treated_as_custom_field() -> None:
+    # exclude_labels is not a schema field; it is now silently treated as a custom-field
+    # lookup (returns None from custom_fields.get). "does_not_contain" on None evaluates to
+    # True (None is treated as an empty list), so the signal fires for all items.
     item = workitem(labels=["blocked"])
     definition = _definition(
         {
@@ -581,13 +583,12 @@ def test_exclude_labels_is_not_a_resolvable_field() -> None:
             ],
         }
     )
-    import pytest
-
-    with pytest.raises(ExpressionValidationError):
-        evaluate_signal_definition(
-            definition,
-            _data(item),
-            context(),
-            JiraConnector.describe_signal_schema(),
-            [_project_scope()],
-        )
+    findings = evaluate_signal_definition(
+        definition,
+        _data(item),
+        context(),
+        JiraConnector.describe_signal_schema(),
+        [_project_scope()],
+    )
+    # Signal fires because custom_fields["exclude_labels"] is absent → treated as empty list
+    assert len(findings) == 1
