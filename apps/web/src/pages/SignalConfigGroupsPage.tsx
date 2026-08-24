@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input"
 import { InlineCreateRow } from "@/components/ui/inline-create-row"
 import { Label } from "@/components/ui/label"
 import { Select } from "@/components/ui/select"
+import { apiErrorMessage } from "@/lib/api"
 import {
   createSignalConfigGroup,
   deleteSignalConfigGroup,
@@ -69,6 +70,14 @@ export function SignalConfigGroupsPage() {
             onAction={() => createMutation.mutate({ name: name.trim() })}
             value={name}
           />
+          {createMutation.isError && (
+            <p className="mt-2 text-sm text-red-700" role="alert">
+              {apiErrorMessage(
+                createMutation.error,
+                "Failed to create the group. Please try again.",
+              )}
+            </p>
+          )}
         </CardContent>
       </Card>
 

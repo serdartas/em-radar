@@ -422,3 +422,21 @@ spec:
     result = load_signal_pack(yaml_text)
 
     assert [warning.code for warning in result.warnings] == ["advisory-field-mappings"]
+
+
+def test_empty_signals_is_rejected() -> None:
+    yaml_text = VALID_PACK.split("  signals:")[0] + "  signals: []\n"
+    with pytest.raises(PackValidationError, match="spec.signals is missing or empty"):
+        load_signal_pack(yaml_text)
+
+
+def test_missing_signals_is_rejected() -> None:
+    yaml_text = VALID_PACK.split("  signals:")[0] + "  export_type: private_backup\n"
+    with pytest.raises(PackValidationError, match="spec.signals is missing or empty"):
+        load_signal_pack(yaml_text)
+
+
+def test_signal_without_name_is_rejected() -> None:
+    yaml_text = VALID_PACK.replace("    - name: stale-work\n", "    - description: nameless\n")
+    with pytest.raises(PackValidationError, match="missing a name"):
+        load_signal_pack(yaml_text)

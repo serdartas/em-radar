@@ -695,6 +695,46 @@ def test_fetch_mergerequests_no_pipeline_yields_none_status(
     asyncio.run(run())
 
 
+def test_fetch_mergerequests_reads_head_pipeline_from_detail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """GitLab's list endpoint omits head_pipeline; it must be read from the detail response."""
+
+    async def run() -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            if _is_mr_detail_path(request.url.path):
+                detail = _mr_detail_response()
+                detail["head_pipeline"] = {
+                    "id": 77,
+                    "status": "success",
+                    "updated_at": "2026-05-10T11:00:00Z",
+                }
+                return httpx.Response(200, json=detail)
+            if request.url.path.endswith("/approvals"):
+                return httpx.Response(200, json=_approvals_response([]))
+            return httpx.Response(
+                200,
+                headers={"X-Next-Page": ""},
+                # The list endpoint does not carry head_pipeline in reality.
+                json=[_mr_payload(head_pipeline=None)],
+            )
+
+        connector = _make_connector(monkeypatch, handler)
+        mrs = await _collect(
+            connector.fetch_mergerequests(
+                MergeRequestScope(repository_external_ids=["gitlab.example.com/101"]),
+                _date_window(),
+            )
+        )
+        await connector.close()
+
+        assert len(mrs) == 1
+        assert mrs[0].pipeline_status is PipelineStatus.SUCCESS
+        assert mrs[0].pipeline_updated_at is not None
+
+    asyncio.run(run())
+
+
 # ---------------------------------------------------------------------------
 # Diff stats — sourced from the single-MR detail endpoint
 # ---------------------------------------------------------------------------

@@ -311,7 +311,7 @@ A persisted runnable signal or template-derived signal. It is structured data, n
 | `id` | UUID | no | |
 | `name` | string | no | Unique within the local workspace. |
 | `description` | text | yes | |
-| `entity_type` | string | no | Canonical entity type. In MVP, `issue` is work tracking and `merge_request` is code repository. |
+| `entity_type` | string | no | Canonical entity type. In MVP, `issue` is work tracking, `merge_request` is code repository, and `sprint` is for sprint-scope signals. |
 | `expression` | JSON | no | Rule expression tree from the signal YAML spec. |
 | `report_settings` | JSON | no | Severity, category, and optional message template. |
 | `origin` | enum | no | `system_template`, `user_created`, or `imported`. |

@@ -36,9 +36,9 @@ connectors provide access, teams own the board scope, and a pack is just the rul
 - **Signal Config Group.** The in-app entity a pack maps to: a reusable bundle of signals, attached to any number of teams. See [data model §5.12C](./05-data-model.md#512c-signalconfiggroup).
 - **Template.** A pre-authored signal definition shipped with the application (the default pack). A template seeds a signal in a group; it is configuration, not executable code, and carries no privileged behavior — a user can recreate the same signal from scratch. Templates are catalogued in §12.
 - **Signal.** A named, structured rule expression over one signal entity type, carrying its own
-  configuration (params, severity). In MVP, `issue` belongs to the work-tracking
+  configuration (params, severity). In MVP, `issue` and `sprint` belong to the work-tracking
   domain — the **task-board source** — and `merge_request` belongs to the code-repository domain —
-  the **code source**. These entity types line up 1:1 with the two team sources of the same names
+  the **code source**. Each entity type is supplied by one of the two team sources
   ([data model §5.12](./05-data-model.md#512-teamprofile)). A signal selects neither a connection nor
   a project, board, or repository; the team supplies compatible source data at report time.
   Cross-domain signals are deferred until after MVP.
@@ -160,9 +160,9 @@ therefore **never** carry:
 - **Teams.** Team membership and group↔team attachments are local configuration, not part of a
   portable pack.
 
-A signal declares exactly one `entity_type` in MVP (`issue` for work tracking or `merge_request`
-for code repository). When a group is attached to a team, only signals whose entity type the
-team's attached sources can supply are evaluated.
+A signal declares exactly one `entity_type` in MVP (`issue` for work tracking, `merge_request`
+for code repository, or `sprint` for sprint-scope signals). When a group is attached to a team,
+only signals whose entity type the team's attached sources can supply are evaluated.
 
 ## 7. Signal Config Group Mapping
 
@@ -226,7 +226,7 @@ to which a group is attached.
 | `id` | string | yes | Stable local signal id. |
 | `name` | string | yes | Human-readable name, unique in the local workspace. |
 | `description` | string | no | Shown in the builder and reports. |
-| `entity_type` | string | yes | Exactly one signal entity type in MVP: `issue` (work tracking) or `merge_request` (code repository). |
+| `entity_type` | string | yes | Exactly one signal entity type in MVP: `issue` (work tracking), `merge_request` (code repository), or `sprint` (sprint-scope signals). |
 | `rules` | list | yes | Flat list of rule conditions. See §10. |
 | `report_settings` | object | yes | Severity, category, and optional message template. |
 | `origin` | enum | yes | `system_template`, `user_created`, or `imported`. |

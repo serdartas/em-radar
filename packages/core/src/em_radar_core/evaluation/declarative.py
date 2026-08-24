@@ -406,14 +406,16 @@ def _sprint_scope_churn(
     sprint_items = [wi for wi in data.workitems if sprint.id in wi.sprint_ids]
     if not sprint_items:
         return None
+    now = _as_utc(ctx.now)
+    start = _as_utc(sprint.start_date)
     original = 0
     valid_count = 0
     for wi in sprint_items:
         first_seen = _first_seen_at(wi, data)
-        if first_seen is None or first_seen > ctx.now:
+        if first_seen is None or first_seen > now:
             continue  # unknown or future-dated — exclude from both numerator and denominator
         valid_count += 1
-        if first_seen <= sprint.start_date:
+        if first_seen <= start:
             original += 1
     added = valid_count - original
     if original == 0:
@@ -430,7 +432,7 @@ def _first_seen_at(wi: WorkItem, data: SignalData) -> datetime | None:
         candidates.append(wi.created_at)
     if not candidates:
         return None
-    return min(candidates)
+    return min(_as_utc(candidate) for candidate in candidates)
 
 
 def preview_signal_definition(
@@ -827,7 +829,9 @@ def _compare(observed: object, operator: str, expected: object) -> bool:
     ):
         return False
     if operator in {"gt", "lt", "gte", "lte", "eq", "neq"}:
-        left = _numeric(observed)
+        left = _numeric_or_none(observed)
+        if left is None:
+            return False
         right = _numeric(expected)
         if operator == "gt":
             return left > right
@@ -841,7 +845,9 @@ def _compare(observed: object, operator: str, expected: object) -> bool:
             return left == right
         return left != right
     if operator in {"greater_than", "less_than"}:
-        left = _numeric(observed)
+        left = _numeric_or_none(observed)
+        if left is None:
+            return False
         right = _duration_days(expected)
         return left > right if operator == "greater_than" else left < right
     if operator == "between":
@@ -960,9 +966,24 @@ def _list(value: object) -> list[object]:
 def _numeric(value: object) -> float:
     if value is None:
         raise ExpressionValidationError("cannot compare: field value is null")
+    if isinstance(value, bool):
+        raise ExpressionValidationError(f"{value!r} is not numeric")
     if isinstance(value, (int, float)):
         return float(value)
     raise ExpressionValidationError(f"{value!r} is not numeric")
+
+
+def _numeric_or_none(value: object) -> float | None:
+    """Coerce an observed field value to float, or None when it is null/bool/non-numeric.
+
+    Used for observed operands so a numeric operator on a non-numeric custom-field value
+    produces a no-match instead of aborting the whole report.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
 
 
 def _duration_days(value: object) -> float:
@@ -1005,6 +1026,11 @@ def _coerce_tz(observed: datetime, reference: datetime) -> datetime:
     if observed.tzinfo is None and reference.tzinfo is not None:
         return observed.replace(tzinfo=timezone.utc)
     return observed
+
+
+def _as_utc(value: datetime) -> datetime:
+    """Return value as UTC-aware, assuming UTC when naive, so comparisons never mix tz-awareness."""
+    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
 
 
 def _is_date_like(value: object) -> bool:

@@ -19,9 +19,11 @@ def extract_workitem_keys(
 
     Keys are collected in first-seen order across ``title`` → ``description`` →
     ``source_branch`` so the result is deterministic. ``pattern`` matches whole keys as
-    standalone tokens (word-bounded) to avoid partial captures inside larger identifiers.
+    standalone tokens to avoid partial captures inside larger identifiers. Only
+    alphanumerics count as token characters, so ``_`` (as in ``ABC-123_fix``) delimits a
+    key rather than swallowing it — unlike ``\b``, for which ``_`` is a word character.
     """
-    compiled = re.compile(rf"\b(?:{pattern})\b")
+    compiled = re.compile(rf"(?<![A-Za-z0-9])(?:{pattern})(?![A-Za-z0-9])")
     seen: dict[str, None] = {}
     for field in (title, description or "", source_branch):
         for match in compiled.finditer(field):

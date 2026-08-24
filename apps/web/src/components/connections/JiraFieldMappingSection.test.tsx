@@ -45,10 +45,12 @@ function renderSection(
     fieldMappingValues: FieldMappingValues
     onFieldMappingChange: (v: FieldMappingValues) => void
     acHeadingDefault: string
+    spDefault: string
   }> = {},
 ) {
   const merged = {
     acHeadingDefault: AC_HEADING_DEFAULT,
+    spDefault: SP_DEFAULT,
     onFieldMappingChange: () => undefined,
     ...props,
   }
@@ -151,14 +153,23 @@ describe("JiraFieldMappingSection — removed rows", () => {
 // ---------------------------------------------------------------------------
 
 describe("JiraFieldMappingSection — Story Points", () => {
-  it("starts as 'Not configured' when story_points is absent", () => {
+  // When field_mapping is absent the connector applies its schema defaults at runtime, so
+  // the UI mirrors that: SP shows enabled with the default field (and AC enabled too),
+  // never "Not configured".
+  it("shows the schema-default mapping as enabled when field_mapping is absent", () => {
     renderSection()
-    const labels = screen.getAllByText("Not configured")
-    expect(labels.length).toBeGreaterThanOrEqual(1)
+    expect(screen.queryByText("Not configured")).not.toBeInTheDocument()
   })
 
   it("reveals the dropdown (with 'Save first' guidance) when SP is toggled ON without a connectionId", () => {
-    renderSection({ fieldMappingValues: { story_points: "" } })
+    // Explicit off values (not absence) keep both mappings disabled to start.
+    renderSection({
+      fieldMappingValues: {
+        story_points: "",
+        acceptance_criteria: null,
+        acceptance_criteria_heading: null,
+      },
+    })
 
     // Before toggle: both SP and AC show "Not configured"
     expect(screen.getAllByText("Not configured")).toHaveLength(2)
@@ -172,7 +183,8 @@ describe("JiraFieldMappingSection — Story Points", () => {
 
   it("does NOT call onFieldMappingChange when SP is toggled ON (waits for field selection)", () => {
     const onChange = vi.fn()
-    renderSection({ onFieldMappingChange: onChange })
+    // Start with SP explicitly off so toggling the switch turns it ON.
+    renderSection({ fieldMappingValues: { story_points: "" }, onFieldMappingChange: onChange })
 
     fireEvent.click(screen.getAllByRole("switch")[0])
 
@@ -212,29 +224,30 @@ describe("JiraFieldMappingSection — Story Points", () => {
           acHeadingDefault={AC_HEADING_DEFAULT}
           fieldMappingValues={{ story_points: "customfield_99999" }}
           onFieldMappingChange={onChange}
+          spDefault={SP_DEFAULT}
         />
       </QueryClientProvider>,
     )
 
     // SP starts on (non-default value); toggling off emits the off-value.
-    expect(screen.getAllByText("Not configured")).toHaveLength(1) // only AC is off
+    expect(screen.getAllByRole("switch")[0]).toHaveAttribute("aria-checked", "true")
     fireEvent.click(screen.getAllByRole("switch")[0])
 
     const emitted = onChange.mock.calls[0][0] as FieldMappingValues
 
-    // Feed the emitted value straight back as props, as the controlled parent would.
+    // Feed the emitted story_points straight back as props, as the controlled parent would.
     rerender(
       <QueryClientProvider client={qc}>
         <JiraFieldMappingSection
           acHeadingDefault={AC_HEADING_DEFAULT}
           fieldMappingValues={{ story_points: emitted.story_points }}
           onFieldMappingChange={onChange}
+          spDefault={SP_DEFAULT}
         />
       </QueryClientProvider>,
     )
 
-    // The switch must stay off: both SP and AC now read "Not configured".
-    expect(screen.getAllByText("Not configured")).toHaveLength(2)
+    // The emitted off-value ("") must round-trip to a reliably OFF switch (not the default).
     expect(screen.getAllByRole("switch")[0]).toHaveAttribute("aria-checked", "false")
   })
 
@@ -267,21 +280,31 @@ describe("JiraFieldMappingSection — Story Points", () => {
       <QueryClientProvider client={qc}>
         <JiraFieldMappingSection
           acHeadingDefault={AC_HEADING_DEFAULT}
-          fieldMappingValues={{}}
+          fieldMappingValues={{
+            story_points: "",
+            acceptance_criteria: null,
+            acceptance_criteria_heading: null,
+          }}
           onFieldMappingChange={() => undefined}
+          spDefault={SP_DEFAULT}
         />
       </QueryClientProvider>,
     )
 
-    // Initially both SP and AC are "Not configured"
+    // Initially both SP and AC are "Not configured" (explicit off values)
     expect(screen.getAllByText("Not configured")).toHaveLength(2)
 
     rerender(
       <QueryClientProvider client={qc}>
         <JiraFieldMappingSection
           acHeadingDefault={AC_HEADING_DEFAULT}
-          fieldMappingValues={{ story_points: "customfield_20000" }}
+          fieldMappingValues={{
+            story_points: "customfield_20000",
+            acceptance_criteria: null,
+            acceptance_criteria_heading: null,
+          }}
           onFieldMappingChange={() => undefined}
+          spDefault={SP_DEFAULT}
         />
       </QueryClientProvider>,
     )
@@ -296,13 +319,22 @@ describe("JiraFieldMappingSection — Story Points", () => {
   it("resets spForcedOpen to false when connectionId changes (prevents stale open state)", async () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
 
+    // Explicit off values keep both mappings disabled so spForcedOpen is the only thing
+    // that can open the SP row.
+    const offValues: FieldMappingValues = {
+      story_points: "",
+      acceptance_criteria: null,
+      acceptance_criteria_heading: null,
+    }
+
     const { rerender } = render(
       <QueryClientProvider client={qc}>
         <JiraFieldMappingSection
           acHeadingDefault={AC_HEADING_DEFAULT}
           connectionId="conn-A"
-          fieldMappingValues={{}}
+          fieldMappingValues={offValues}
           onFieldMappingChange={() => undefined}
+          spDefault={SP_DEFAULT}
         />
       </QueryClientProvider>,
     )
@@ -317,8 +349,9 @@ describe("JiraFieldMappingSection — Story Points", () => {
         <JiraFieldMappingSection
           acHeadingDefault={AC_HEADING_DEFAULT}
           connectionId="conn-B"
-          fieldMappingValues={{}}
+          fieldMappingValues={offValues}
           onFieldMappingChange={() => undefined}
+          spDefault={SP_DEFAULT}
         />
       </QueryClientProvider>,
     )
@@ -402,7 +435,8 @@ describe("JiraFieldMappingSection — Acceptance Criteria", () => {
     const onChange = vi.fn()
     const customDefault = "## My AC Heading"
     renderSection({
-      fieldMappingValues: {},
+      // AC explicitly off so toggling the switch turns it ON.
+      fieldMappingValues: { acceptance_criteria: null, acceptance_criteria_heading: null },
       onFieldMappingChange: onChange,
       acHeadingDefault: customDefault,
     })
@@ -417,13 +451,14 @@ describe("JiraFieldMappingSection — Acceptance Criteria", () => {
     expect(emitted.acceptance_criteria_heading).not.toBeNull()
   })
 
-  // [P2] Changing Story Points must NOT write null acceptance_criteria_heading when AC
-  // is not configured, because that would disable the connector's default heading extraction
-  // via the PATCH deep-merge.
-  it("changing Story Points does not emit acceptance_criteria_heading:null when AC is not configured", () => {
+  // [P2] Changing Story Points must NOT write null acceptance_criteria_heading. When the AC
+  // keys are absent the connector defaults AC to description mode with its schema heading, so
+  // an SP-triggered emit must carry that default heading (never null, which would disable the
+  // connector's default extraction via the PATCH deep-merge).
+  it("changing Story Points emits the default AC heading (not null) when AC keys are absent", () => {
     const onChange = vi.fn()
     renderSection({
-      // SP has a value; AC not configured (no AC keys in fieldMappingValues)
+      // SP has a value; AC keys absent → AC is default-on (description mode).
       fieldMappingValues: { story_points: SP_DEFAULT },
       onFieldMappingChange: onChange,
     })
@@ -433,9 +468,7 @@ describe("JiraFieldMappingSection — Acceptance Criteria", () => {
 
     expect(onChange).toHaveBeenCalledOnce()
     const emitted = onChange.mock.calls[0][0] as FieldMappingValues
-    // AC keys must be absent from the emitted object (not null) so deep-merge
-    // does not overwrite any stored heading value.
-    expect(emitted.acceptance_criteria_heading).not.toBe(null)
+    expect(emitted.acceptance_criteria_heading).toBe(AC_HEADING_DEFAULT)
   })
 
   // [P2] When AC is in description mode, any SP-triggered emit must keep the heading non-null.
@@ -457,6 +490,40 @@ describe("JiraFieldMappingSection — Acceptance Criteria", () => {
     const emitted = onChange.mock.calls[0][0] as FieldMappingValues
     expect(emitted.acceptance_criteria_heading).not.toBeNull()
     expect(emitted.acceptance_criteria_heading).toBe("### Acceptance Criteria")
+  })
+})
+
+// ---------------------------------------------------------------------------
+// JiraFieldMappingSection — schema defaults for absent field_mapping
+// ---------------------------------------------------------------------------
+
+describe("JiraFieldMappingSection — schema defaults", () => {
+  it("shows SP enabled with the default field when field_mapping is absent", async () => {
+    renderSection({ connectionId: "conn-1" })
+
+    await waitFor(() => {
+      const select = screen.getByRole("combobox", {
+        name: "Story points field",
+      }) as HTMLSelectElement
+      expect(select.value).toBe(SP_DEFAULT)
+    })
+  })
+
+  it("shows AC enabled in description mode with the default heading when field_mapping is absent", () => {
+    renderSection()
+
+    const modeSelect = screen.getByRole("combobox", { name: "How is it recorded?" })
+    expect((modeSelect as HTMLSelectElement).value).toBe("description")
+    expect(screen.getByLabelText("Heading text")).toHaveValue(AC_HEADING_DEFAULT)
+  })
+
+  it("preserves an explicit AC off (null/null) rather than reapplying the default heading", () => {
+    renderSection({
+      fieldMappingValues: { acceptance_criteria: null, acceptance_criteria_heading: null },
+    })
+
+    // AC row is disabled: the AC switch (second) is unchecked.
+    expect(screen.getAllByRole("switch")[1]).toHaveAttribute("aria-checked", "false")
   })
 })
 

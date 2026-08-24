@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { useState } from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 
 import { CodeSourcePicker } from "@/components/teams/CodeSourcePicker"
@@ -7,6 +8,8 @@ import { SignalGroupAttachList } from "@/components/teams/SignalGroupAttachList"
 import { TaskBoardPicker } from "@/components/teams/TaskBoardPicker"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
+import { ConfirmDialog } from "@/components/ui/confirm-dialog"
+import { apiErrorMessage } from "@/lib/api"
 import { type SourceConnection } from "@/lib/connections"
 import { type ScopeDefinition } from "@/lib/scopes"
 import { type SignalConfigGroup } from "@/lib/signalConfigGroups"
@@ -57,6 +60,7 @@ export function TeamCard({
   team: TeamProfile
 }) {
   const queryClient = useQueryClient()
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
 
   const deleteMutation = useMutation({
     mutationFn: () => deleteTeam(team.id),
@@ -94,8 +98,9 @@ export function TeamCard({
               </Button>
             )}
             <Button
+              aria-label={`Delete ${team.name}`}
               disabled={deleteMutation.isPending}
-              onClick={() => deleteMutation.mutate()}
+              onClick={() => setConfirmingDelete(true)}
               size="sm"
               variant="outline"
             >
@@ -103,6 +108,25 @@ export function TeamCard({
             </Button>
           </div>
         </div>
+
+        {confirmingDelete && (
+          <ConfirmDialog
+            body={`Delete "${team.name}"? This removes the team and its report history. This cannot be undone.`}
+            confirmLabel="Delete team"
+            onCancel={() => setConfirmingDelete(false)}
+            onConfirm={() =>
+              deleteMutation.mutate(undefined, { onSettled: () => setConfirmingDelete(false) })
+            }
+            pending={deleteMutation.isPending}
+            title={`Delete ${team.name}`}
+          />
+        )}
+
+        {deleteMutation.isError && (
+          <p className="text-sm text-red-700" role="alert">
+            {apiErrorMessage(deleteMutation.error, "Failed to delete the team. Please try again.")}
+          </p>
+        )}
 
         {isEditing && (
           <>
