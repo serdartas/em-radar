@@ -304,7 +304,7 @@ erDiagram
         uuid id PK
         string name
         text description
-        string entity_type "issue|merge_request in MVP"
+        string entity_type "issue|merge_request|sprint in MVP"
         json expression
         json report_settings
         enum origin "system_template|user_created|imported"
@@ -358,8 +358,9 @@ erDiagram
   `code_connection_id`.
 - An MVP board `ScopeDefinition.external_ref` contains both selected project identity and selected
   board identity. The project is not stored as a second scope.
-- An MVP `SignalDefinition` uses one entity type: `issue` for work tracking or `merge_request` for
-  code repository. It never references a connection, project, board, or repository.
+- An MVP `SignalDefinition` uses one entity type: `issue` for work tracking, `merge_request` for
+  code repository, or `sprint` for sprint-scope signals. It never references a connection, project,
+  board, or repository.
 - A `TeamProfile` may be **saved with no sources**; a **report run requires at least one** of its
   task-board scope or `code_connection_id`. Signals whose source is absent are skipped with a note.
 - `Dashboard` is **not** an entity — it is derived by reading the latest `Report` per
