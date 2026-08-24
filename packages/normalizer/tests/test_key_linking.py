@@ -97,6 +97,16 @@ def test_partial_tokens_are_not_matched() -> None:
     assert extract_workitem_keys("lowercase abc-1 and ABC1", None, "feature/misc") == []
 
 
+def test_key_followed_by_underscore_is_matched() -> None:
+    # "_" is a word character, so a trailing \b used to drop keys like ABC-123_fix.
+    assert extract_workitem_keys("no key", None, "feature/ABC-123_description") == ["ABC-123"]
+    assert extract_workitem_keys("ABC-123_fix", None, "feature/misc") == ["ABC-123"]
+
+
+def test_key_inside_larger_alphanumeric_token_is_not_matched() -> None:
+    assert extract_workitem_keys("ABC-123abc", None, "feature/xABC-1") == []
+
+
 def test_custom_pattern_is_respected() -> None:
     assert extract_workitem_keys("PROJ_42 here", None, "feature/misc", pattern=r"[A-Z]+_\d+") == [
         "PROJ_42"

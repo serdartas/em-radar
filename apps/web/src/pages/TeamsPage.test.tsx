@@ -148,6 +148,8 @@ type MockOptions = {
   boards?: typeof scrumBoards | typeof kanbanBoards | Array<(typeof scrumBoards)[0] | (typeof kanbanBoards)[0]>
   sprintsResponse?: typeof sprints | Promise<Response>
   scopePostResponse?: Response
+  teamPostResponse?: Response
+  teamDeleteResponse?: Response
   connectors?: unknown[]
   connections?: unknown[]
 }
@@ -164,6 +166,12 @@ function mockApi(options: MockOptions = {}) {
 
     if (url.endsWith("/api/teams") && method === "GET") {
       return Promise.resolve(jsonResponse([team]))
+    }
+    if (url.endsWith("/api/teams") && method === "POST") {
+      return Promise.resolve(options.teamPostResponse ?? jsonResponse(team, 201))
+    }
+    if (url.includes("/api/teams/") && method === "DELETE") {
+      return Promise.resolve(options.teamDeleteResponse ?? jsonResponse({}, 204))
     }
     if (url.endsWith("/api/scopes") && method === "GET") {
       return Promise.resolve(jsonResponse([]))
@@ -261,6 +269,39 @@ describe("TeamsPage — create form", () => {
     // Typing a name enables the button
     fireEvent.change(input, { target: { value: "Backend" } })
     expect(screen.getByRole("button", { name: "Create team" })).not.toBeDisabled()
+  })
+
+  it("surfaces an error when team creation fails", async () => {
+    mockApi({ teamPostResponse: jsonResponse({ detail: "Team name already exists" }, 409) })
+    renderPage()
+
+    const input = await screen.findByLabelText("New team name")
+    fireEvent.change(input, { target: { value: "Platform" } })
+    fireEvent.click(screen.getByRole("button", { name: "Create team" }))
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /already exists|Failed to create the team/i,
+    )
+  })
+})
+
+describe("TeamsPage — TeamCard delete", () => {
+  it("requires confirmation before deleting and surfaces delete errors", async () => {
+    mockApi({ teamDeleteResponse: jsonResponse({ detail: "team is in use" }, 409) })
+    renderPage()
+
+    await screen.findByText("Platform")
+    fireEvent.click(screen.getByRole("button", { name: "Delete Platform" }))
+
+    // A confirm dialog must appear before any delete is issued.
+    expect(await screen.findByRole("alertdialog")).toBeInTheDocument()
+
+    // Confirm the deletion (the dialog's confirm button is named "Delete team").
+    fireEvent.click(screen.getByRole("button", { name: "Delete team" }))
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /team is in use|Failed to delete the team/i,
+    )
   })
 })
 

@@ -254,6 +254,25 @@ def test_board_only_team_all_sources_failed_marks_report_failed(
     assert report["findings"] == []
 
 
+def test_scrum_board_partial_workitem_failure_fails_gracefully(
+    api_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A sprint-window run whose workitem fetch fails after board metadata (incl. the sprint)
+    succeeded must fail gracefully, not raise a FOREIGN KEY violation on the window insert."""
+    monkeypatch.setattr(
+        "em_radar_api.connector_registry._connector_types",
+        lambda: [_FailingJiraTestConnector],
+    )
+    jira_id = _create_jira_connection(api_client)
+    scope_id = _create_board_scope(api_client, jira_id, ["sprint", "statuses", "labels"])
+    team_id = _create_jira_team(api_client, jira_id, scope_id, "scrum", sprint_length_days=14)
+
+    report = _run_report(api_client, team_id)
+
+    assert report["status"] == "failed"
+    assert report["findings"] == []
+
+
 def test_code_only_team_all_sources_failed_marks_report_failed(
     api_client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

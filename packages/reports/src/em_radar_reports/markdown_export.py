@@ -249,4 +249,5 @@ def _escape_md(text: str) -> str:
 
 
 def _link(text: str, url: str) -> str:
-    return f"[{_inline(text)}](<{_collapse_ws(url)}>)"
+    destination = _collapse_ws(url).replace("\\", "\\\\").replace("<", "\\<").replace(">", "\\>")
+    return f"[{_inline(text)}](<{destination}>)"

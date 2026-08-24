@@ -207,7 +207,11 @@ def _validate_pack(pack: SignalPack, context: PackValidationContext) -> None:
 
     if pack.spec.export_type not in {"private_backup", "public_template"}:
         raise PackValidationError("spec.export_type must be private_backup or public_template")
+    if not pack.spec.signals:
+        raise PackValidationError("spec.signals is missing or empty")
     for index, signal in enumerate(pack.spec.signals):
+        if signal.name is None or not signal.name.strip():
+            raise PackValidationError(f"spec.signals.{index} is missing a name")
         expression = _resolve_signal_expression(signal)
         if expression is None:
             raise PackValidationError(

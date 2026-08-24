@@ -6,6 +6,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { TeamCard } from "@/components/teams/TeamCard"
 import { Card, CardContent } from "@/components/ui/card"
 import { InlineCreateRow } from "@/components/ui/inline-create-row"
+import { apiErrorMessage } from "@/lib/api"
 import { createTeam } from "@/lib/teams"
 import { TEAMS_KEY, useTeamSetupData } from "@/lib/teamSetup"
 
@@ -60,6 +61,11 @@ export function TeamsPage() {
             onAction={() => createMutation.mutate({ name: name.trim() })}
             value={name}
           />
+          {createMutation.isError && (
+            <p className="mt-2 text-sm text-red-700" role="alert">
+              {apiErrorMessage(createMutation.error, "Failed to create the team. Please try again.")}
+            </p>
+          )}
         </CardContent>
       </Card>
 

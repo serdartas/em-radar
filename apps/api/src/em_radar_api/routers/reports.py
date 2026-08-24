@@ -707,10 +707,17 @@ async def _run_team_report(
             # with unresolved connector ids (there is no sprint identity map on this path).
             preserve_sprint_links=board_meta is not None and board_meta.sprints_unavailable,
         )
-        persisted_window = _persisted_window(window, identity.identity_map)
+        # When the board fetch failed its sprints are not persisted, so the window's sprint
+        # reference cannot resolve to a persisted row. Drop it to avoid a foreign-key violation
+        # on the window insert; the report either fails early (all sources failed) or proceeds
+        # on code data only, where the sprint reference is irrelevant.
+        window_for_persist = (
+            window.model_copy(update={"sprint_id": None}) if board_data is None else window
+        )
+        persisted_window = _persisted_window(window_for_persist, identity.identity_map)
         # Snapshot the sprint name so retained reports stay readable after the cache is cleared.
         sprint_label: str | None = None
-        if window.sprint_id is not None and board_meta is not None:
+        if window.sprint_id is not None and board_data is not None and board_meta is not None:
             sprint_obj = next((s for s in board_meta.sprints if s.id == window.sprint_id), None)
             if sprint_obj is not None:
                 sprint_label = sprint_obj.name

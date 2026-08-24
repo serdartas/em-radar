@@ -102,6 +102,37 @@ describe("SignalConfigGroupsPage — create form", () => {
     fireEvent.change(input, { target: { value: "Backend signals" } })
     expect(screen.getByRole("button", { name: "Create group" })).not.toBeDisabled()
   })
+
+  it("surfaces an error when group creation fails", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = typeof input === "string" ? input : input.toString()
+      const method = init?.method ?? "GET"
+      if (url.endsWith("/api/signal-definitions")) {
+        return Promise.resolve(jsonResponse(definitions))
+      }
+      if (url.endsWith("/api/signal-config-groups") && method === "GET") {
+        return Promise.resolve(jsonResponse([]))
+      }
+      if (url.endsWith("/api/signal-config-groups") && method === "POST") {
+        return Promise.resolve(
+          new Response(JSON.stringify({ detail: "Group name already exists" }), {
+            status: 409,
+            headers: { "Content-Type": "application/json" },
+          }),
+        )
+      }
+      throw new Error(`unexpected fetch: ${method} ${url}`)
+    })
+    renderPage()
+
+    const input = await screen.findByLabelText("New group name")
+    fireEvent.change(input, { target: { value: "Backend signals" } })
+    fireEvent.click(screen.getByRole("button", { name: "Create group" }))
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /already exists|Failed to create the group/i,
+    )
+  })
 })
 
 // Stale-window race: Add signal button must stay disabled through the post-PATCH refetch.

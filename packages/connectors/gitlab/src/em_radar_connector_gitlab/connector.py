@@ -106,7 +106,14 @@ class GitLabConnector:
         try:
             self.config = GitLabConnectorConfig.model_validate(config)
         except ValidationError as error:
-            raise ConnectorConfigError("Invalid GitLab connector config") from error
+            # Do not chain the pydantic error: its repr can include raw input values (e.g. a
+            # mistyped token) that the redaction filter has not been told about yet. Build a
+            # message from loc/msg only, which never carry the offending value.
+            details = "; ".join(
+                f"{'.'.join(str(part) for part in err['loc'])}: {err['msg']}"
+                for err in error.errors()
+            )
+            raise ConnectorConfigError(f"Invalid GitLab connector config: {details}") from None
 
         self._instance_prefix = _url_instance_prefix(self.config.base_url)
         token = self.config.token.get_secret_value()
@@ -300,7 +307,9 @@ class GitLabConnector:
         async def _enrich(
             payload: Mapping[str, object],
             is_draft: bool,
-        ) -> tuple[Mapping[str, object], bool, int | None, int | None, int | None, int | None]:
+        ) -> tuple[
+            Mapping[str, object], bool, int | None, int | None, int | None, int | None, object
+        ]:
             iid = _required_positive_int(payload, "iid")
             # Diff stats and approvals are independent — run them concurrently under the semaphore.
             # TaskGroup cancels the sibling coroutine on error; asyncio.gather would leave it
@@ -323,8 +332,16 @@ class GitLabConnector:
                             "Multiple enrichment errors for MR; reporting first: %s", eg
                         )
                     raise eg.exceptions[0] from eg
-            changed_files, additions, deletions = diff_task.result()
-            return payload, is_draft, changed_files, additions, deletions, approval_task.result()
+            changed_files, additions, deletions, head_pipeline = diff_task.result()
+            return (
+                payload,
+                is_draft,
+                changed_files,
+                additions,
+                deletions,
+                approval_task.result(),
+                head_pipeline,
+            )
 
         page = 1
         while True:
@@ -377,6 +394,7 @@ class GitLabConnector:
                 additions,
                 deletions,
                 approval_count,
+                head_pipeline,
             ) in results:
                 mr = _mergerequest_from_payload(
                     payload,
@@ -387,6 +405,7 @@ class GitLabConnector:
                     changed_files_count,
                     additions,
                     deletions,
+                    head_pipeline,
                 )
                 if _mr_in_window(mr, window):
                     yield mr
@@ -439,13 +458,15 @@ class GitLabConnector:
         project_id: str,
         iid: int,
         list_payload: Mapping[str, object],
-    ) -> tuple[int | None, int | None, int | None]:
-        """Return (changed_files_count, additions, deletions).
+    ) -> tuple[int | None, int | None, int | None, object]:
+        """Return (changed_files_count, additions, deletions, head_pipeline).
 
-        The REST list endpoint does not include diff stats; we try the list payload first
-        for changed_files_count (forward-compatibility) and always fetch the single-MR
-        detail endpoint to obtain additions and deletions.  Top-level additions/deletions
-        on the detail response are preferred; diff_stats_summary is used as a fallback.
+        The REST list endpoint does not include diff stats or head_pipeline; we try the list
+        payload first for changed_files_count (forward-compatibility) and always fetch the
+        single-MR detail endpoint to obtain additions, deletions, and head_pipeline. Top-level
+        additions/deletions on the detail response are preferred; diff_stats_summary is used as
+        a fallback. head_pipeline comes from the detail response, falling back to the list
+        payload for forward-compatibility.
         """
         diff_stats = _optional_mapping(list_payload.get("diff_stats_summary"))
         list_changed_files = _parse_changes_count(list_payload.get("changes_count"), diff_stats)
@@ -466,7 +487,11 @@ class GitLabConnector:
         if deletions is None and detail_diff_stats is not None:
             deletions = _optional_nonneg_int(detail_diff_stats, "deletions")
 
-        return changed_files, additions, deletions
+        head_pipeline = detail.get("head_pipeline")
+        if head_pipeline is None:
+            head_pipeline = list_payload.get("head_pipeline")
+
+        return changed_files, additions, deletions, head_pipeline
 
     async def list_repositories(self) -> list[Repository]:
         repositories: list[Repository] = []
@@ -661,6 +686,7 @@ def _mergerequest_from_payload(
     changed_files_count: int | None,
     additions: int | None,
     deletions: int | None,
+    head_pipeline: object,
 ) -> MergeRequest:
     mr_global_id = str(_required_positive_int(payload, "id"))
     namespaced_mr_id = f"{instance_prefix}/{mr_global_id}"
@@ -678,7 +704,7 @@ def _mergerequest_from_payload(
     author = _required_mapping(payload, "author")
     author_id = _stable_id("user", f"{instance_prefix}/{str(_required_positive_int(author, 'id'))}")
 
-    pipeline_status, pipeline_updated_at = _pipeline_info(payload.get("head_pipeline"))
+    pipeline_status, pipeline_updated_at = _pipeline_info(head_pipeline)
 
     comment_count = _optional_nonneg_int(payload, "user_notes_count") or 0
 
@@ -867,12 +893,6 @@ def _optional_nonneg_int(payload: Mapping[str, object], key: str) -> int | None:
     if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
         return value
     return None
-
-
-def _format_iso_datetime(value: datetime) -> str:
-    if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _display_name(payload: Mapping[str, object]) -> str | None:

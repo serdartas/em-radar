@@ -75,10 +75,18 @@ export function SetupPage() {
       // due to a stale render closure or an in-flight refetch.
       await queryClient.refetchQueries({ queryKey: TEAMS_KEY })
       const fresh = queryClient.getQueryData<TeamProfile[]>(TEAMS_KEY) ?? []
-      for (const team of fresh) {
-        if (teamHasSources(team)) {
-          await runTeamReport(team.id)
-        }
+      const teamsWithSources = fresh.filter(teamHasSources)
+      // Run each team's initial report independently so one failure does not skip the rest.
+      const results = await Promise.allSettled(
+        teamsWithSources.map((team) => runTeamReport(team.id)),
+      )
+      const failed = results.filter(
+        (result): result is PromiseRejectedResult => result.status === "rejected",
+      )
+      // Surface an error only when every run failed; partial failures remain visible per-team
+      // on the dashboard, which the user reaches on success.
+      if (teamsWithSources.length > 0 && failed.length === teamsWithSources.length) {
+        throw failed[0].reason
       }
     },
     onSuccess: () => {

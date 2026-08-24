@@ -113,7 +113,14 @@ class JiraConnector:
         try:
             self.config = JiraConnectorConfig.model_validate(config)
         except ValidationError as error:
-            raise ConnectorConfigError("Invalid Jira connector config") from error
+            # Do not chain the pydantic error: its repr can include raw input values (e.g. a
+            # mistyped token) that the redaction filter has not been told about yet. Build a
+            # message from loc/msg only, which never carry the offending value.
+            details = "; ".join(
+                f"{'.'.join(str(part) for part in err['loc'])}: {err['msg']}"
+                for err in error.errors()
+            )
+            raise ConnectorConfigError(f"Invalid Jira connector config: {details}") from None
 
         token = self.config.token.get_secret_value()
         auth_header = _authorization_header(self.config)
@@ -375,10 +382,15 @@ class JiraConnector:
                 requested = []
                 custom_field_types = {}
 
+        # Send only custom-field ids that discovery confirmed: requesting an id Jira cannot
+        # resolve (nonexistent, or hidden from this token) makes Jira reject the whole search
+        # with a 400, aborting the fetch instead of degrading. custom_field_types is empty when
+        # discovery failed, so this also drops all custom fields on that path.
+        discovered_field_ids = list(custom_field_types)
         async for payload in self._request_paginated_issues(
             params={
                 "jql": _workitem_jql(scope, window),
-                "fields": ",".join(_issue_fields(self.config.field_mapping, requested)),
+                "fields": ",".join(_issue_fields(self.config.field_mapping, discovered_field_ids)),
                 "expand": "changelog",
             }
         ):
@@ -1347,7 +1359,18 @@ def _workitem_jql(scope: WorkItemScope, window: EvaluationWindow) -> str:
         # so snapshot signals (e.g. StaleInProgressSignal) can evaluate them.
         clauses.append(f'updated < "{_jql_datetime(_ceil_to_minute(window.end))}"')
     elif window.window_type is WindowType.SPRINT and scope.sprint_external_id is not None:
+        # Jira's sprint clause takes a numeric id, interpolated unquoted; reject anything else
+        # so a malformed value cannot produce invalid or injected JQL.
+        if not scope.sprint_external_id.isdigit():
+            raise ConnectorDataError("Sprint external id must be numeric")
         clauses.append(f"sprint = {scope.sprint_external_id}")
+    if (
+        window.window_type is WindowType.SPRINT
+        and scope.sprint_external_id is None
+        and not scope.project_external_ids
+    ):
+        # Without a sprint or project clause the JQL would enumerate the entire Jira instance.
+        raise ConnectorDataError("Sprint window requires a sprint or project scope")
     return " AND ".join(clauses) if clauses else "ORDER BY updated ASC"
 
 
@@ -1359,7 +1382,12 @@ def _workitem_in_window(workitem: WorkItem, window: EvaluationWindow) -> bool:
     if window.window_type is WindowType.DATE_RANGE and window.end is not None:
         # Exact exclusive-end filter: the coarse JQL boundary is rounded up to the next
         # minute, so items in the final partial minute must be dropped here precisely.
-        return workitem.updated_at is None or workitem.updated_at < window.end
+        if workitem.updated_at is None:
+            return True
+        end = (
+            window.end if window.end.tzinfo is not None else window.end.replace(tzinfo=timezone.utc)
+        )
+        return workitem.updated_at < end
     return True
 
 
