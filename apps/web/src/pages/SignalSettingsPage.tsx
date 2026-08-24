@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useState } from "react"
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link } from "react-router-dom"
 
 import { SignalForm } from "@/components/signals/SignalForm"
@@ -9,7 +9,7 @@ import { SignalListItem } from "@/components/signals/SignalListItem"
 import { Button } from "@/components/ui/button"
 import { apiErrorMessage } from "@/lib/api"
 import { getConnectors, type SignalField } from "@/lib/connectors"
-import { listConnections, listJiraFields } from "@/lib/connections"
+import { type JiraFieldInfo, listConnections, listJiraFields } from "@/lib/connections"
 import {
   createSignalDefinition,
   deleteSignalDefinition,
@@ -30,14 +30,34 @@ export function SignalSettingsPage() {
   const [creating, setCreating] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
 
-  // Find the first Jira connection so we can fetch its discovered custom fields.
-  const jiraConnectionId = connectionsQuery.data?.find((c) => c.connector_name === "jira")?.id
-  const jiraFieldsQuery = useQuery({
-    queryKey: ["jiraFields", jiraConnectionId],
-    queryFn: () => listJiraFields(jiraConnectionId!),
-    enabled: !!jiraConnectionId,
+  // Discover custom fields from EVERY Jira connection: a workspace may hold several Jira
+  // instances, and a signal built for a team backed by any of them must be able to pick
+  // that instance's fields. Restricting discovery to one connection would hide the rest.
+  const jiraConnectionIds = (connectionsQuery.data ?? [])
+    .filter((c) => c.connector_name === "jira")
+    .map((c) => c.id)
+  const jiraFieldQueries = useQueries({
+    queries: jiraConnectionIds.map((id) => ({
+      queryKey: ["jiraFields", id],
+      queryFn: () => listJiraFields(id),
+    })),
   })
-  const jiraCustomFields = (jiraFieldsQuery.data ?? []).filter((f) => f.custom)
+
+  // Merge and de-duplicate custom fields by id (the same field id can exist across
+  // instances; keep the first occurrence).
+  const jiraCustomFields: JiraFieldInfo[] = (() => {
+    const byId = new Map<string, JiraFieldInfo>()
+    for (const query of jiraFieldQueries) {
+      for (const field of query.data ?? []) {
+        if (field.custom && !byId.has(field.id)) {
+          byId.set(field.id, field)
+        }
+      }
+    }
+    return [...byId.values()]
+  })()
+
+  const jiraFieldsError = jiraConnectionIds.length > 0 && jiraFieldQueries.some((q) => q.isError)
 
   // Build fieldsByEntityType from all registered connector schemas.
   // issue fields come from Jira; merge_request fields come from GitLab.
@@ -84,7 +104,7 @@ export function SignalSettingsPage() {
 
   // Block render until Jira custom fields are available so the edit form never opens
   // with an unresolved field picker (custom-field ids would degrade to empty dropdowns).
-  const jiraFieldsLoading = !!jiraConnectionId && jiraFieldsQuery.isLoading
+  const jiraFieldsLoading = jiraFieldQueries.some((q) => q.isLoading)
 
   if (
     definitionsQuery.isLoading ||
@@ -97,6 +117,30 @@ export function SignalSettingsPage() {
 
   if (Object.keys(fieldsByEntityType).length === 0) {
     return <p className="text-sm text-red-700">Signals could not be loaded.</p>
+  }
+
+  // A discovery failure must not masquerade as "no custom fields": that would silently
+  // hide the custom-field option and block both creating and editing custom-field signals.
+  // Surface it with a retry instead.
+  if (jiraFieldsError) {
+    return (
+      <div className="space-y-3" role="alert">
+        <p className="text-sm text-red-700">
+          Jira custom fields could not be loaded, so custom-field signals cannot be configured
+          right now. Check the affected Jira connection and try again.
+        </p>
+        <Button
+          onClick={() => {
+            for (const query of jiraFieldQueries) {
+              void query.refetch()
+            }
+          }}
+          variant="outline"
+        >
+          Retry
+        </Button>
+      </div>
+    )
   }
 
   const definitions = definitionsQuery.data ?? []

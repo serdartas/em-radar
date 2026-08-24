@@ -405,6 +405,89 @@ describe("SignalSettingsPage", () => {
 })
 
 // ---------------------------------------------------------------------------
+// Jira custom-field discovery across multiple connections
+// ---------------------------------------------------------------------------
+
+describe("SignalSettingsPage — Jira field discovery", () => {
+  it("aggregates custom fields from every Jira connection in the builder", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = typeof input === "string" ? input : input.toString()
+      const method = init?.method ?? "GET"
+      if (url.endsWith("/api/signal-definitions") && method === "GET") {
+        return Promise.resolve(jsonResponse([]))
+      }
+      if (url.endsWith("/api/connectors")) {
+        return Promise.resolve(jsonResponse(connectors))
+      }
+      if (url.endsWith("/api/connections") && method === "GET") {
+        return Promise.resolve(
+          jsonResponse([
+            { id: "j1", name: "Jira One", connector_name: "jira", config: {}, created_at: "x" },
+            { id: "j2", name: "Jira Two", connector_name: "jira", config: {}, created_at: "x" },
+          ]),
+        )
+      }
+      if (url.includes("/api/connections/j1/jira/fields")) {
+        return Promise.resolve(
+          jsonResponse([
+            { id: "customfield_1", name: "Team", custom: true, field_type: "string" },
+          ]),
+        )
+      }
+      if (url.includes("/api/connections/j2/jira/fields")) {
+        return Promise.resolve(
+          jsonResponse([
+            { id: "customfield_2", name: "Squad", custom: true, field_type: "string" },
+          ]),
+        )
+      }
+      throw new Error(`unexpected fetch: ${method} ${url}`)
+    })
+    renderPage()
+    await openForm()
+
+    // Choose the "Custom field" entry to reveal the discovered-field picker.
+    fireEvent.change(screen.getByLabelText("Field"), { target: { value: "__custom__" } })
+
+    // Both connections' fields are offered, not just the first connection's.
+    expect(await screen.findByRole("option", { name: "Team (customfield_1)" })).toBeInTheDocument()
+    expect(screen.getByRole("option", { name: "Squad (customfield_2)" })).toBeInTheDocument()
+  })
+
+  it("surfaces a discovery failure with a retry instead of silently hiding custom fields", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = typeof input === "string" ? input : input.toString()
+      const method = init?.method ?? "GET"
+      if (url.endsWith("/api/signal-definitions") && method === "GET") {
+        return Promise.resolve(jsonResponse([]))
+      }
+      if (url.endsWith("/api/connectors")) {
+        return Promise.resolve(jsonResponse(connectors))
+      }
+      if (url.endsWith("/api/connections") && method === "GET") {
+        return Promise.resolve(
+          jsonResponse([
+            { id: "j1", name: "Jira One", connector_name: "jira", config: {}, created_at: "x" },
+          ]),
+        )
+      }
+      if (url.includes("/api/connections/j1/jira/fields")) {
+        return Promise.resolve(jsonResponse({ detail: "boom" }, 500))
+      }
+      throw new Error(`unexpected fetch: ${method} ${url}`)
+    })
+    renderPage()
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /Jira custom fields could not be loaded/i,
+    )
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument()
+    // The builder is not offered while discovery is failing.
+    expect(screen.queryByRole("button", { name: "Create new" })).not.toBeInTheDocument()
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Edit flow: SignalListItem Edit button + update path
 // ---------------------------------------------------------------------------
 

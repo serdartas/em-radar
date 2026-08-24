@@ -263,7 +263,7 @@ export function ConnectionForm({
           )}
 
           {selectedConnector?.name === "jira" && (() => {
-            const { acHeadingDefault } = jiraFieldMappingDefaults(
+            const { acHeadingDefault, spDefault } = jiraFieldMappingDefaults(
               selectedConnector.config_schema,
             )
             return (
@@ -272,6 +272,7 @@ export function ConnectionForm({
                 connectionId={editing?.id}
                 fieldMappingValues={toFieldMappingValues(values.field_mapping)}
                 onFieldMappingChange={(next) => changeField("field_mapping", next)}
+                spDefault={spDefault}
               />
             )
           })()}
@@ -320,16 +321,21 @@ export function ConnectionForm({
 /** Fields rendered by the purpose-built JiraFieldMappingSection — skip them in SchemaForm. */
 const JIRA_SKIP_KEYS = new Set(["field_mapping"])
 
-// Module-level fallback used only when the schema lookup returns undefined.
+// Module-level fallbacks used only when the schema lookup returns undefined.
 const AC_HEADING_DEFAULT_FALLBACK = "### Acceptance Criteria"
+const SP_DEFAULT_FALLBACK = "customfield_10016"
 
 /**
- * Extract the acceptance_criteria_heading default from the connector's config_schema.
- * Resolves the field_mapping $ref into its $defs entry and reads the `default` value.
- * Falls back to the known Jira default if the schema is missing it.
+ * Extract the field_mapping defaults from the connector's config_schema.
+ * Resolves the field_mapping $ref into its $defs entry and reads the per-field `default`
+ * values. Falls back to the known Jira defaults if the schema is missing them.
+ *
+ * These mirror the connector's runtime defaults (see JiraFieldMappingConfig), so the UI
+ * can show what the connector will actually use when a saved connection omits field_mapping.
  */
 function jiraFieldMappingDefaults(schema: JsonSchema): {
   acHeadingDefault: string
+  spDefault: string
 } {
   const ref = schema.properties?.field_mapping?.$ref
   const defKey = ref?.replace(/^#\/\$defs\//, "")
@@ -339,6 +345,7 @@ function jiraFieldMappingDefaults(schema: JsonSchema): {
     acHeadingDefault:
       (props?.acceptance_criteria_heading?.default as string | undefined) ??
       AC_HEADING_DEFAULT_FALLBACK,
+    spDefault: (props?.story_points?.default as string | undefined) ?? SP_DEFAULT_FALLBACK,
   }
 }
 

@@ -129,6 +129,13 @@ interface JiraFieldMappingSectionProps {
    * Emitted as the heading when AC is enabled in description mode and no heading is set.
    */
   acHeadingDefault: string
+  /**
+   * Default value for story_points, sourced from the connector's config_schema
+   * (`$defs.JiraFieldMappingConfig.properties.story_points.default`).
+   * Shown when a saved connection omits the key, so the UI mirrors the field the
+   * connector actually uses at runtime rather than displaying it as unconfigured.
+   */
+  spDefault: string
 }
 
 export function JiraFieldMappingSection({
@@ -136,6 +143,7 @@ export function JiraFieldMappingSection({
   connectionId,
   fieldMappingValues,
   onFieldMappingChange,
+  spDefault,
 }: JiraFieldMappingSectionProps) {
   const spSwitchId = useId()
   const acSwitchId = useId()
@@ -166,10 +174,20 @@ export function JiraFieldMappingSection({
     .filter((f) => f.custom)
     .sort((a, b) => a.name.localeCompare(b.name))
 
-  // Read controlled values
-  const storyPointsValue = fieldMappingValues?.story_points ?? ""
-  const acCustomField = fieldMappingValues?.acceptance_criteria ?? null
-  const acHeading = fieldMappingValues?.acceptance_criteria_heading ?? null
+  // Read controlled values. An ABSENT key (undefined) means the saved connection relies on
+  // the connector's default, which it actively applies at runtime — so mirror that default
+  // here instead of showing the mapping as unconfigured. An EXPLICIT off value ("" for story
+  // points, null for AC) is a deliberate user choice and is preserved as-is.
+  const storyPointsValue =
+    fieldMappingValues?.story_points === undefined ? spDefault : fieldMappingValues.story_points
+  const acCustomField =
+    fieldMappingValues?.acceptance_criteria === undefined
+      ? null
+      : fieldMappingValues.acceptance_criteria
+  const acHeading =
+    fieldMappingValues?.acceptance_criteria_heading === undefined
+      ? acHeadingDefault
+      : fieldMappingValues.acceptance_criteria_heading
 
   // spEnabled re-syncs from props on every render (mirrors AC's fully-derived approach).
   // It is true when a saved value exists in props OR when the user explicitly clicked ON.
