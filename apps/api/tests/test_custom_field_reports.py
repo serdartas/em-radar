@@ -284,9 +284,7 @@ def test_custom_field_discovery_failure_suppresses_findings(
             "expression": {
                 "type": "group",
                 "operator": "all",
-                "conditions": [
-                    {"field": "customfield_10100", "operator": "is_empty"}
-                ],
+                "conditions": [{"field": "customfield_10100", "operator": "is_empty"}],
             },
             "report_settings": {"severity": "warning", "category": "hygiene"},
             "origin": "user_created",
