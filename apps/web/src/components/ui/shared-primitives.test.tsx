@@ -454,6 +454,7 @@ describe("Combobox", () => {
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument()
   })
 
+
   it("calls scrollIntoView on the active option when navigating with keyboard", () => {
     const scrollIntoView = vi.fn()
     window.HTMLElement.prototype.scrollIntoView = scrollIntoView
