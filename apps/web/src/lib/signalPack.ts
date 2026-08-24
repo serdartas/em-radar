@@ -4,7 +4,7 @@ import { API_BASE_URL, ApiError, apiFetch } from "@/lib/api"
 import type { Severity } from "@/lib/severity"
 
 export type ExportType = "private_backup" | "public_template"
-export type ImportMode = "additive" | "replace_all"
+export type ImportMode = "additive"
 export type ConflictMode = "skip" | "overwrite" | "keep_both" | "cancel"
 
 export interface ImportWarning {
