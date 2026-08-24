@@ -256,6 +256,29 @@ describe("ReportResultsPage", () => {
     expect(screen.queryByText("No findings were detected.")).not.toBeInTheDocument()
   })
 
+  it("shows an in-progress message (not empty sections) while the run is still running", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ...report,
+          status: "running",
+          finished_at: null,
+          summary: { counts_by_severity: { info: 0, warning: 0, critical: 0 }, total: 0 },
+          sections: buildSections({}),
+          findings: [],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    )
+
+    renderReportResults()
+
+    const status = await screen.findByRole("status")
+    expect(status).toHaveTextContent(/still running/i)
+    // No section headings render while the run is in progress.
+    expect(screen.queryByRole("heading", { level: 2, name: "Summary" })).toBeNull()
+  })
+
   it("copies the Markdown export to the clipboard from the export endpoint", async () => {
     const fetchMock = mockReportAndExportFetch()
     const writeText = vi.fn().mockResolvedValue(undefined)
@@ -300,7 +323,7 @@ describe("ReportResultsPage", () => {
     await waitFor(() => expect(revokeObjectURL).toHaveBeenCalledWith("blob:report"))
   })
 
-  it("renders persisted findings offline when only the report endpoint resolves", async () => {
+  it("renders persisted findings offline when only the report and signal-definitions endpoints resolve", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const url = String(input)
       if (url.endsWith("/api/reports/report-1")) {
@@ -311,7 +334,15 @@ describe("ReportResultsPage", () => {
           }),
         )
       }
-      // Any source/connector call must never be made when viewing a persisted report.
+      if (url.endsWith("/api/signal-definitions")) {
+        return Promise.resolve(
+          new Response(JSON.stringify([]), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
+        )
+      }
+      // Source/connector calls must never be made when viewing a persisted report.
       return Promise.reject(new Error(`unexpected offline fetch to ${url}`))
     })
 
@@ -370,5 +401,154 @@ describe("ReportResultsPage", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "The export could not be generated.",
     )
+  })
+
+  it("shows immutability copy on every report results page", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify(report), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    )
+    renderReportResults()
+    await screen.findByText("PLAT-9 blocked for 6 days")
+    expect(
+      screen.getByText(
+        "Results reflect signal configuration at run time. Edits to signals affect only future runs.",
+      ),
+    ).toBeInTheDocument()
+  })
+
+  it("shows the signals-changed banner when a snapshot signal was deleted from current definitions", async () => {
+    const reportWithSnapshot = {
+      ...report,
+      signal_pack_snapshot: {
+        signal_definitions: [
+          {
+            id: "sig-deleted",
+            name: "Deleted signal",
+            entity_type: "workitem",
+            category: "delivery_flow",
+            origin: "system_template",
+            template_key: null,
+          },
+        ],
+      },
+    }
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = String(input)
+      if (url.endsWith("/api/signal-definitions")) {
+        return Promise.resolve(
+          new Response(JSON.stringify([]), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
+        )
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify(reportWithSnapshot), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+    })
+    renderReportResults()
+    await screen.findByText("PLAT-9 blocked for 6 days")
+    expect(
+      await screen.findByText(/configuration of some signals changed since this run/i),
+    ).toBeInTheDocument()
+  })
+
+  it("hides the signals-changed banner when snapshot matches current definitions", async () => {
+    const signalDef = {
+      id: "sig-1",
+      name: "Blocked work item",
+      entity_type: "workitem",
+      expression: {},
+      report_settings: { severity: "critical", category: "delivery_flow" },
+      origin: "system_template",
+      template_key: "blocked_work_item",
+      description: null,
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    }
+    const reportWithSnapshot = {
+      ...report,
+      signal_pack_snapshot: {
+        signal_definitions: [
+          {
+            id: "sig-1",
+            name: "Blocked work item",
+            entity_type: "workitem",
+            category: "delivery_flow",
+            origin: "system_template",
+            template_key: "blocked_work_item",
+          },
+        ],
+      },
+    }
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = String(input)
+      if (url.endsWith("/api/signal-definitions")) {
+        return Promise.resolve(
+          new Response(JSON.stringify([signalDef]), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
+        )
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify(reportWithSnapshot), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+    })
+    renderReportResults()
+    await screen.findByText("PLAT-9 blocked for 6 days")
+    expect(
+      screen.queryByText(/configuration of some signals changed since this run/i),
+    ).toBeNull()
+  })
+
+  it("reveals snapshot signals when 'Show me' is clicked in the banner", async () => {
+    const reportWithSnapshot = {
+      ...report,
+      signal_pack_snapshot: {
+        signal_definitions: [
+          {
+            id: "sig-gone",
+            name: "Gone signal",
+            entity_type: "sprint",
+            category: "sprint_health",
+            origin: "user_created",
+            template_key: null,
+          },
+        ],
+      },
+    }
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = String(input)
+      if (url.endsWith("/api/signal-definitions")) {
+        return Promise.resolve(
+          new Response(JSON.stringify([]), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
+        )
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify(reportWithSnapshot), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+    })
+    renderReportResults()
+    await screen.findByText(/configuration of some signals changed since this run/i)
+
+    fireEvent.click(screen.getByRole("button", { name: "Show me" }))
+    expect(screen.getByText("Gone signal")).toBeInTheDocument()
+    expect(screen.getByText("(sprint)")).toBeInTheDocument()
   })
 })

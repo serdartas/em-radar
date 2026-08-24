@@ -220,6 +220,18 @@ describe("SettingsPrivacyPage", () => {
     expect(screen.getByRole("switch", { name: "Enable anonymous telemetry" })).toBeDisabled()
   })
 
+  it("shows a Callout alert when the delete report history mutation fails", async () => {
+    mockFetch([], 500)
+    renderPage()
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete report history" }))
+    fireEvent.click(screen.getByRole("button", { name: "Confirm delete" }))
+
+    const alert = await screen.findByRole("alert")
+    expect(alert).toBeInTheDocument()
+    expect(alert.textContent).toMatch(/could not delete report history/i)
+  })
+
   it("toggle is disabled and an error message is shown when settings query fails", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = String(input)

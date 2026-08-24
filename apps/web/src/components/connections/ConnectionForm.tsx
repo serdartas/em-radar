@@ -6,6 +6,10 @@ import { Link } from "react-router-dom"
 
 import { SchemaForm } from "@/components/SchemaForm"
 import { TestResult } from "@/components/connections/TestResult"
+import {
+  type FieldMappingValues,
+  JiraFieldMappingSection,
+} from "@/components/connections/JiraFieldMappingSection"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -20,7 +24,7 @@ import {
   testConnectionDraft,
   updateConnection,
 } from "@/lib/connections"
-import { isSecret, type JsonSchema } from "@/lib/jsonSchema"
+import { isSecret, type JsonSchema, resolveProperty, schemaType } from "@/lib/jsonSchema"
 
 function defaultValues(schema: JsonSchema): Record<string, unknown> {
   const values: Record<string, unknown> = {}
@@ -57,6 +61,32 @@ function writableValues(
   return next
 }
 
+/**
+ * Returns true when all schema-required fields have a non-blank value.
+ * In edit mode, secret fields (API tokens) may be left blank to keep the
+ * existing server-side value — they are excluded from the blank check.
+ */
+function requiredSchemaFieldsFilled(
+  schema: JsonSchema,
+  values: Record<string, unknown>,
+  isEditing: boolean,
+): boolean {
+  const defs = schema.$defs ?? {}
+  return (schema.required ?? []).every((key) => {
+    const raw = schema.properties?.[key]
+    if (!raw) return true
+    const property = resolveProperty(raw, defs)
+    // Tokens are intentionally blank in edit mode (preserved on the server).
+    if (isEditing && isSecret(property)) return true
+    // A switch always represents a definite true/false; unchecked = false is a valid value.
+    if (schemaType(property) === "boolean") return true
+    const value = values[key]
+    if (value === undefined || value === null) return false
+    if (typeof value === "string" && value.trim() === "") return false
+    return true
+  })
+}
+
 interface ConnectionFormProps {
   connectors: Connector[]
   editing?: SourceConnection | null
@@ -74,9 +104,25 @@ export function ConnectionForm({
 }: ConnectionFormProps) {
   const queryClient = useQueryClient()
   const implementedNames = new Set(connectors.map((connector) => connector.name))
-  const [connectorName, setConnectorName] = useState("")
-  const [connectionName, setConnectionName] = useState("")
-  const [values, setValues] = useState<Record<string, unknown>>({})
+
+  // Initialise state synchronously from props so the form is ready on the first render.
+  // The useEffect still handles subsequent prop changes (e.g. switching connections or
+  // transitioning back to add mode on cancel).
+  const [connectorName, setConnectorName] = useState<string>(() => {
+    if (editing) return editing.connector_name
+    return lockConnectorName ?? SOURCE_TYPES.find((t) => implementedNames.has(t.name))?.name ?? ""
+  })
+  const [connectionName, setConnectionName] = useState<string>(() => editing?.name ?? "")
+  const [values, setValues] = useState<Record<string, unknown>>(() => {
+    if (editing) {
+      const connector = connectors.find((c) => c.name === editing.connector_name)
+      return connector ? editValues(connector.config_schema, editing.config) : editing.config
+    }
+    const addTarget =
+      lockConnectorName ?? SOURCE_TYPES.find((t) => implementedNames.has(t.name))?.name
+    const addConnector = addTarget ? connectors.find((c) => c.name === addTarget) : undefined
+    return addConnector ? defaultValues(addConnector.config_schema) : {}
+  })
 
   const testMutation = useMutation({ mutationFn: testConnectionDraft })
   const saveMutation = useMutation({
@@ -152,7 +198,10 @@ export function ConnectionForm({
   }
 
   const submitDisabled =
-    !selectedConnector || connectionName.trim() === "" || saveMutation.isPending
+    !selectedConnector ||
+    connectionName.trim() === "" ||
+    saveMutation.isPending ||
+    !requiredSchemaFieldsFilled(selectedConnector.config_schema, values, editing !== null)
 
   return (
     <Card>
@@ -203,13 +252,29 @@ export function ConnectionForm({
 
           {selectedConnector && (
             <SchemaForm
+              exemptSecrets={editing !== null}
               fieldHelp={FIELD_HELP_BY_CONNECTOR[selectedConnector.name]}
               idPrefix="connection"
               onChange={changeField}
               schema={selectedConnector.config_schema}
+              skipKeys={selectedConnector.name === "jira" ? JIRA_SKIP_KEYS : undefined}
               values={values}
             />
           )}
+
+          {selectedConnector?.name === "jira" && (() => {
+            const { acHeadingDefault } = jiraFieldMappingDefaults(
+              selectedConnector.config_schema,
+            )
+            return (
+              <JiraFieldMappingSection
+                acHeadingDefault={acHeadingDefault}
+                connectionId={editing?.id}
+                fieldMappingValues={toFieldMappingValues(values.field_mapping)}
+                onFieldMappingChange={(next) => changeField("field_mapping", next)}
+              />
+            )
+          })()}
 
           <TestResult error={testMutation.error} result={testMutation.data} />
 
@@ -235,7 +300,7 @@ export function ConnectionForm({
                   ? "Save connection"
                   : "Add connection"}
             </Button>
-            {editing && onCancel && (
+            {onCancel && (
               <Button onClick={onCancel} type="button" variant="outline">
                 Cancel
               </Button>
@@ -250,6 +315,50 @@ export function ConnectionForm({
       </form>
     </Card>
   )
+}
+
+/** Fields rendered by the purpose-built JiraFieldMappingSection — skip them in SchemaForm. */
+const JIRA_SKIP_KEYS = new Set(["field_mapping"])
+
+// Module-level fallback used only when the schema lookup returns undefined.
+const AC_HEADING_DEFAULT_FALLBACK = "### Acceptance Criteria"
+
+/**
+ * Extract the acceptance_criteria_heading default from the connector's config_schema.
+ * Resolves the field_mapping $ref into its $defs entry and reads the `default` value.
+ * Falls back to the known Jira default if the schema is missing it.
+ */
+function jiraFieldMappingDefaults(schema: JsonSchema): {
+  acHeadingDefault: string
+} {
+  const ref = schema.properties?.field_mapping?.$ref
+  const defKey = ref?.replace(/^#\/\$defs\//, "")
+  const def = defKey !== undefined ? schema.$defs?.[defKey] : undefined
+  const props = def?.properties
+  return {
+    acHeadingDefault:
+      (props?.acceptance_criteria_heading?.default as string | undefined) ??
+      AC_HEADING_DEFAULT_FALLBACK,
+  }
+}
+
+function toFieldMappingValues(raw: unknown): FieldMappingValues | undefined {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    return undefined
+  }
+  const obj = raw as Record<string, unknown>
+  return {
+    story_points: typeof obj.story_points === "string" ? obj.story_points : undefined,
+    acceptance_criteria:
+      typeof obj.acceptance_criteria === "string" || obj.acceptance_criteria === null
+        ? (obj.acceptance_criteria as string | null)
+        : undefined,
+    acceptance_criteria_heading:
+      typeof obj.acceptance_criteria_heading === "string" ||
+      obj.acceptance_criteria_heading === null
+        ? (obj.acceptance_criteria_heading as string | null)
+        : undefined,
+  }
 }
 
 const JIRA_FIELD_HELP: Record<string, ReactNode> = {
@@ -285,26 +394,6 @@ const JIRA_FIELD_HELP: Record<string, ReactNode> = {
       Cloud and any instance with a valid certificate. Only turn it off for a self-hosted server
       that uses a self-signed or internal certificate. Doing so is less secure.
     </p>
-  ),
-  field_mapping: (
-    <>
-      <p>
-        Advanced. Maps EM Radar concepts to your Jira fields so signals can read story points,
-        epics, acceptance criteria, and blocked state.
-      </p>
-      <p className="mt-1.5">
-        <strong>How to use:</strong> for Story points and Epic link, enter the Jira custom-field ID
-        (like <code className="rounded bg-blue-100 px-1">customfield_10016</code>), which you can
-        find in Jira under Settings → Issues → Custom fields. For Blocked label and Blocked status,
-        enter the exact label text and status name your team uses (e.g.{" "}
-        <code className="rounded bg-blue-100 px-1">blocked</code> /{" "}
-        <code className="rounded bg-blue-100 px-1">Blocked</code>). Leave a field blank to turn that
-        mapping off.
-      </p>
-      <p className="mt-1.5">
-        The defaults match a standard Jira setup. Change a value only if your instance differs.
-      </p>
-    </>
   ),
 }
 

@@ -35,7 +35,13 @@ export interface JsonSchema {
 
 export function fieldLabel(key: string, property: JsonSchemaProperty): string {
   if (property.title) {
-    return property.title
+    // Humanize PascalCase schema class names (e.g. "JiraFieldMappingConfig" → "Jira Field Mapping").
+    // Strip a trailing "Config" qualifier, then insert spaces before each uppercase boundary.
+    const humanized = property.title
+      .replace(/Config$/, "")
+      .replace(/([a-z])([A-Z])/g, "$1 $2")
+      .trim()
+    return humanized || property.title
   }
   return key
     .replace(/[_-]+/g, " ")

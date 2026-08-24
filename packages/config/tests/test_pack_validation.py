@@ -245,6 +245,28 @@ spec:
         category: flow
 """
 
+EXPRESSION_PACK_TEMPLATE_NO_VALUE = """\
+apiVersion: emradar.dev/v1
+kind: SignalPack
+metadata:
+  name: expr-pack
+  version: 1.0.0
+  description: Expression validation pack.
+spec:
+  signals:
+    - name: Test signal
+      entity_type: {entity_type}
+      expression:
+        type: group
+        operator: all
+        conditions:
+          - field: {field}
+            operator: {operator}
+      report_settings:
+        severity: warning
+        category: flow
+"""
+
 
 def test_signal_missing_expression_raises_validation_error() -> None:
     yaml_text = """\
@@ -267,7 +289,22 @@ spec:
         load_signal_pack(yaml_text)
 
 
-def test_sprint_field_rejected_for_issue_entity_type() -> None:
+def test_valid_custom_field_condition_accepted() -> None:
+    # A customfield_<n> key with a value and an allowed operator round-trips for import.
+    yaml_text = EXPRESSION_PACK_TEMPLATE.format(
+        entity_type="issue",
+        field="customfield_10100",
+        operator="is",
+        value="Backend",
+    )
+    ctx = PackValidationContext(signal_schemas=(JiraConnector.describe_signal_schema(),))
+    load_signal_pack(yaml_text, ctx)
+
+
+def test_unknown_non_customfield_field_rejected() -> None:
+    # sprint_scope_added_pct is a sprint-entity field, so it is unknown for the issue entity
+    # type. Because it is not a customfield_<n> key it must be rejected rather than silently
+    # accepted as a custom field (guards against misspelled built-in names).
     yaml_text = EXPRESSION_PACK_TEMPLATE.format(
         entity_type="issue",
         field="sprint_scope_added_pct",
@@ -275,8 +312,99 @@ def test_sprint_field_rejected_for_issue_entity_type() -> None:
         value=10,
     )
     ctx = PackValidationContext(signal_schemas=(JiraConnector.describe_signal_schema(),))
-
     with pytest.raises(PackValidationError, match="sprint_scope_added_pct"):
+        load_signal_pack(yaml_text, ctx)
+
+
+def test_misspelled_builtin_field_rejected() -> None:
+    yaml_text = EXPRESSION_PACK_TEMPLATE.format(
+        entity_type="issue",
+        field="statuss",
+        operator="is",
+        value="Done",
+    )
+    ctx = PackValidationContext(signal_schemas=(JiraConnector.describe_signal_schema(),))
+    with pytest.raises(PackValidationError, match="statuss"):
+        load_signal_pack(yaml_text, ctx)
+
+
+def test_custom_field_missing_value_rejected_for_enabled_signal() -> None:
+    # An enabled (private_backup) custom-field condition with a value-taking operator must
+    # supply a value, matching built-in field behaviour.
+    yaml_text = """\
+apiVersion: emradar.dev/v1
+kind: SignalPack
+metadata:
+  name: custom-field-pack
+  version: 1.0.0
+  description: Custom field missing value.
+spec:
+  signals:
+    - name: Custom field signal
+      entity_type: issue
+      expression:
+        type: group
+        operator: all
+        conditions:
+          - field: customfield_10100
+            operator: is
+      report_settings:
+        severity: warning
+        category: flow
+"""
+    ctx = PackValidationContext(signal_schemas=(JiraConnector.describe_signal_schema(),))
+    with pytest.raises(PackValidationError, match="value is required"):
+        load_signal_pack(yaml_text, ctx)
+
+
+def test_custom_field_missing_value_allowed_for_public_template() -> None:
+    yaml_text = """\
+apiVersion: emradar.dev/v1
+kind: SignalPack
+metadata:
+  name: custom-field-template
+  version: 1.0.0
+  description: Custom field template.
+spec:
+  export_type: public_template
+  signals:
+    - name: Custom field signal
+      entity_type: issue
+      expression:
+        type: group
+        operator: all
+        conditions:
+          - field: customfield_10100
+            operator: is
+      report_settings:
+        severity: warning
+        category: flow
+"""
+    ctx = PackValidationContext(signal_schemas=(JiraConnector.describe_signal_schema(),))
+    load_signal_pack(yaml_text, ctx)
+
+
+def test_custom_field_is_empty_operator_needs_no_value() -> None:
+    yaml_text = EXPRESSION_PACK_TEMPLATE_NO_VALUE.format(
+        entity_type="issue",
+        field="customfield_10100",
+        operator="is_empty",
+    )
+    ctx = PackValidationContext(signal_schemas=(JiraConnector.describe_signal_schema(),))
+    load_signal_pack(yaml_text, ctx)
+
+
+def test_unknown_field_with_disallowed_operator_rejected() -> None:
+    # An operator not in the custom-field allowlist (is_before) must still be rejected.
+    yaml_text = EXPRESSION_PACK_TEMPLATE.format(
+        entity_type="issue",
+        field="jira_private_priority",
+        operator="is_before",
+        value="some-value",
+    )
+    ctx = PackValidationContext(signal_schemas=(JiraConnector.describe_signal_schema(),))
+
+    with pytest.raises(PackValidationError, match="jira_private_priority"):
         load_signal_pack(yaml_text, ctx)
 
 

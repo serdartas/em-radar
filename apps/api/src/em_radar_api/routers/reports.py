@@ -18,6 +18,7 @@ from em_radar_core.connectors import (
     MergeRequestProvider,
     MergeRequestScope,
     ReviewProvider,
+    SignalCapabilitySchema,
     TransitionProvider,
     WorkItemProvider,
     WorkItemScope,
@@ -29,6 +30,7 @@ from em_radar_core.evaluation import (
     evaluate_signal_definition,
     is_source_linking_signal,
 )
+from em_radar_core.evaluation import declarative as _eval_declarative
 from em_radar_core.models import (
     Board,
     Confidence,
@@ -62,7 +64,13 @@ from sqlalchemy.orm import sessionmaker
 from sqlmodel import Session, select
 
 
-from em_radar_api.db import get_session, get_session_factory, get_write_session, write_lock_acquired, write_session
+from em_radar_api.db import (
+    get_session,
+    get_session_factory,
+    get_write_session,
+    write_lock_acquired,
+    write_session,
+)
 from em_radar_api.report_export import build_report_markdown, build_sectioned_report
 from em_radar_api.connector_registry import create_connector, get_connector_capabilities
 from em_radar_api.repositories.canonical import persist_fetch
@@ -580,9 +588,11 @@ async def _run_team_report(
     # Compute derived values before creating coroutines to avoid an unawaited-coroutine leak
     # if a pure-Python step raises between coroutine construction and gather.
     mr_window = _code_fetch_window(window, board_meta.sprints if board_meta else [], started_at)
+    jira_schema = JiraConnector.describe_signal_schema()
+    custom_field_ids = _referenced_custom_field_ids(board_definitions, jira_schema)
     wi_result, code_result = await asyncio.gather(
         (
-            _fetch_workitems_and_transitions(board_meta, window)
+            _fetch_workitems_and_transitions(board_meta, window, custom_field_ids)
             if board_meta is not None
             else _resolved(([], []))
         ),
@@ -617,6 +627,34 @@ async def _run_team_report(
         if board_meta is not None and not any(n["source"] == "board" for n in partial_data_notes)
         else None
     )
+
+    # Custom-field discovery can fail while the rest of the board fetch succeeds; surface it as a
+    # distinct partial note so custom-field signals are reported as unevaluated rather than as
+    # silently producing no findings.
+    custom_fields_blocked = (
+        board_meta is not None
+        and board_data is not None
+        and bool(custom_field_ids)
+        and getattr(board_meta.connector, "custom_fields_unavailable", False)
+    )
+    blocked_definition_ids: frozenset[int] = frozenset()
+    if custom_fields_blocked:
+        partial_data_notes.append(
+            {
+                "source": "custom_fields",
+                "reason": "custom-field metadata unavailable; custom-field signals not evaluated",
+            }
+        )
+        _builtin_jira_keys = {f.key for f in jira_schema.fields}
+        blocked_definition_ids = frozenset(
+            id(defn)
+            for defn in board_definitions
+            if defn.expression is not None
+            and any(
+                isinstance(leaf.get("field"), str) and leaf["field"] not in _builtin_jira_keys
+                for leaf in _eval_declarative.leaf_conditions(defn.expression)
+            )
+        )
 
     code_data: _CodeFetchResult | None = None
     if isinstance(code_result, BaseException):
@@ -676,12 +714,16 @@ async def _run_team_report(
             sprint_obj = next((s for s in board_meta.sprints if s.id == window.sprint_id), None)
             if sprint_obj is not None:
                 sprint_label = sprint_obj.name
-        session.add(EvaluationWindowTable(**persisted_window.model_dump(), sprint_label=sprint_label))
+        session.add(
+            EvaluationWindowTable(**persisted_window.model_dump(), sprint_label=sprint_label)
+        )
         session.commit()
 
         ctx = EvaluationContext(now=started_at, window=window, team=team)
         board_scope_descriptor = (
-            _scope_descriptor(board_scope, connector_name="jira") if board_scope is not None else None
+            _scope_descriptor(board_scope, connector_name="jira")
+            if board_scope is not None
+            else None
         )
 
         skipped_signals = _skipped_signal_entries(
@@ -751,6 +793,8 @@ async def _run_team_report(
             ):
                 scope_descriptor = board_scope_descriptor
                 for definition in board_definitions:
+                    if id(definition) in blocked_definition_ids:
+                        continue
                     findings.extend(
                         evaluate_signal_definition(
                             definition,
@@ -896,6 +940,7 @@ async def _list_sprints_best_effort(
 async def _fetch_workitems_and_transitions(
     meta: _BoardMetadata,
     window: EvaluationWindow,
+    custom_field_ids: list[str] | None = None,
 ) -> tuple[list[WorkItem], list[Transition]]:
     """Fetch workitems and transitions for an already-initialized board connector."""
     board_external_id = meta.board.external_id
@@ -912,6 +957,7 @@ async def _fetch_workitems_and_transitions(
                     project_external_ids=[meta.project.external_id],
                     board_external_ids=[board_external_id],
                     sprint_external_id=sprint_external_id,
+                    custom_field_ids=custom_field_ids or [],
                 ),
                 window,
             )
@@ -1230,6 +1276,26 @@ def _persisted_finding(
     return SignalFindingTable(**data)
 
 
+def _referenced_custom_field_ids(
+    board_definitions: list[SignalDefinition],
+    schema: SignalCapabilitySchema,
+) -> list[str]:
+    """Return sorted, deduped custom field ids referenced in board signal expressions.
+
+    A field is considered custom when its key is not among the built-in schema fields.
+    """
+    builtin_keys = {f.key for f in schema.fields}
+    custom_ids: set[str] = set()
+    for defn in board_definitions:
+        if defn.expression is None:
+            continue
+        for leaf in _eval_declarative.leaf_conditions(defn.expression):
+            field_key = leaf.get("field")
+            if isinstance(field_key, str) and field_key not in builtin_keys:
+                custom_ids.add(field_key)
+    return sorted(custom_ids)
+
+
 def _partition_definitions_by_source(
     definitions: list[SignalDefinition],
 ) -> tuple[list[SignalDefinition], list[SignalDefinition]]:
@@ -1305,6 +1371,9 @@ def _team_signal_pack_snapshot(
                 "origin": definition.origin.value,
                 "template_key": definition.template_key,
                 "is_source_linking": is_source_linking_signal(definition),
+                "expression": definition.expression,
+                "severity": definition.report_settings.severity,
+                "message_template": definition.report_settings.message_template,
             }
             for definition in definitions
         ],

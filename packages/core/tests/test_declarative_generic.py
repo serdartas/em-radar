@@ -13,6 +13,7 @@ from datetime import timedelta
 from pathlib import Path
 from uuid import uuid4
 
+import pytest
 
 from em_radar_core.evaluation import (
     ExpressionValidationError,
@@ -570,7 +571,9 @@ def test_story_points_numeric_threshold_does_not_fire_below() -> None:
     assert findings == []
 
 
-def test_exclude_labels_is_not_a_resolvable_field() -> None:
+def test_non_customfield_unknown_field_raises() -> None:
+    # exclude_labels is not a schema field and is not a customfield_<n> key, so it must be
+    # rejected rather than silently treated as a custom-field lookup (guards misspellings).
     item = workitem(labels=["blocked"])
     definition = _definition(
         {
@@ -581,9 +584,7 @@ def test_exclude_labels_is_not_a_resolvable_field() -> None:
             ],
         }
     )
-    import pytest
-
-    with pytest.raises(ExpressionValidationError):
+    with pytest.raises(ExpressionValidationError, match="exclude_labels"):
         evaluate_signal_definition(
             definition,
             _data(item),

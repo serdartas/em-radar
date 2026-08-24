@@ -452,14 +452,15 @@ def test_mr_source_branch_glob_filter() -> None:
 
 
 def test_validate_expression_rejects_workitem_field_in_mr_signal() -> None:
-    """status_category is a Jira/workitem field; it should not be valid in an MR expression."""
+    # status_category is not in the MR schema and is not a customfield_<n> key, so it must be
+    # rejected at validation time rather than silently accepted as a custom-field reference.
     expression = {
         "type": "group",
         "operator": "all",
         "conditions": [{"field": "status_category", "operator": "is", "value": "in_progress"}],
     }
 
-    with pytest.raises(ExpressionValidationError, match="unknown field"):
+    with pytest.raises(ExpressionValidationError, match="status_category"):
         validate_expression(expression, GitLabConnector.describe_signal_schema(), [_scope()])
 
 
@@ -475,14 +476,15 @@ def test_validate_expression_accepts_mr_field() -> None:
 
 
 def test_validate_expression_rejects_mr_field_in_jira_signal() -> None:
-    """state is a GitLab MR field; it should not be valid in a Jira expression."""
+    # "state" is not in the Jira/issue schema and is not a customfield_<n> key, so it must be
+    # rejected at validation time rather than silently accepted as a custom-field reference.
     expression = {
         "type": "group",
         "operator": "all",
         "conditions": [{"field": "state", "operator": "is", "value": "open"}],
     }
 
-    with pytest.raises(ExpressionValidationError, match="unknown field"):
+    with pytest.raises(ExpressionValidationError, match="state"):
         validate_expression(expression, JiraConnector.describe_signal_schema(), [_scope()])
 
 

@@ -13,6 +13,7 @@ from yaml.nodes import MappingNode
 
 from em_radar_config.models import FieldMappings, SignalEntry, SignalPack, SignalScope
 from em_radar_core.connectors import SignalCapabilitySchema, SignalField
+from em_radar_core.evaluation.declarative import CUSTOM_FIELD_OPERATORS, is_custom_field_key
 
 API_VERSION = "emradar.dev/v1"
 PACK_KIND = "SignalPack"
@@ -243,7 +244,6 @@ def rules_to_expression(rules: list[dict[str, object]]) -> dict[str, object]:
     return {"type": "group", "operator": group_operator, "conditions": conditions}
 
 
-
 def _resolve_signal_expression(signal: SignalEntry) -> dict[str, object] | None:
     """Convert rules list to expression dict, or return expression directly."""
     if signal.rules is not None:
@@ -295,12 +295,14 @@ def _validate_signal_expression(
         if field.entity_type == entity_type
         or (field.entity_type is None and entity_type == primary)
     }
+    allow_custom_field_keys = entity_type in schema.custom_field_entity_types
     _validate_expression_node(
         expression,
         fields,
         path=path,
         allow_missing_values=allow_missing_values,
         depth=depth,
+        allow_custom_field_keys=allow_custom_field_keys,
     )
 
 
@@ -311,6 +313,7 @@ def _validate_expression_node(
     path: str,
     allow_missing_values: bool,
     depth: int,
+    allow_custom_field_keys: bool = True,
 ) -> None:
     if expression.get("type") == "group":
         if depth > 1:
@@ -329,6 +332,7 @@ def _validate_expression_node(
                 path=f"{path}.conditions.{index}",
                 allow_missing_values=allow_missing_values,
                 depth=depth + 1,
+                allow_custom_field_keys=allow_custom_field_keys,
             )
         return
 
@@ -338,7 +342,20 @@ def _validate_expression_node(
         raise PackValidationError(f"{path} requires field and operator")
     field_schema = fields.get(field_key)
     if field_schema is None:
-        raise PackValidationError(f"{path}.field {field_key!r} is not supported")
+        # Unknown field: accept as a custom field only when the key has the customfield_<n>
+        # shape and the operator is in the allowed set, so export→import round-trips for
+        # custom-field signals work correctly. A misspelled built-in name still raises.
+        if (
+            not allow_custom_field_keys
+            or not is_custom_field_key(field_key)
+            or operator not in CUSTOM_FIELD_OPERATORS
+        ):
+            raise PackValidationError(f"{path}.field {field_key!r} is not supported")
+        if operator in {"is_empty", "is_not_empty"}:
+            return
+        if "value" not in expression and not allow_missing_values:
+            raise PackValidationError(f"{path}.value is required for enabled signals")
+        return
     if operator not in field_schema.operators:
         raise PackValidationError(f"{path}.operator {operator!r} is not valid for {field_key!r}")
     if operator in {"is_empty", "is_not_empty"}:

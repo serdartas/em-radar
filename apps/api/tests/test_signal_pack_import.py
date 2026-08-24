@@ -133,8 +133,8 @@ spec:
         operator: all
         conditions:
           - field: jira_private_priority
-            operator: is
-            value: High
+            operator: is_before
+            value: some-value
       report_settings:
         severity: warning
         category: flow
@@ -343,3 +343,78 @@ def test_valid_definition_pack_with_unique_names_imports_successfully(
     names = {d["name"] for d in definitions}
     assert "Signal Alpha" in names
     assert "Signal Beta" in names
+
+
+_SPRINT_CUSTOM_FIELD_PACK = """\
+apiVersion: emradar.dev/v1
+kind: SignalPack
+metadata:
+  name: sprint-custom-field-pack
+  version: 1.0.0
+  description: Pack with a custom field on a sprint signal (invalid).
+spec:
+  export_type: private_backup
+  signals:
+    - name: Sprint Custom Field Signal
+      entity_type: sprint
+      expression:
+        type: group
+        operator: all
+        conditions:
+          - field: customfield_10100
+            operator: is_empty
+      report_settings:
+        severity: warning
+        category: hygiene
+"""
+
+_ISSUE_CUSTOM_FIELD_PACK = """\
+apiVersion: emradar.dev/v1
+kind: SignalPack
+metadata:
+  name: issue-custom-field-pack
+  version: 1.0.0
+  description: Pack with a custom field on an issue signal (valid).
+spec:
+  export_type: private_backup
+  signals:
+    - name: Issue Custom Field Signal
+      entity_type: issue
+      expression:
+        type: group
+        operator: all
+        conditions:
+          - field: customfield_10100
+            operator: is_empty
+      report_settings:
+        severity: warning
+        category: hygiene
+"""
+
+
+def test_import_rejects_custom_field_on_sprint_signal(
+    api_client: TestClient,
+) -> None:
+    """A customfield_<n> field key on a sprint signal must fail validation at import."""
+    response = api_client.post(
+        "/api/signal-pack/import/apply",
+        json={"raw_yaml": _SPRINT_CUSTOM_FIELD_PACK},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "invalid-signal-pack"
+    assert "customfield_10100" in response.json()["detail"]["message"]
+
+
+def test_import_accepts_custom_field_on_issue_signal(
+    api_client: TestClient,
+) -> None:
+    """A customfield_<n> field key on an issue signal must pass validation."""
+    response = api_client.post(
+        "/api/signal-pack/import/apply",
+        json={"raw_yaml": _ISSUE_CUSTOM_FIELD_PACK},
+    )
+
+    assert response.status_code == 200
+    definitions = api_client.get("/api/signal-definitions").json()
+    assert any(d["name"] == "Issue Custom Field Signal" for d in definitions)

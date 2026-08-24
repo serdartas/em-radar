@@ -435,6 +435,26 @@ describe("Combobox", () => {
     expect(input).not.toHaveAttribute("aria-controls")
   })
 
+  it("disabled Combobox does not open or accept input", () => {
+    render(
+      <Combobox
+        disabled
+        inputLabel="Fruit"
+        onSelect={vi.fn()}
+        options={options}
+        placeholder="Pick..."
+      />,
+    )
+    const input = screen.getByRole("combobox")
+    expect(input).toBeDisabled()
+    // Focus and change must not open the listbox.
+    fireEvent.focus(input)
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument()
+    fireEvent.change(input, { target: { value: "an" } })
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument()
+  })
+
+
   it("calls scrollIntoView on the active option when navigating with keyboard", () => {
     const scrollIntoView = vi.fn()
     window.HTMLElement.prototype.scrollIntoView = scrollIntoView
@@ -510,6 +530,51 @@ describe("InlineCreateRow", () => {
       />,
     )
     expect(screen.getByRole("button", { name: "Add" })).toBeInTheDocument()
+  })
+
+  it("input is NOT disabled and button IS disabled when value is empty (user can type the first char)", () => {
+    render(
+      <InlineCreateRow
+        inputId="field"
+        label="Label"
+        onChange={vi.fn()}
+        onAction={vi.fn()}
+        value=""
+      />,
+    )
+    // Input must be interactive so the user can type
+    expect(screen.getByLabelText("Label")).not.toBeDisabled()
+    // Button must be disabled — nothing to submit yet
+    expect(screen.getByRole("button", { name: "Create" })).toBeDisabled()
+  })
+
+  it("button becomes enabled when value is non-empty", () => {
+    render(
+      <InlineCreateRow
+        inputId="field"
+        label="Label"
+        onChange={vi.fn()}
+        onAction={vi.fn()}
+        value="hello"
+      />,
+    )
+    expect(screen.getByLabelText("Label")).not.toBeDisabled()
+    expect(screen.getByRole("button", { name: "Create" })).not.toBeDisabled()
+  })
+
+  it("disables the input (and button) when disabled=true (busy/pending state)", () => {
+    render(
+      <InlineCreateRow
+        disabled
+        inputId="field"
+        label="Label"
+        onChange={vi.fn()}
+        onAction={vi.fn()}
+        value="hello"
+      />,
+    )
+    expect(screen.getByLabelText("Label")).toBeDisabled()
+    expect(screen.getByRole("button", { name: "Create" })).toBeDisabled()
   })
 })
 

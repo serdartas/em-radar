@@ -4,7 +4,11 @@ import { useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 
 import { Button } from "@/components/ui/button"
+import { Callout } from "@/components/ui/callout"
 import { Card, CardContent } from "@/components/ui/card"
+import { FormRow } from "@/components/ui/form-row"
+import { Input } from "@/components/ui/input"
+import { InlineCreateRow } from "@/components/ui/inline-create-row"
 import { Label } from "@/components/ui/label"
 import { Select } from "@/components/ui/select"
 import {
@@ -55,22 +59,16 @@ export function SignalConfigGroupsPage() {
       </header>
 
       <Card>
-        <CardContent className="flex flex-wrap items-end gap-3 p-4">
-          <div className="space-y-1.5">
-            <Label htmlFor="group-name">New group name</Label>
-            <input
-              className="w-64 rounded-md border px-3 py-2 text-sm"
-              id="group-name"
-              onChange={(event) => setName(event.target.value)}
-              value={name}
-            />
-          </div>
-          <Button
-            disabled={createMutation.isPending || name.trim().length === 0}
-            onClick={() => createMutation.mutate({ name: name.trim() })}
-          >
-            {createMutation.isPending ? "Creating..." : "Create group"}
-          </Button>
+        <CardContent className="p-4">
+          <InlineCreateRow
+            actionLabel={createMutation.isPending ? "Creating..." : "Create group"}
+            disabled={createMutation.isPending}
+            inputId="group-name"
+            label="New group name"
+            onChange={setName}
+            onAction={() => createMutation.mutate({ name: name.trim() })}
+            value={name}
+          />
         </CardContent>
       </Card>
 
@@ -95,19 +93,29 @@ function GroupCard({
   const queryClient = useQueryClient()
   const [renameValue, setRenameValue] = useState(group.name)
   const [selectedSignal, setSelectedSignal] = useState("")
+  const [updateError, setUpdateError] = useState<string | null>(null)
+  const [renameError, setRenameError] = useState<string | null>(null)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
 
-  const invalidate = () => void queryClient.invalidateQueries({ queryKey: GROUPS_KEY })
+  // Return the promise so React Query awaits the refetch before clearing isPending.
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: GROUPS_KEY })
+
   const updateMutation = useMutation({
     mutationFn: (signal_ids: string[]) => updateSignalConfigGroup(group.id, { signal_ids }),
     onSuccess: invalidate,
+    onError: () => setUpdateError("Could not update signals in this group. Please try again."),
   })
+
   const renameMutation = useMutation({
     mutationFn: (newName: string) => updateSignalConfigGroup(group.id, { name: newName }),
     onSuccess: invalidate,
+    onError: () => setRenameError("Could not rename the group. Please try again."),
   })
+
   const deleteMutation = useMutation({
     mutationFn: () => deleteSignalConfigGroup(group.id),
     onSuccess: invalidate,
+    onError: () => setDeleteError("Could not delete the group. Please try again."),
   })
 
   const definitionsById = new Map(definitions.map((definition) => [definition.id, definition]))
@@ -116,30 +124,57 @@ function GroupCard({
   return (
     <Card>
       <CardContent className="space-y-4 p-4">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div className="space-y-1.5">
-            <Label htmlFor={`rename-${group.id}`}>Group name</Label>
-            <input
-              className="w-64 rounded-md border px-3 py-2 text-sm"
-              id={`rename-${group.id}`}
-              onChange={(event) => setRenameValue(event.target.value)}
-              value={renameValue}
-            />
-          </div>
-          <div className="flex gap-2">
-            <Button
-              disabled={renameValue.trim().length === 0 || renameValue.trim() === group.name}
-              onClick={() => renameMutation.mutate(renameValue.trim())}
-              size="sm"
-              variant="outline"
-            >
-              Rename
-            </Button>
-            <Button onClick={() => deleteMutation.mutate()} size="sm" variant="outline">
-              Delete group
-            </Button>
-          </div>
-        </div>
+        <FormRow
+          action={
+            <div className="flex gap-2">
+              <Button
+                disabled={
+                  renameValue.trim().length === 0 ||
+                  renameValue.trim() === group.name ||
+                  renameMutation.isPending
+                }
+                onClick={() => {
+                  setRenameError(null)
+                  renameMutation.mutate(renameValue.trim())
+                }}
+                size="sm"
+                variant="outline"
+              >
+                Rename
+              </Button>
+              <Button
+                disabled={deleteMutation.isPending}
+                onClick={() => {
+                  setDeleteError(null)
+                  deleteMutation.mutate()
+                }}
+                size="sm"
+                variant="outline"
+              >
+                Delete group
+              </Button>
+            </div>
+          }
+          htmlFor={`rename-${group.id}`}
+          label="Group name"
+        >
+          <Input
+            id={`rename-${group.id}`}
+            onChange={(event) => setRenameValue(event.target.value)}
+            value={renameValue}
+          />
+        </FormRow>
+
+        {renameError && (
+          <Callout role="alert" variant="error">
+            {renameError}
+          </Callout>
+        )}
+        {deleteError && (
+          <Callout role="alert" variant="error">
+            {deleteError}
+          </Callout>
+        )}
 
         <div>
           <h3 className="text-sm font-medium text-slate-700">Signals in this group</h3>
@@ -155,9 +190,11 @@ function GroupCard({
                   <span>{definitionsById.get(signalId)?.name ?? signalId}</span>
                   <Button
                     aria-label={`Remove ${definitionsById.get(signalId)?.name ?? signalId}`}
-                    onClick={() =>
+                    disabled={updateMutation.isPending}
+                    onClick={() => {
+                      setUpdateError(null)
                       updateMutation.mutate(group.signal_ids.filter((id) => id !== signalId))
-                    }
+                    }}
                     size="sm"
                     variant="outline"
                   >
@@ -168,6 +205,12 @@ function GroupCard({
             </ul>
           )}
         </div>
+
+        {updateError && (
+          <Callout role="alert" variant="error">
+            {updateError}
+          </Callout>
+        )}
 
         <div className="flex flex-wrap items-end gap-3">
           <div className="space-y-1.5">
@@ -186,8 +229,9 @@ function GroupCard({
             </Select>
           </div>
           <Button
-            disabled={selectedSignal === ""}
+            disabled={selectedSignal === "" || updateMutation.isPending}
             onClick={() => {
+              setUpdateError(null)
               updateMutation.mutate([...group.signal_ids, selectedSignal])
               setSelectedSignal("")
             }}

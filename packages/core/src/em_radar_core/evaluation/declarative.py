@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import fnmatch
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import NamedTuple, TypeAlias
@@ -67,6 +68,28 @@ _FIELD_CONNECTOR_CAPABILITY_MAP: dict[str, tuple[str, str]] = {
     ),
 }
 
+CUSTOM_FIELD_OPERATORS: frozenset[str] = frozenset(
+    {
+        "is",
+        "is_not",
+        "greater_than",
+        "less_than",
+        "is_empty",
+        "is_not_empty",
+        "contains",
+        "does_not_contain",
+    }
+)
+
+# Custom field ids follow Jira's ``customfield_<n>`` shape; gating the custom-field fallback
+# on this pattern keeps misspelled built-in field names from being silently accepted.
+_CUSTOM_FIELD_KEY_PATTERN = re.compile(r"customfield_\d+")
+
+
+def is_custom_field_key(field_key: str) -> bool:
+    """Return True when a key matches Jira's ``customfield_<n>`` custom-field id shape."""
+    return _CUSTOM_FIELD_KEY_PATTERN.fullmatch(field_key) is not None
+
 
 class ExpressionValidationError(ValueError):
     pass
@@ -77,7 +100,7 @@ def check_capability_gate(
     capabilities: Capabilities,
 ) -> SignalSkipNote | None:
     """Return a skip note when the definition requires connector capabilities that are absent."""
-    for leaf in _leaf_conditions(definition.expression):
+    for leaf in leaf_conditions(definition.expression):
         field_key = leaf.get("field")
         if not isinstance(field_key, str):
             continue
@@ -91,7 +114,7 @@ def check_capability_gate(
 
 def _uses_sprint_fields(expression: JsonObject) -> bool:
     """Return True when any leaf condition in the expression references a sprint-specific field."""
-    for leaf in _leaf_conditions(expression):
+    for leaf in leaf_conditions(expression):
         if leaf.get("field") in _SPRINT_FIELDS:
             return True
     return False
@@ -524,21 +547,30 @@ def _validate_condition(
     operator = condition.get("operator")
     if not isinstance(field_key, str) or not isinstance(operator, str):
         raise ExpressionValidationError("conditions require field and operator")
-    field_schema = _field_schema(schema, field_key)
-    if operator not in field_schema.operators:
-        raise ExpressionValidationError(f"{operator} is not valid for {field_key}")
-    required = (
-        field_schema.availability.requires_scope_capability
-        if field_schema.availability is not None
-        else ()
-    )
-    for scope in scopes:
-        missing = set(required).difference(scope.capabilities)
-        if missing:
-            missing_list = ", ".join(sorted(missing))
-            raise ExpressionValidationError(
-                f"{field_key} requires scope capability: {missing_list}"
-            )
+    # Check built-in fields first (collision guard).
+    field_schema = _field_schema_or_none(schema, field_key)
+    if field_schema is not None:
+        if operator not in field_schema.operators:
+            raise ExpressionValidationError(f"{operator} is not valid for {field_key}")
+        required = (
+            field_schema.availability.requires_scope_capability
+            if field_schema.availability is not None
+            else ()
+        )
+        for scope in scopes:
+            missing = set(required).difference(scope.capabilities)
+            if missing:
+                missing_list = ", ".join(sorted(missing))
+                raise ExpressionValidationError(
+                    f"{field_key} requires scope capability: {missing_list}"
+                )
+    else:
+        # Unknown field: treat as a custom field only when the key has the customfield_<n>
+        # shape; a misspelled built-in name (e.g. "statuss") must still raise.
+        if not is_custom_field_key(field_key):
+            raise ExpressionValidationError(f"unknown field: {field_key}")
+        if operator not in CUSTOM_FIELD_OPERATORS:
+            raise ExpressionValidationError(f"{operator} is not valid for custom field {field_key}")
 
 
 def _evaluate_group(
@@ -650,7 +682,7 @@ def _field_value(
         return _sprint_phase(workitem, data, ctx)
     if field_key == "sprint_count":
         return len(tuple(dict.fromkeys(workitem.sprint_ids)))
-    raise ExpressionValidationError(f"unsupported field: {field_key}")
+    return workitem.custom_fields.get(field_key)
 
 
 def _evaluate_mr_group(
@@ -843,11 +875,18 @@ def _compare(observed: object, operator: str, expected: object) -> bool:
     return False
 
 
-def _field_schema(schema: SignalCapabilitySchema, field_key: str) -> SignalField:
+def _field_schema_or_none(schema: SignalCapabilitySchema, field_key: str) -> SignalField | None:
     for field_schema in schema.fields:
         if field_schema.key == field_key:
             return field_schema
-    raise ExpressionValidationError(f"unknown field: {field_key}")
+    return None
+
+
+def _field_schema(schema: SignalCapabilitySchema, field_key: str) -> SignalField:
+    result = _field_schema_or_none(schema, field_key)
+    if result is None:
+        raise ExpressionValidationError(f"unknown field: {field_key}")
+    return result
 
 
 def _workitems_for_scope(data: SignalData, scope: ScopeDescriptor) -> list[WorkItem]:
@@ -996,7 +1035,7 @@ def _json_value(value: object) -> object:
     return value
 
 
-def _leaf_conditions(expression: JsonObject) -> list[JsonObject]:
+def leaf_conditions(expression: JsonObject) -> list[JsonObject]:
     if expression.get("type") != "group":
         return [expression]
     conditions = expression.get("conditions")
@@ -1006,5 +1045,5 @@ def _leaf_conditions(expression: JsonObject) -> list[JsonObject]:
         leaf
         for condition in conditions
         if isinstance(condition, dict)
-        for leaf in _leaf_conditions(condition)
+        for leaf in leaf_conditions(condition)
     ]

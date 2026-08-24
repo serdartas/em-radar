@@ -22,6 +22,14 @@ interface SchemaFormProps {
   idPrefix: string
   onChange: (key: string, value: unknown) => void
   fieldHelp?: Record<string, ReactNode>
+  /** Field keys to exclude from rendering (handled by a caller-supplied custom section). */
+  skipKeys?: ReadonlySet<string> | string[]
+  /**
+   * When true, secret (writeOnly) fields are treated as non-required for both native
+   * constraint validation and aria-required. Use in edit mode where a blank secret field
+   * means "keep the existing server-side value" rather than "field is missing".
+   */
+  exemptSecrets?: boolean
 }
 
 function toInputString(value: unknown): string {
@@ -34,12 +42,13 @@ function toInputString(value: unknown): string {
   return String(value)
 }
 
-export function SchemaForm({ fieldHelp, idPrefix, onChange, schema, values }: SchemaFormProps) {
-  const properties = Object.entries(schema.properties ?? {})
+export function SchemaForm({ exemptSecrets = false, fieldHelp, idPrefix, onChange, schema, skipKeys, values }: SchemaFormProps) {
+  const skip = new Set(skipKeys ?? [])
+  const properties = Object.entries(schema.properties ?? {}).filter(([key]) => !skip.has(key))
   const required = new Set(schema.required ?? [])
   const defs = schema.$defs ?? {}
 
-  if (properties.length === 0) {
+  if (properties.length === 0 && skip.size === 0) {
     return (
       <p className="text-sm text-slate-500">This connector needs no configuration.</p>
     )
@@ -47,19 +56,26 @@ export function SchemaForm({ fieldHelp, idPrefix, onChange, schema, values }: Sc
 
   return (
     <div className="space-y-4">
-      {properties.map(([key, property]) => (
-        <SchemaField
-          defs={defs}
-          fieldId={`${idPrefix}-${key}`}
-          help={fieldHelp?.[key]}
-          key={key}
-          name={key}
-          onChange={onChange}
-          property={property}
-          required={required.has(key)}
-          value={values[key]}
-        />
-      ))}
+      {properties.map(([key, property]) => {
+        // In edit mode, blanked secret fields (tokens) are kept server-side.
+        // Treat them as non-required so neither native constraint validation nor
+        // aria-required signals to assistive technology that the field is missing.
+        const effectiveRequired =
+          required.has(key) && !(exemptSecrets && isSecret(resolveProperty(property, defs)))
+        return (
+          <SchemaField
+            defs={defs}
+            fieldId={`${idPrefix}-${key}`}
+            help={fieldHelp?.[key]}
+            key={key}
+            name={key}
+            onChange={onChange}
+            property={property}
+            required={effectiveRequired}
+            value={values[key]}
+          />
+        )
+      })}
     </div>
   )
 }
@@ -112,7 +128,7 @@ function SchemaField({ defs, fieldId, help, name, onChange, property, required, 
   return (
     <div className="space-y-1.5">
       <FieldLabel help={help} htmlFor={fieldId} label={label} property={resolved} required={required} />
-      {renderControl({ fieldId, name, onChange, property: resolved, type, value })}
+      {renderControl({ fieldId, name, onChange, property: resolved, required, type, value })}
       {resolved.description && <p className="text-xs text-slate-500">{resolved.description}</p>}
     </div>
   )
@@ -187,9 +203,7 @@ function FieldLabel({ help, htmlFor, label, property, required }: FieldLabelProp
     <div className="flex items-center gap-1.5">
       <Label htmlFor={htmlFor}>{label}</Label>
       {required && (
-        <span aria-hidden="true" className="text-red-600">
-          *
-        </span>
+        <span aria-hidden="true" className="text-red-600">*</span>
       )}
       {isSecret(property) && (
         <span aria-hidden="true" className="text-xs font-normal text-slate-500">
@@ -208,14 +222,17 @@ interface ControlProps {
   type: ReturnType<typeof schemaType>
   value: unknown
   onChange: (key: string, value: unknown) => void
+  required?: boolean
 }
 
-function renderControl({ fieldId, name, onChange, property, type, value }: ControlProps) {
+function renderControl({ fieldId, name, onChange, property, required, type, value }: ControlProps) {
   if (property.enum) {
     return (
       <Select
+        aria-required={required}
         id={fieldId}
         onChange={(event) => onChange(name, event.target.value)}
+        required={required}
         value={toInputString(value)}
       >
         {property.enum.map((option) => (
@@ -230,11 +247,13 @@ function renderControl({ fieldId, name, onChange, property, type, value }: Contr
   if (type === "integer" || type === "number") {
     return (
       <Input
+        aria-required={required}
         id={fieldId}
         onChange={(event) => {
           const raw = event.target.value
           onChange(name, raw === "" ? null : Number(raw))
         }}
+        required={required}
         step={type === "integer" ? 1 : "any"}
         type="number"
         value={toInputString(value)}
@@ -245,6 +264,7 @@ function renderControl({ fieldId, name, onChange, property, type, value }: Contr
   if (type === "array") {
     return (
       <Input
+        aria-required={required}
         id={fieldId}
         onChange={(event) =>
           onChange(
@@ -256,6 +276,7 @@ function renderControl({ fieldId, name, onChange, property, type, value }: Contr
           )
         }
         placeholder="comma, separated, values"
+        required={required}
         value={toInputString(value)}
       />
     )
@@ -263,9 +284,11 @@ function renderControl({ fieldId, name, onChange, property, type, value }: Contr
 
   return (
     <Input
+      aria-required={required}
       autoComplete={isSecret(property) ? "new-password" : undefined}
       id={fieldId}
       onChange={(event) => onChange(name, event.target.value)}
+      required={required}
       type={isSecret(property) ? "password" : "text"}
       value={toInputString(value)}
     />

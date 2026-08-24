@@ -4,6 +4,7 @@ import { useState } from "react"
 import type { ReactNode } from "react"
 import { useMutation } from "@tanstack/react-query"
 
+import { Callout } from "@/components/ui/callout"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { ApiError } from "@/lib/api"
 import { type ConnectionConflict, deleteConnection } from "@/lib/connections"
@@ -30,6 +31,9 @@ function ConnectionDeleteConfirm({
   onDeleted,
 }: ConnectionDeleteConfirmProps) {
   const [conflict, setConflict] = useState<ConnectionConflict | null>(null)
+  // Separate from deleteMutation.isError so that a force-delete failure is surfaced even
+  // when conflict is already set (deleteMutation.isError && conflict === null would miss it).
+  const [deleteError, setDeleteError] = useState<string | null>(null)
 
   const deleteMutation = useMutation({
     mutationFn: (force: boolean) => deleteConnection(connectionId, force),
@@ -43,6 +47,9 @@ function ConnectionDeleteConfirm({
         "dependent_teams" in error.detail
       ) {
         setConflict(error.detail as ConnectionConflict)
+      } else {
+        // Non-conflict error on the initial delete OR a failed force-delete.
+        setDeleteError("Could not delete the connection. Please try again.")
       }
     },
   })
@@ -50,7 +57,10 @@ function ConnectionDeleteConfirm({
   const isForce = conflict !== null
   const confirmLabel = isForce ? "Confirm force delete" : "Confirm delete"
 
-  const onConfirm = () => deleteMutation.mutate(isForce)
+  const onConfirm = () => {
+    setDeleteError(null)
+    deleteMutation.mutate(isForce)
+  }
 
   let body: ReactNode
   if (conflict) {
@@ -85,16 +95,23 @@ function ConnectionDeleteConfirm({
   }
 
   return (
-    <ConfirmDialog
-      body={body}
-      className={className}
-      confirmLabel={confirmLabel}
-      onCancel={onCancel}
-      onConfirm={onConfirm}
-      pending={deleteMutation.isPending}
-      title={`Delete connection ${connectionName}`}
-      titleHidden
-    />
+    <>
+      <ConfirmDialog
+        body={body}
+        className={className}
+        confirmLabel={confirmLabel}
+        onCancel={onCancel}
+        onConfirm={onConfirm}
+        pending={deleteMutation.isPending}
+        title={`Delete connection ${connectionName}`}
+        titleHidden
+      />
+      {deleteError && (
+        <Callout className="mt-2" role="alert" variant="error">
+          {deleteError}
+        </Callout>
+      )}
+    </>
   )
 }
 

@@ -67,6 +67,55 @@ def test_signal_updated_at_changes_on_update(api_client: TestClient) -> None:
     assert update_response.json()["updated_at"] is not None
 
 
+def test_update_signal_definition_overwrites_in_place(api_client: TestClient) -> None:
+    created = api_client.post("/api/signal-definitions", json=_definition_payload()).json()
+    original_id = created["id"]
+
+    updated_expression = {
+        "type": "group",
+        "operator": "any",
+        "conditions": [
+            {"field": "status_category", "operator": "is_not", "value": "done"},
+            {"field": "age_in_current_status", "operator": "greater_than", "value": 7},
+        ],
+    }
+    update_payload = {
+        "name": "Renamed signal",
+        "description": "Updated description.",
+        "expression": updated_expression,
+        "report_settings": {"severity": "critical", "category": "hygiene"},
+    }
+
+    response = api_client.patch(f"/api/signal-definitions/{original_id}", json=update_payload)
+
+    assert response.status_code == 200
+    result = response.json()
+    # Same record (no new version) — id unchanged
+    assert result["id"] == original_id
+    assert result["name"] == "Renamed signal"
+    assert result["description"] == "Updated description."
+    assert result["expression"]["operator"] == "any"
+    assert len(result["expression"]["conditions"]) == 2
+    assert result["report_settings"]["severity"] == "critical"
+    assert result["report_settings"]["category"] == "hygiene"
+
+    # Confirm only one definition exists (no duplicate created)
+    all_defs = api_client.get("/api/signal-definitions").json()
+    assert len(all_defs) == 1
+    assert all_defs[0]["id"] == original_id
+
+
+def test_update_signal_definition_returns_404_for_unknown_id(api_client: TestClient) -> None:
+    from uuid import uuid4
+
+    response = api_client.patch(
+        f"/api/signal-definitions/{uuid4()}",
+        json={"name": "Does not exist"},
+    )
+
+    assert response.status_code == 404
+
+
 def test_migration_drops_target_scopes_column(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

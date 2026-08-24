@@ -94,6 +94,42 @@ export function extractPartialDataNotes(snapshot: unknown): PartialDataNote[] {
   )
 }
 
+export interface SnapshotSignal {
+  id: string
+  name: string
+  entity_type: string
+  category: string
+  origin: string
+  template_key: string | null
+  // Optional — present in snapshots written after M8.5-04 extended the pack.
+  // Absent in legacy snapshots; callers must guard with `!== undefined` before comparing.
+  expression?: unknown
+  severity?: string
+  message_template?: string | null
+}
+
+export function extractSnapshotSignals(snapshot: unknown): SnapshotSignal[] {
+  if (typeof snapshot !== "object" || snapshot === null) {
+    return []
+  }
+  const defs = (snapshot as Record<string, unknown>).signal_definitions
+  if (!Array.isArray(defs)) {
+    return []
+  }
+  return defs.filter((d): d is SnapshotSignal => {
+    if (typeof d !== "object" || d === null) return false
+    const record = d as Record<string, unknown>
+    return (
+      typeof record.id === "string" &&
+      typeof record.name === "string" &&
+      typeof record.entity_type === "string" &&
+      typeof record.category === "string" &&
+      typeof record.origin === "string" &&
+      (record.template_key === null || typeof record.template_key === "string")
+    )
+  })
+}
+
 export type JobStatus = "done" | "failed" | "queued" | "running"
 
 export interface ReportJob {

@@ -58,6 +58,7 @@ class WorkItem(CommonFields):
     reporter_id: UUID | None = None
     labels: list[str] = Field(default_factory=list, sa_type=JSON)
     components: list[str] = Field(default_factory=list, sa_type=JSON)
+    custom_fields: dict[str, object] = Field(default_factory=dict, sa_type=JSON)
     parent_id: UUID | None = None
     story_points: float | None = None
     acceptance_criteria: str | None = None

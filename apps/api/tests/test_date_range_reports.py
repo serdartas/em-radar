@@ -425,7 +425,12 @@ def test_naive_date_range_treated_as_utc(
         {"window_type": "date_range", "start": _RANGE_START},
         {"window_type": "date_range", "start": _RANGE_END, "end": _RANGE_START},
         {"window_type": "date_range", "start": _RANGE_START, "end": _RANGE_START},
-        {"window_type": "date_range", "start": _RANGE_START, "end": _RANGE_END, "sprint_external_id": "30000"},
+        {
+            "window_type": "date_range",
+            "start": _RANGE_START,
+            "end": _RANGE_END,
+            "sprint_external_id": "30000",
+        },
         {"start": _RANGE_START, "end": _RANGE_END},
     ],
     ids=[

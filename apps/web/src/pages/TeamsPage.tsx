@@ -3,16 +3,10 @@
 import { useState } from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 
-import { CodeSourcePicker } from "@/components/teams/CodeSourcePicker"
-import { SignalGroupAttachList } from "@/components/teams/SignalGroupAttachList"
-import { TaskBoardPicker } from "@/components/teams/TaskBoardPicker"
-import { Button } from "@/components/ui/button"
+import { TeamCard } from "@/components/teams/TeamCard"
 import { Card, CardContent } from "@/components/ui/card"
-import { Label } from "@/components/ui/label"
-import { type SourceConnection } from "@/lib/connections"
-import { type ScopeDefinition } from "@/lib/scopes"
-import { type SignalConfigGroup } from "@/lib/signalConfigGroups"
-import { createTeam, deleteTeam, type TeamProfile } from "@/lib/teams"
+import { InlineCreateRow } from "@/components/ui/inline-create-row"
+import { createTeam } from "@/lib/teams"
 import { TEAMS_KEY, useTeamSetupData } from "@/lib/teamSetup"
 
 export function TeamsPage() {
@@ -20,6 +14,8 @@ export function TeamsPage() {
   const { isLoading, teams, boardScopes, groups, jiraConnections, codeConnections } =
     useTeamSetupData()
   const [name, setName] = useState("")
+  // Track which teams are in edit mode by team.id — stable across updated_at remounts.
+  const [editingIds, setEditingIds] = useState<Set<string>>(new Set())
 
   const createMutation = useMutation({
     mutationFn: createTeam,
@@ -28,6 +24,18 @@ export function TeamsPage() {
       void queryClient.invalidateQueries({ queryKey: TEAMS_KEY })
     },
   })
+
+  function startEdit(id: string) {
+    setEditingIds((prev) => new Set(prev).add(id))
+  }
+
+  function stopEdit(id: string) {
+    setEditingIds((prev) => {
+      const next = new Set(prev)
+      next.delete(id)
+      return next
+    })
+  }
 
   return (
     <section aria-labelledby="page-title" className="space-y-6">
@@ -42,22 +50,16 @@ export function TeamsPage() {
       </header>
 
       <Card>
-        <CardContent className="flex flex-wrap items-end gap-3 p-4">
-          <div className="space-y-1.5">
-            <Label htmlFor="team-name">New team name</Label>
-            <input
-              className="w-64 rounded-md border px-3 py-2 text-sm"
-              id="team-name"
-              onChange={(event) => setName(event.target.value)}
-              value={name}
-            />
-          </div>
-          <Button
-            disabled={createMutation.isPending || name.trim().length === 0}
-            onClick={() => createMutation.mutate({ name: name.trim() })}
-          >
-            {createMutation.isPending ? "Creating..." : "Create team"}
-          </Button>
+        <CardContent className="p-4">
+          <InlineCreateRow
+            actionLabel={createMutation.isPending ? "Creating..." : "Create team"}
+            disabled={createMutation.isPending}
+            inputId="team-name"
+            label="New team name"
+            onChange={setName}
+            onAction={() => createMutation.mutate({ name: name.trim() })}
+            value={name}
+          />
         </CardContent>
       </Card>
 
@@ -71,8 +73,11 @@ export function TeamsPage() {
                 boardScopes={boardScopes}
                 codeConnections={codeConnections}
                 groups={groups}
+                isEditing={editingIds.has(team.id)}
                 jiraConnections={jiraConnections}
                 key={team.updated_at}
+                onDone={() => stopEdit(team.id)}
+                onStartEdit={() => startEdit(team.id)}
                 team={team}
               />
             </li>
@@ -80,48 +85,5 @@ export function TeamsPage() {
         </ul>
       )}
     </section>
-  )
-}
-
-function TeamCard({
-  boardScopes,
-  codeConnections,
-  groups,
-  jiraConnections,
-  team,
-}: {
-  boardScopes: ScopeDefinition[]
-  codeConnections: SourceConnection[]
-  groups: SignalConfigGroup[]
-  jiraConnections: SourceConnection[]
-  team: TeamProfile
-}) {
-  const queryClient = useQueryClient()
-  const deleteMutation = useMutation({
-    mutationFn: () => deleteTeam(team.id),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: TEAMS_KEY }),
-  })
-
-  return (
-    <Card>
-      <CardContent className="space-y-4 p-4">
-        <div className="flex items-center justify-between gap-3">
-          <h2 className="text-lg font-semibold">{team.name}</h2>
-          <Button onClick={() => deleteMutation.mutate()} size="sm" variant="outline">
-            Delete team
-          </Button>
-        </div>
-
-        <TaskBoardPicker
-          boardScopes={boardScopes}
-          jiraConnections={jiraConnections}
-          team={team}
-        />
-
-        <CodeSourcePicker codeConnections={codeConnections} team={team} />
-
-        <SignalGroupAttachList groups={groups} team={team} />
-      </CardContent>
-    </Card>
   )
 }

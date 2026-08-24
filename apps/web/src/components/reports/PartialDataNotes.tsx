@@ -19,8 +19,8 @@ function PartialDataNotes({ notes }: PartialDataNotesProps) {
         Some sources were unavailable when this report ran. Findings may be incomplete.
       </p>
       <ul className="mt-2 space-y-1">
-        {notes.map((note) => (
-          <li key={`${note.source}-${note.reason}`}>
+        {notes.map((note, index) => (
+          <li key={`${index}-${note.source}-${note.reason}`}>
             <span className="font-medium">{note.source}</span>: {note.reason}
           </li>
         ))}

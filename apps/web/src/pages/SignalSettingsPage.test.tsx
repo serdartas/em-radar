@@ -108,15 +108,39 @@ function jsonResponse(body: unknown, status = 200): Response {
   })
 }
 
-function mockApi(options: { duplicateName?: boolean } = {}) {
+const EXISTING_DEFINITION = {
+  id: "def-abc",
+  name: "Stale issues",
+  description: null,
+  entity_type: "issue",
+  expression: {
+    type: "group",
+    operator: "all",
+    conditions: [{ field: "status_category", operator: "is", value: "in_progress" }],
+  },
+  report_settings: { severity: "warning", category: "flow" },
+  origin: "user_created",
+  template_key: null,
+  created_at: "2024-01-01T00:00:00Z",
+  updated_at: "2024-01-01T00:00:00Z",
+}
+
+function mockApi(
+  options: { duplicateName?: boolean; withDefinitions?: boolean; deleteFails?: boolean } = {},
+) {
   return vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
     const url = typeof input === "string" ? input : input.toString()
     const method = init?.method ?? "GET"
     if (url.endsWith("/api/signal-definitions") && method === "GET") {
-      return Promise.resolve(jsonResponse([]))
+      return Promise.resolve(
+        jsonResponse(options.withDefinitions ? [EXISTING_DEFINITION] : []),
+      )
     }
     if (url.endsWith("/api/connectors")) {
       return Promise.resolve(jsonResponse(connectors))
+    }
+    if (url.endsWith("/api/connections") && method === "GET") {
+      return Promise.resolve(jsonResponse([]))
     }
     if (url.endsWith("/api/signal-definitions") && method === "POST") {
       if (options.duplicateName) {
@@ -125,6 +149,23 @@ function mockApi(options: { duplicateName?: boolean } = {}) {
         )
       }
       return Promise.resolve(jsonResponse({ id: "signal-1", ...JSON.parse(String(init?.body)) }))
+    }
+    if (url.includes("/api/signal-definitions/") && method === "PATCH") {
+      const id = url.split("/api/signal-definitions/")[1]
+      return Promise.resolve(
+        jsonResponse({ ...EXISTING_DEFINITION, id, ...JSON.parse(String(init?.body)) }),
+      )
+    }
+    if (url.includes("/api/signal-definitions/") && method === "DELETE") {
+      if (options.deleteFails) {
+        return Promise.resolve(
+          jsonResponse(
+            { detail: { code: "conflict", message: "Signal is used by a config group" } },
+            409,
+          ),
+        )
+      }
+      return Promise.resolve(new Response(null, { status: 204 }))
     }
     throw new Error(`unexpected fetch: ${method} ${url}`)
   })
@@ -293,6 +334,9 @@ describe("SignalSettingsPage", () => {
       if (url.endsWith("/api/connectors")) {
         return Promise.resolve(jsonResponse([connectors[1]])) // GitLab only
       }
+      if (url.endsWith("/api/connections") && method === "GET") {
+        return Promise.resolve(jsonResponse([]))
+      }
       if (url.endsWith("/api/signal-definitions") && method === "POST") {
         return Promise.resolve(jsonResponse({ id: "signal-1", ...JSON.parse(String(init?.body)) }))
       }
@@ -313,6 +357,8 @@ describe("SignalSettingsPage", () => {
 
     // Saving emits merge_request
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "MR signal" } })
+    // Default first MR field is "approval_count" (number, empty sentinel = invalid). Use state (enum).
+    fireEvent.change(screen.getByLabelText("Field"), { target: { value: "state" } })
     const fetchMock = vi.mocked(globalThis.fetch)
     fireEvent.click(screen.getByRole("button", { name: "Save signal" }))
 
@@ -340,6 +386,8 @@ describe("SignalSettingsPage", () => {
     fireEvent.change(screen.getByLabelText("Field"), { target: { value: "state" } })
     // Add second rule
     fireEvent.change(screen.getByLabelText("Add rule"), { target: { value: "AND" } })
+    // New row defaults to "approval_count" (number, empty sentinel = invalid); switch to an enum field.
+    fireEvent.change(screen.getAllByLabelText("Field")[1], { target: { value: "state" } })
 
     fireEvent.click(screen.getByRole("button", { name: "Save signal" }))
 
@@ -352,6 +400,91 @@ describe("SignalSettingsPage", () => {
       expect(body.entity_type).toBe("merge_request")
       expect(body.name).toBe("Merged without approval")
       expect(body.expression.conditions).toHaveLength(2)
+    })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Edit flow: SignalListItem Edit button + update path
+// ---------------------------------------------------------------------------
+
+describe("SignalSettingsPage — edit flow", () => {
+  it("shows an Edit button on each signal list item", async () => {
+    mockApi({ withDefinitions: true })
+    renderPage()
+
+    expect(await screen.findByRole("button", { name: "Edit" })).toBeInTheDocument()
+  })
+
+  it("clicking Edit opens the form in edit mode prefilled with the signal's name", async () => {
+    mockApi({ withDefinitions: true })
+    renderPage()
+
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }))
+
+    const nameInput = (await screen.findByLabelText("Name")) as HTMLInputElement
+    expect(nameInput.value).toBe("Stale issues")
+    expect(await screen.findByRole("heading", { name: "Edit signal" })).toBeInTheDocument()
+  })
+
+  it("clicking Edit shows 'Save changes' button (not 'Save signal')", async () => {
+    mockApi({ withDefinitions: true })
+    renderPage()
+
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }))
+
+    expect(await screen.findByRole("button", { name: "Save changes" })).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Save signal" })).not.toBeInTheDocument()
+  })
+
+  it("submitting in edit mode calls PATCH (not POST), overwrites in place", async () => {
+    const fetchMock = mockApi({ withDefinitions: true })
+    renderPage()
+
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }))
+    await screen.findByRole("button", { name: "Save changes" })
+
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Renamed signal" } })
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }))
+
+    await waitFor(() => {
+      const patchCall = fetchMock.mock.calls.find(
+        ([url, init]) =>
+          String(url).includes("/api/signal-definitions/def-abc") && init?.method === "PATCH",
+      )
+      expect(patchCall).toBeTruthy()
+      const body = JSON.parse(String((patchCall?.[1] as RequestInit).body))
+      expect(body.name).toBe("Renamed signal")
+    })
+
+    // No POST to /api/signal-definitions (no new version created)
+    const postCall = fetchMock.mock.calls.find(
+      ([url, init]) => String(url).endsWith("/api/signal-definitions") && init?.method === "POST",
+    )
+    expect(postCall).toBeUndefined()
+  })
+
+  it("surfaces an error next to the item when deleting a signal fails", async () => {
+    mockApi({ withDefinitions: true, deleteFails: true })
+    renderPage()
+
+    fireEvent.click(await screen.findByRole("button", { name: "Delete" }))
+
+    expect(await screen.findByText("Signal is used by a config group")).toBeInTheDocument()
+  })
+
+  it("after successful edit, the list is shown (form closes)", async () => {
+    mockApi({ withDefinitions: true })
+    renderPage()
+
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }))
+    await screen.findByRole("button", { name: "Save changes" })
+
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }))
+
+    // Form should close and list should reappear
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: "Save changes" })).not.toBeInTheDocument()
     })
   })
 })

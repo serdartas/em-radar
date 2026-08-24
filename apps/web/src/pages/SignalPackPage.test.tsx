@@ -163,6 +163,101 @@ describe("SignalPackPage", () => {
     })
   })
 
+  it("AUDIT-10: appends the download anchor to document.body for Firefox compatibility", async () => {
+    URL.createObjectURL = URL.createObjectURL ?? (() => "blob:signal-pack")
+    URL.revokeObjectURL = URL.revokeObjectURL ?? (() => undefined)
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:signal-pack")
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined)
+
+    const appendChildSpy = vi.spyOn(document.body, "appendChild")
+    const removeChildSpy = vi.spyOn(document.body, "removeChild")
+    const anchorClickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(
+      () => undefined,
+    )
+
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = typeof input === "string" ? input : input.toString()
+      if (url.endsWith("/api/signal-config-groups")) {
+        return Promise.resolve(jsonResponse(groups))
+      }
+      if (url.includes("/api/signal-pack/export")) {
+        return Promise.resolve(new Response("kind: SignalPack", { status: 200 }))
+      }
+      throw new Error(`unexpected fetch: ${url}`)
+    })
+
+    renderPage()
+
+    fireEvent.click(await screen.findByLabelText("Group A"))
+    fireEvent.click(screen.getByRole("button", { name: "Download YAML" }))
+
+    await waitFor(() => expect(anchorClickSpy).toHaveBeenCalledTimes(1))
+
+    // Anchor must have been appended to body and subsequently removed.
+    expect(appendChildSpy).toHaveBeenCalledWith(expect.any(HTMLAnchorElement))
+    expect(removeChildSpy).toHaveBeenCalledWith(expect.any(HTMLAnchorElement))
+  })
+
+  it("AUDIT-11: shows a Callout error when navigator.clipboard is unavailable", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = typeof input === "string" ? input : input.toString()
+      if (url.endsWith("/api/signal-config-groups")) {
+        return Promise.resolve(jsonResponse(groups))
+      }
+      if (url.includes("/api/signal-pack/export")) {
+        return Promise.resolve(new Response("kind: SignalPack", { status: 200 }))
+      }
+      throw new Error(`unexpected fetch: ${url}`)
+    })
+
+    // Remove navigator.clipboard to simulate an insecure context or unsupported browser.
+    const originalClipboard = navigator.clipboard
+    Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true })
+
+    renderPage()
+
+    fireEvent.click(await screen.findByLabelText("Group A"))
+    fireEvent.click(screen.getByRole("button", { name: "Copy to clipboard" }))
+
+    const alert = await screen.findByRole("alert")
+    expect(alert).toBeInTheDocument()
+    expect(alert.textContent).toMatch(/clipboard is not available/i)
+
+    // Restore
+    Object.defineProperty(navigator, "clipboard", { value: originalClipboard, configurable: true })
+  })
+
+  it("AUDIT-11: shows a Callout error when clipboard.writeText rejects", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = typeof input === "string" ? input : input.toString()
+      if (url.endsWith("/api/signal-config-groups")) {
+        return Promise.resolve(jsonResponse(groups))
+      }
+      if (url.includes("/api/signal-pack/export")) {
+        return Promise.resolve(new Response("kind: SignalPack", { status: 200 }))
+      }
+      throw new Error(`unexpected fetch: ${url}`)
+    })
+
+    // Stub clipboard.writeText to reject.
+    const originalClipboard = navigator.clipboard
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: vi.fn().mockRejectedValue(new Error("Permission denied")) },
+      configurable: true,
+    })
+
+    renderPage()
+
+    fireEvent.click(await screen.findByLabelText("Group A"))
+    fireEvent.click(screen.getByRole("button", { name: "Copy to clipboard" }))
+
+    const alert = await screen.findByRole("alert")
+    expect(alert).toBeInTheDocument()
+    expect(alert.textContent).toMatch(/could not copy to clipboard/i)
+
+    Object.defineProperty(navigator, "clipboard", { value: originalClipboard, configurable: true })
+  })
+
   it("surfaces a backend error for an invalid pack without applying", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const url = typeof input === "string" ? input : input.toString()
