@@ -631,17 +631,29 @@ async def _run_team_report(
     # Custom-field discovery can fail while the rest of the board fetch succeeds; surface it as a
     # distinct partial note so custom-field signals are reported as unevaluated rather than as
     # silently producing no findings.
-    if (
+    custom_fields_blocked = (
         board_meta is not None
         and board_data is not None
-        and custom_field_ids
+        and bool(custom_field_ids)
         and getattr(board_meta.connector, "custom_fields_unavailable", False)
-    ):
+    )
+    blocked_definition_ids: frozenset[int] = frozenset()
+    if custom_fields_blocked:
         partial_data_notes.append(
             {
                 "source": "custom_fields",
                 "reason": "custom-field metadata unavailable; custom-field signals not evaluated",
             }
+        )
+        _builtin_jira_keys = {f.key for f in jira_schema.fields}
+        blocked_definition_ids = frozenset(
+            id(defn)
+            for defn in board_definitions
+            if defn.expression is not None
+            and any(
+                isinstance(leaf.get("field"), str) and leaf["field"] not in _builtin_jira_keys
+                for leaf in _eval_declarative.leaf_conditions(defn.expression)
+            )
         )
 
     code_data: _CodeFetchResult | None = None
@@ -781,6 +793,8 @@ async def _run_team_report(
             ):
                 scope_descriptor = board_scope_descriptor
                 for definition in board_definitions:
+                    if id(definition) in blocked_definition_ids:
+                        continue
                     findings.extend(
                         evaluate_signal_definition(
                             definition,

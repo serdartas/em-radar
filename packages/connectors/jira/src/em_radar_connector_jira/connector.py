@@ -190,6 +190,7 @@ class JiraConnector:
         return SignalCapabilitySchema(
             connector_type="jira",
             entity_types=("issue", "sprint"),
+            custom_field_entity_types=frozenset({"issue"}),
             scope_types=(
                 SignalScopeType("project", "Project", ("statuses", "labels")),
                 SignalScopeType("board", "Board", ("statuses", "labels", "sprint", "kanban")),

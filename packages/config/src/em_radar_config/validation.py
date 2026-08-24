@@ -295,12 +295,14 @@ def _validate_signal_expression(
         if field.entity_type == entity_type
         or (field.entity_type is None and entity_type == primary)
     }
+    allow_custom_field_keys = entity_type in schema.custom_field_entity_types
     _validate_expression_node(
         expression,
         fields,
         path=path,
         allow_missing_values=allow_missing_values,
         depth=depth,
+        allow_custom_field_keys=allow_custom_field_keys,
     )
 
 
@@ -311,6 +313,7 @@ def _validate_expression_node(
     path: str,
     allow_missing_values: bool,
     depth: int,
+    allow_custom_field_keys: bool = True,
 ) -> None:
     if expression.get("type") == "group":
         if depth > 1:
@@ -329,6 +332,7 @@ def _validate_expression_node(
                 path=f"{path}.conditions.{index}",
                 allow_missing_values=allow_missing_values,
                 depth=depth + 1,
+                allow_custom_field_keys=allow_custom_field_keys,
             )
         return
 
@@ -341,7 +345,11 @@ def _validate_expression_node(
         # Unknown field: accept as a custom field only when the key has the customfield_<n>
         # shape and the operator is in the allowed set, so export→import round-trips for
         # custom-field signals work correctly. A misspelled built-in name still raises.
-        if not is_custom_field_key(field_key) or operator not in CUSTOM_FIELD_OPERATORS:
+        if (
+            not allow_custom_field_keys
+            or not is_custom_field_key(field_key)
+            or operator not in CUSTOM_FIELD_OPERATORS
+        ):
             raise PackValidationError(f"{path}.field {field_key!r} is not supported")
         if operator in {"is_empty", "is_not_empty"}:
             return

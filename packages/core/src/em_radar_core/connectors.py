@@ -70,6 +70,7 @@ class SignalCapabilitySchema:
     entity_types: tuple[str, ...]
     scope_types: tuple[SignalScopeType, ...]
     fields: tuple[SignalField, ...]
+    custom_field_entity_types: frozenset[str] = field(default_factory=frozenset)
 
 
 ConnectionErrorCode = Literal[
