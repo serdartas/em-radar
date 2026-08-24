@@ -36,9 +36,17 @@ const CUSTOM_FIELD_KEY = "__custom__"
 type Connector = "" | "AND" | "OR"
 
 interface RuleRow {
+  id: string
   field: string
   operator: string
   value: unknown
+}
+
+let rowIdCounter = 0
+
+function nextRowId(): string {
+  rowIdCounter += 1
+  return `rule-${rowIdCounter}`
 }
 
 interface SignalFormProps {
@@ -216,6 +224,7 @@ export function SignalForm({
           <div className="space-y-1.5">
             <Label htmlFor="signal-type">Type</Label>
             <Select
+              disabled={isAdvanced}
               id="signal-type"
               onChange={(event) => handleEntityTypeChange(event.target.value)}
               value={entityType}
@@ -253,7 +262,7 @@ export function SignalForm({
                 return (
                   <li
                     className="flex flex-wrap items-end gap-2 rounded-md border border-border p-3"
-                    key={index}
+                    key={row.id}
                   >
                     <div className="min-w-40 flex-1 space-y-1.5">
                       <Label htmlFor={`rule-field-${index}`}>Field</Label>
@@ -337,11 +346,12 @@ export function SignalForm({
                       </>
                     )}
                     <div className="w-28 space-y-1.5">
-                      <Label htmlFor={`rule-connector-${index}`}>Join</Label>
+                      <Label htmlFor={`rule-connector-${index}`}>
+                        {isLast ? "Add rule" : "Join"}
+                      </Label>
                       {isLast ? (
                         rows.length < MAX_RULES ? (
                           <Select
-                            aria-label="Add rule"
                             id={`rule-connector-${index}`}
                             onChange={(event) => addRow(event.target.value as Connector)}
                             value=""
@@ -536,7 +546,7 @@ function resolveField(
 
 function makeRow(field: SignalField | undefined): RuleRow {
   const operator = field?.operators[0] ?? "is"
-  return { field: field?.key ?? "", operator, value: defaultValueForRule(field, operator) }
+  return { id: nextRowId(), field: field?.key ?? "", operator, value: defaultValueForRule(field, operator) }
 }
 
 function buildExpression(rows: RuleRow[], groupOperator: Connector): Record<string, unknown> {
@@ -591,7 +601,9 @@ function isRowValid(row: RuleRow): boolean {
 
 /**
  * Reconstructs RuleRow[] and groupOperator from a stored expression (for edit-mode prefill).
- * Handles the standard group expression format produced by buildExpression.
+ * Handles the standard group expression format produced by buildExpression, as well as a
+ * top-level bare condition (no group wrapper) — the engine accepts a single condition object
+ * directly, so it must map to one row rather than being discarded.
  * Returns an empty rows array for malformed/missing conditions — callers are
  * responsible for substituting a sensible default (e.g. makeRow(firstField)).
  * Only call this after confirming !isAdvancedExpression(expression).
@@ -600,9 +612,11 @@ function parseExpression(expression: Record<string, unknown>): {
   rows: RuleRow[]
   groupOperator: Connector
 } {
+  const groupConditions = expression.conditions as Array<Record<string, unknown>> | undefined
   const conditions =
-    (expression.conditions as Array<Record<string, unknown>> | undefined) ?? []
+    groupConditions ?? ("field" in expression ? [expression] : [])
   const rows: RuleRow[] = conditions.map((cond) => ({
+    id: nextRowId(),
     field: String(cond.field ?? ""),
     operator: String(cond.operator ?? "is"),
     value: "value" in cond ? cond.value : null,

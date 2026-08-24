@@ -171,6 +171,97 @@ class _JiraCustomFieldConnector(JiraTestConnector):
         yield  # make it an async generator
 
 
+class _JiraCustomFieldDiscoveryFailureConnector(JiraTestConnector):
+    """Jira fake that yields a work item but reports custom-field discovery as unavailable."""
+
+    async def fetch_workitems(
+        self,
+        scope: WorkItemScope,
+        window: EvaluationWindow,
+    ) -> AsyncIterator[WorkItem]:
+        # Mirror the real connector: discovery failed, so custom fields are dropped and the
+        # degradation is flagged for the router to surface.
+        self.custom_fields_unavailable = True
+        sprint_id = UUID("45cdfd02-9cde-4c65-a618-7728fc9fb495")
+        item = WorkItem(
+            id=UUID("80a0d17d-5fb4-46c4-bc3a-e8b4f85c9cb0"),
+            source=Source.JIRA,
+            external_id="PLAT-1",
+            project_id=UUID("4c7a2c4f-e62f-4a78-bf6f-81f0a2a08826"),
+            key="PLAT-1",
+            type=WorkItemType.TASK,
+            title="Item without custom fields",
+            status="In Progress",
+            status_category=StatusCategory.IN_PROGRESS,
+            sprint_ids=[sprint_id],
+            current_sprint_id=sprint_id,
+            created_at=_REPORT_STARTED_AT,
+            updated_at=_REPORT_STARTED_AT,
+        )
+        yield item
+
+    async def fetch_transitions(
+        self,
+        entity_type: str,
+        entity_external_ids: list[str],
+    ) -> AsyncIterator[Transition]:
+        return
+        yield  # make it an async generator
+
+
+def test_custom_field_discovery_failure_produces_partial_data_note(
+    api_client: TestClient,
+    monkeypatch,
+) -> None:
+    """When custom-field discovery fails, the report succeeds with a custom_fields note."""
+    monkeypatch.setattr(
+        "em_radar_api.connector_registry._connector_types",
+        lambda: [_JiraCustomFieldDiscoveryFailureConnector],
+    )
+    monkeypatch.setattr("em_radar_api.routers.reports.datetime", FrozenReportDateTime)
+
+    connection_id = _create_jira_connection(api_client)
+    scope_id = _create_board_scope(api_client, connection_id, ["sprint", "statuses"])
+
+    definition = api_client.post(
+        "/api/signal-definitions",
+        json={
+            "name": "High priority score",
+            "entity_type": "issue",
+            "expression": {
+                "type": "group",
+                "operator": "all",
+                "conditions": [
+                    {"field": "customfield_10100", "operator": "greater_than", "value": 50}
+                ],
+            },
+            "report_settings": {"severity": "warning", "category": "hygiene"},
+            "origin": "user_created",
+        },
+    ).json()
+    assert "id" in definition, f"signal creation failed: {definition}"
+
+    group = api_client.post(
+        "/api/signal-config-groups",
+        json={"name": "Custom field signals", "signal_ids": [definition["id"]]},
+    ).json()
+
+    team_id = _create_jira_team(
+        api_client,
+        connection_id,
+        scope_id,
+        "scrum",
+        sprint_length_days=14,
+        group_ids=[group["id"]],
+    )
+
+    report = _run_report(api_client, team_id)
+    assert report.get("status") == "succeeded", f"report failed: {report.get('error')}"
+
+    notes = report["signal_pack_snapshot"]["partial_data_notes"]
+    assert any(n["source"] == "custom_fields" for n in notes), notes
+
+
 def test_custom_field_signal_produces_finding_and_scope_receives_field_ids(
     api_client: TestClient,
     monkeypatch,

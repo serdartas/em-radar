@@ -8,6 +8,7 @@ import { ConnectionDeleteConfirm } from "@/components/connections/ConnectionDele
 import { Button } from "@/components/ui/button"
 import { Callout } from "@/components/ui/callout"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
+import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 import { listConnections, type SourceConnection } from "@/lib/connections"
@@ -224,30 +225,23 @@ function DeleteReportHistoryAction() {
         )}
       </div>
       {confirming && (
-        <div
-          aria-label="Confirm: Delete report history"
-          className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"
-          role="alertdialog"
-        >
-          <p>This cannot be undone. All report history and findings will be permanently removed.</p>
-          <div className="mt-3 flex gap-2">
-            <Button
-              disabled={deleteMutation.isPending}
-              onClick={() => deleteMutation.mutate()}
-              size="sm"
-            >
-              Confirm delete
-            </Button>
-            <Button onClick={() => setConfirming(false)} size="sm" variant="outline">
-              Cancel
-            </Button>
-          </div>
+        <>
+          <ConfirmDialog
+            body="This cannot be undone. All report history and findings will be permanently removed."
+            className="mt-3"
+            confirmLabel="Confirm delete"
+            onCancel={() => setConfirming(false)}
+            onConfirm={() => deleteMutation.mutate()}
+            pending={deleteMutation.isPending}
+            title="Delete report history"
+            titleHidden
+          />
           {deleteMutation.isError && (
             <Callout className="mt-3" role="alert" variant="error">
               Could not delete report history. Please try again.
             </Callout>
           )}
-        </div>
+        </>
       )}
     </div>
   )

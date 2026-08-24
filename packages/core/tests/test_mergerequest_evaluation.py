@@ -10,8 +10,10 @@ from __future__ import annotations
 from datetime import timedelta
 from uuid import uuid4
 
+import pytest
 
 from em_radar_core.evaluation import (
+    ExpressionValidationError,
     ScopeDescriptor,
     evaluate_signal_definition,
     validate_expression,
@@ -449,19 +451,17 @@ def test_mr_source_branch_glob_filter() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_validate_expression_accepts_workitem_field_as_custom_in_mr_signal() -> None:
-    # status_category is not in the MR schema, but with operator "is" (in the custom-field
-    # allowlist) it is silently accepted as a potential custom-field reference at validation
-    # time. Evaluation will still raise ExpressionValidationError because _mr_field_value
-    # has no custom_fields fallback.
+def test_validate_expression_rejects_workitem_field_in_mr_signal() -> None:
+    # status_category is not in the MR schema and is not a customfield_<n> key, so it must be
+    # rejected at validation time rather than silently accepted as a custom-field reference.
     expression = {
         "type": "group",
         "operator": "all",
         "conditions": [{"field": "status_category", "operator": "is", "value": "in_progress"}],
     }
 
-    # Should not raise at validation time
-    validate_expression(expression, GitLabConnector.describe_signal_schema(), [_scope()])
+    with pytest.raises(ExpressionValidationError, match="status_category"):
+        validate_expression(expression, GitLabConnector.describe_signal_schema(), [_scope()])
 
 
 def test_validate_expression_accepts_mr_field() -> None:
@@ -475,17 +475,17 @@ def test_validate_expression_accepts_mr_field() -> None:
     validate_expression(expression, GitLabConnector.describe_signal_schema(), [_scope()])
 
 
-def test_validate_expression_accepts_mr_field_as_custom_in_jira_signal() -> None:
-    # "state" is not in the Jira/issue schema, but with operator "is" (in the custom-field
-    # allowlist) it is accepted as a potential custom-field reference at validation time.
+def test_validate_expression_rejects_mr_field_in_jira_signal() -> None:
+    # "state" is not in the Jira/issue schema and is not a customfield_<n> key, so it must be
+    # rejected at validation time rather than silently accepted as a custom-field reference.
     expression = {
         "type": "group",
         "operator": "all",
         "conditions": [{"field": "state", "operator": "is", "value": "open"}],
     }
 
-    # Should not raise at validation time
-    validate_expression(expression, JiraConnector.describe_signal_schema(), [_scope()])
+    with pytest.raises(ExpressionValidationError, match="state"):
+        validate_expression(expression, JiraConnector.describe_signal_schema(), [_scope()])
 
 
 # ---------------------------------------------------------------------------

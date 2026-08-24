@@ -13,8 +13,10 @@ from datetime import timedelta
 from pathlib import Path
 from uuid import uuid4
 
+import pytest
 
 from em_radar_core.evaluation import (
+    ExpressionValidationError,
     ScopeDescriptor,
     evaluate_signal_definition,
 )
@@ -569,10 +571,9 @@ def test_story_points_numeric_threshold_does_not_fire_below() -> None:
     assert findings == []
 
 
-def test_exclude_labels_treated_as_custom_field() -> None:
-    # exclude_labels is not a schema field; it is now silently treated as a custom-field
-    # lookup (returns None from custom_fields.get). "does_not_contain" on None evaluates to
-    # True (None is treated as an empty list), so the signal fires for all items.
+def test_non_customfield_unknown_field_raises() -> None:
+    # exclude_labels is not a schema field and is not a customfield_<n> key, so it must be
+    # rejected rather than silently treated as a custom-field lookup (guards misspellings).
     item = workitem(labels=["blocked"])
     definition = _definition(
         {
@@ -583,12 +584,11 @@ def test_exclude_labels_treated_as_custom_field() -> None:
             ],
         }
     )
-    findings = evaluate_signal_definition(
-        definition,
-        _data(item),
-        context(),
-        JiraConnector.describe_signal_schema(),
-        [_project_scope()],
-    )
-    # Signal fires because custom_fields["exclude_labels"] is absent → treated as empty list
-    assert len(findings) == 1
+    with pytest.raises(ExpressionValidationError, match="exclude_labels"):
+        evaluate_signal_definition(
+            definition,
+            _data(item),
+            context(),
+            JiraConnector.describe_signal_schema(),
+            [_project_scope()],
+        )

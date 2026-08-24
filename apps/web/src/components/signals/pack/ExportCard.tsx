@@ -41,7 +41,13 @@ function ExportCard() {
   }
 
   async function download() {
-    const yaml = await exportMutation.mutateAsync()
+    let yaml: string
+    try {
+      yaml = await exportMutation.mutateAsync()
+    } catch {
+      // Failure is surfaced via exportMutation.isError below.
+      return
+    }
     const url = URL.createObjectURL(new Blob([yaml], { type: "application/yaml" }))
     const anchor = document.createElement("a")
     anchor.href = url
@@ -57,7 +63,13 @@ function ExportCard() {
   async function copy() {
     setCopied(false)
     setClipboardError(null)
-    const yaml = await exportMutation.mutateAsync()
+    let yaml: string
+    try {
+      yaml = await exportMutation.mutateAsync()
+    } catch {
+      // Failure is surfaced via exportMutation.isError below.
+      return
+    }
     if (!navigator.clipboard) {
       setClipboardError("Clipboard is not available in this browser.")
       return

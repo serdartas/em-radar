@@ -13,6 +13,7 @@ from yaml.nodes import MappingNode
 
 from em_radar_config.models import FieldMappings, SignalEntry, SignalPack, SignalScope
 from em_radar_core.connectors import SignalCapabilitySchema, SignalField
+from em_radar_core.evaluation.declarative import CUSTOM_FIELD_OPERATORS, is_custom_field_key
 
 API_VERSION = "emradar.dev/v1"
 PACK_KIND = "SignalPack"
@@ -28,18 +29,6 @@ _SEMVER_PATTERN = re.compile(
 )
 _TEMPLATE_PATTERN = re.compile(r"\$\{[^}]+\}|\{\{.*?\}\}|<%.*?%>")
 _EXECUTABLE_PATTERN = re.compile(r"^(?:#!|javascript:)|\b(?:eval|exec)\s*\(", re.IGNORECASE)
-_CUSTOM_FIELD_OPERATORS: frozenset[str] = frozenset(
-    {
-        "is",
-        "is_not",
-        "greater_than",
-        "less_than",
-        "is_empty",
-        "is_not_empty",
-        "contains",
-        "does_not_contain",
-    }
-)
 _REMOTE_URL_PATTERN = re.compile(r"^(?:https?|ftp)://", re.IGNORECASE)
 _MAX_ALIASES = 20
 
@@ -349,10 +338,15 @@ def _validate_expression_node(
         raise PackValidationError(f"{path} requires field and operator")
     field_schema = fields.get(field_key)
     if field_schema is None:
-        # Unknown field: accept as a custom field if the operator is in the allowed set,
-        # so export→import round-trips for custom-field signals work correctly.
-        if operator not in _CUSTOM_FIELD_OPERATORS:
+        # Unknown field: accept as a custom field only when the key has the customfield_<n>
+        # shape and the operator is in the allowed set, so export→import round-trips for
+        # custom-field signals work correctly. A misspelled built-in name still raises.
+        if not is_custom_field_key(field_key) or operator not in CUSTOM_FIELD_OPERATORS:
             raise PackValidationError(f"{path}.field {field_key!r} is not supported")
+        if operator in {"is_empty", "is_not_empty"}:
+            return
+        if "value" not in expression and not allow_missing_values:
+            raise PackValidationError(f"{path}.value is required for enabled signals")
         return
     if operator not in field_schema.operators:
         raise PackValidationError(f"{path}.operator {operator!r} is not valid for {field_key!r}")

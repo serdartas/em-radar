@@ -256,6 +256,29 @@ describe("ReportResultsPage", () => {
     expect(screen.queryByText("No findings were detected.")).not.toBeInTheDocument()
   })
 
+  it("shows an in-progress message (not empty sections) while the run is still running", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ...report,
+          status: "running",
+          finished_at: null,
+          summary: { counts_by_severity: { info: 0, warning: 0, critical: 0 }, total: 0 },
+          sections: buildSections({}),
+          findings: [],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    )
+
+    renderReportResults()
+
+    const status = await screen.findByRole("status")
+    expect(status).toHaveTextContent(/still running/i)
+    // No section headings render while the run is in progress.
+    expect(screen.queryByRole("heading", { level: 2, name: "Summary" })).toBeNull()
+  })
+
   it("copies the Markdown export to the clipboard from the export endpoint", async () => {
     const fetchMock = mockReportAndExportFetch()
     const writeText = vi.fn().mockResolvedValue(undefined)

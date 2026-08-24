@@ -17,8 +17,8 @@ function SkippedSignals({ notes }: SkippedSignalsProps) {
       </h2>
       <p className="mt-1 text-slate-600">These signals did not run for this report.</p>
       <ul className="mt-2 space-y-1">
-        {notes.map((note) => (
-          <li key={`${note.signal_id}-${note.reason}`}>
+        {notes.map((note, index) => (
+          <li key={`${index}-${note.signal_id}-${note.reason}`}>
             <span className="font-medium">{note.signal_id}</span>: {note.reason}
           </li>
         ))}

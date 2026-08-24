@@ -16,12 +16,19 @@ import {
 } from "@/lib/reports"
 import { listSignalDefinitions } from "@/lib/signalDefinitions"
 
+const REPORT_POLL_MS = 3000
+
 export function ReportResultsPage() {
   const { reportId } = useParams<{ reportId: string }>()
   const query = useQuery({
     queryKey: ["reports", reportId],
     queryFn: () => getReport(reportId as string),
     enabled: Boolean(reportId),
+    // Poll while the run is non-terminal so results appear without a manual refresh.
+    refetchInterval: (query) => {
+      const status = query.state.data?.status
+      return status === "running" || status === "pending" ? REPORT_POLL_MS : false
+    },
   })
   const signalsQuery = useQuery({
     queryKey: ["signal-definitions"],
@@ -94,6 +101,16 @@ export function ReportResultsPage() {
         >
           {report.error ?? "The report run failed."}
         </p>
+      ) : report.status === "running" || report.status === "pending" ? (
+        <div
+          className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600"
+          role="status"
+        >
+          <p className="text-xs uppercase tracking-wide text-slate-500">{report.status}</p>
+          <p className="mt-1">
+            This report is still running. Results will appear here automatically when it finishes.
+          </p>
+        </div>
       ) : (
         <div className="space-y-8">
           {report.sections.map((section) => (

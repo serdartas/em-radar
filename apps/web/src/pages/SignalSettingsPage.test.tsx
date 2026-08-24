@@ -125,7 +125,9 @@ const EXISTING_DEFINITION = {
   updated_at: "2024-01-01T00:00:00Z",
 }
 
-function mockApi(options: { duplicateName?: boolean; withDefinitions?: boolean } = {}) {
+function mockApi(
+  options: { duplicateName?: boolean; withDefinitions?: boolean; deleteFails?: boolean } = {},
+) {
   return vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
     const url = typeof input === "string" ? input : input.toString()
     const method = init?.method ?? "GET"
@@ -155,6 +157,14 @@ function mockApi(options: { duplicateName?: boolean; withDefinitions?: boolean }
       )
     }
     if (url.includes("/api/signal-definitions/") && method === "DELETE") {
+      if (options.deleteFails) {
+        return Promise.resolve(
+          jsonResponse(
+            { detail: { code: "conflict", message: "Signal is used by a config group" } },
+            409,
+          ),
+        )
+      }
       return Promise.resolve(new Response(null, { status: 204 }))
     }
     throw new Error(`unexpected fetch: ${method} ${url}`)
@@ -452,6 +462,15 @@ describe("SignalSettingsPage — edit flow", () => {
       ([url, init]) => String(url).endsWith("/api/signal-definitions") && init?.method === "POST",
     )
     expect(postCall).toBeUndefined()
+  })
+
+  it("surfaces an error next to the item when deleting a signal fails", async () => {
+    mockApi({ withDefinitions: true, deleteFails: true })
+    renderPage()
+
+    fireEvent.click(await screen.findByRole("button", { name: "Delete" }))
+
+    expect(await screen.findByText("Signal is used by a config group")).toBeInTheDocument()
   })
 
   it("after successful edit, the list is shown (form closes)", async () => {

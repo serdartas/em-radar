@@ -220,7 +220,7 @@ class TestFetchWorkitemsDiscoveryFailure:
     def test_discovery_failure_yields_empty_custom_fields(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """If discover_fields raises, fetch_workitems continues with custom_fields={}."""
+        """If discover_fields raises, fetch_workitems continues with custom_fields={} and flags it."""
         # Clear the field discovery cache so we always hit the network.
         jira_connector_module._field_discovery_cache.clear()  # type: ignore[attr-defined]
 
@@ -276,3 +276,5 @@ class TestFetchWorkitemsDiscoveryFailure:
         items = asyncio.run(run())
         assert len(items) == 1
         assert items[0].custom_fields == {}
+        # The degradation is surfaced so the report can attach a partial-data note.
+        assert connector.custom_fields_unavailable is True

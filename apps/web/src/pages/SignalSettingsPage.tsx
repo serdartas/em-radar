@@ -78,6 +78,8 @@ export function SignalSettingsPage() {
   const deleteMutation = useMutation({
     mutationFn: deleteSignalDefinition,
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["signal-definitions"] }),
+    // Failure is surfaced next to the affected list item via deleteMutation.isError below.
+    onError: () => {},
   })
 
   // Block render until Jira custom fields are available so the edit form never opens
@@ -211,6 +213,11 @@ function SignalList({ definitions, deleteMutation, onEdit }: SignalListProps) {
           <li key={definition.id}>
             <SignalListItem
               definition={definition}
+              deleteError={
+                deleteMutation.isError && deleteMutation.variables === definition.id
+                  ? apiErrorMessage(deleteMutation.error, "Could not delete the signal.")
+                  : null
+              }
               deletePending={deleteMutation.isPending && deleteMutation.variables === definition.id}
               onDelete={(id) => deleteMutation.mutate(id)}
               onEdit={onEdit}

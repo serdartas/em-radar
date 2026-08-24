@@ -20,6 +20,7 @@ from em_radar_core.connectors import (
     ConnectorAuthError,
     ConnectorConfigError,
     ConnectorDataError,
+    ConnectorError,
     ConnectorNotFoundError,
     ConnectorRateLimitedError,
     ConnectorTransientError,
@@ -125,6 +126,9 @@ class JiraConnector:
         )
         self._inline_changelogs: dict[str, list[Mapping[str, object]]] = {}
         self._issue_keys: dict[str, str] = {}
+        # Set when custom-field discovery fails during a fetch so the caller can surface a
+        # partial-data note; custom-field signals cannot be evaluated in that case.
+        self.custom_fields_unavailable: bool = False
 
     async def test_connection(self) -> ConnectionTestResult:
         user_payload = await self._request_json("rest/api/2/myself")
@@ -363,7 +367,10 @@ class JiraConnector:
                 custom_field_types = {
                     f.id: f.field_type for f in all_fields if f.custom and f.id in requested
                 }
-            except Exception:
+            except ConnectorError:
+                # Field discovery hit a transient/auth/data error: continue with the work items
+                # but flag the degradation so the report surfaces a custom-field partial-data note.
+                self.custom_fields_unavailable = True
                 requested = []
                 custom_field_types = {}
 
@@ -1116,7 +1123,7 @@ def _issue_fields(
     ]
     fields = [*_SYSTEM_ISSUE_FIELDS]
     for field_name in configurable_fields:
-        if field_name is not None and field_name not in fields:
+        if field_name and field_name not in fields:
             fields.append(field_name)
     for field_id in custom_field_ids:
         if field_id not in fields:

@@ -24,6 +24,7 @@ function errorMessage(error: unknown): string {
 function ImportCard() {
   const queryClient = useQueryClient()
   const [rawYaml, setRawYaml] = useState("")
+  const [fileError, setFileError] = useState<string | null>(null)
 
   const previewMutation = useMutation({ mutationFn: previewSignalPackImport })
   const applyMutation = useMutation({
@@ -44,14 +45,25 @@ function ImportCard() {
   }
 
   function onFile(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0]
+    const input = event.target
+    const file = input.files?.[0]
     if (!file) {
       return
     }
-    void file.text().then((text) => {
-      setRawYaml(text)
-      resetResults()
-    })
+    setFileError(null)
+    file
+      .text()
+      .then((text) => {
+        setRawYaml(text)
+        resetResults()
+      })
+      .catch(() => {
+        setFileError("Could not read the selected file. Please try again.")
+      })
+      .finally(() => {
+        // Reset so selecting the same file again refires the change event.
+        input.value = ""
+      })
   }
 
   const preview = previewMutation.data
@@ -83,6 +95,11 @@ function ImportCard() {
         <div className="space-y-1.5">
           <Label htmlFor="import-file">…or upload a file</Label>
           <input accept=".yaml,.yml" id="import-file" onChange={onFile} type="file" />
+          {fileError && (
+            <p className="text-sm text-red-700" role="alert">
+              {fileError}
+            </p>
+          )}
         </div>
 
         <div className="flex flex-wrap gap-3">

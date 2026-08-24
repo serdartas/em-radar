@@ -79,6 +79,16 @@ class TestValidateConditionCustomField:
         with pytest.raises(ExpressionValidationError, match="customfield_10100"):
             validate_expression(expression, _SCHEMA, [_scope()])
 
+    def test_unknown_non_customfield_field_raises(self) -> None:
+        """A misspelled built-in name is not customfield_<n> and must raise, not fall through."""
+        expression = {
+            "type": "group",
+            "operator": "all",
+            "conditions": [{"field": "statuss", "operator": "is", "value": "Done"}],
+        }
+        with pytest.raises(ExpressionValidationError, match="statuss"):
+            validate_expression(expression, _SCHEMA, [_scope()])
+
     def test_builtin_field_collision_guard_uses_builtin_schema(self) -> None:
         """A key that looks like a custom field but matches a built-in is validated as built-in."""
         # "status" is a built-in — using a custom-field-only operator should raise.

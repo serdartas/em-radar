@@ -628,6 +628,22 @@ async def _run_team_report(
         else None
     )
 
+    # Custom-field discovery can fail while the rest of the board fetch succeeds; surface it as a
+    # distinct partial note so custom-field signals are reported as unevaluated rather than as
+    # silently producing no findings.
+    if (
+        board_meta is not None
+        and board_data is not None
+        and custom_field_ids
+        and getattr(board_meta.connector, "custom_fields_unavailable", False)
+    ):
+        partial_data_notes.append(
+            {
+                "source": "custom_fields",
+                "reason": "custom-field metadata unavailable; custom-field signals not evaluated",
+            }
+        )
+
     code_data: _CodeFetchResult | None = None
     if isinstance(code_result, BaseException):
         if isinstance(
@@ -1259,7 +1275,7 @@ def _referenced_custom_field_ids(
     for defn in board_definitions:
         if defn.expression is None:
             continue
-        for leaf in _eval_declarative._leaf_conditions(defn.expression):
+        for leaf in _eval_declarative.leaf_conditions(defn.expression):
             field_key = leaf.get("field")
             if isinstance(field_key, str) and field_key not in builtin_keys:
                 custom_ids.add(field_key)

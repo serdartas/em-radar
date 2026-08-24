@@ -124,12 +124,6 @@ interface JiraFieldMappingSectionProps {
   fieldMappingValues?: FieldMappingValues
   onFieldMappingChange: (values: FieldMappingValues) => void
   /**
-   * Default value for story_points, sourced from the connector's config_schema
-   * (`$defs.JiraFieldMappingConfig.properties.story_points.default`).
-   * Emitted when the user turns SP off, so any stored override is reset via deep-merge.
-   */
-  storyPointsDefault: string
-  /**
    * Default value for acceptance_criteria_heading, sourced from the connector's config_schema
    * (`$defs.JiraFieldMappingConfig.properties.acceptance_criteria_heading.default`).
    * Emitted as the heading when AC is enabled in description mode and no heading is set.
@@ -142,7 +136,6 @@ export function JiraFieldMappingSection({
   connectionId,
   fieldMappingValues,
   onFieldMappingChange,
-  storyPointsDefault,
 }: JiraFieldMappingSectionProps) {
   const spSwitchId = useId()
   const acSwitchId = useId()
@@ -180,6 +173,8 @@ export function JiraFieldMappingSection({
 
   // spEnabled re-syncs from props on every render (mirrors AC's fully-derived approach).
   // It is true when a saved value exists in props OR when the user explicitly clicked ON.
+  // "Off" is a real, stable state: turning SP off emits an empty story_points (see
+  // handleSpToggle / currentSpPart), which round-trips back as "" and keeps the switch off.
   const spEnabled = storyPointsValue !== "" || spForcedOpen
 
   // AC enabled/mode are fully derived from props (AC always sets a non-null value on enable).
@@ -190,14 +185,16 @@ export function JiraFieldMappingSection({
   //
   // story_points is ALWAYS emitted:
   //  - When SP is on and has a value: emit that value.
-  //  - When SP is off or has no value yet: emit the schema default so any
-  //    previously stored override is cleared via the backend's deep-merge.
+  //  - When SP is off or has no value yet: emit "" (mirrors AC's null "off" state).
+  //    The empty string clears any previously stored override via the backend's
+  //    deep-merge and round-trips back as an empty story_points, so spEnabled stays
+  //    false and the switch is reliably off.
   // AC keys are emitted ONLY when the user has actively configured AC;
   // omitting them preserves whatever the backend already stores (or its default).
 
   function currentSpPart(): { story_points: string } {
     return {
-      story_points: spEnabled && storyPointsValue ? storyPointsValue : storyPointsDefault,
+      story_points: spEnabled && storyPointsValue ? storyPointsValue : "",
     }
   }
 
@@ -226,10 +223,10 @@ export function JiraFieldMappingSection({
   function handleSpToggle(on: boolean) {
     setSpForcedOpen(on)
     if (!on) {
-      // SP turned off: emit the schema default so any stored custom-field override
-      // is reset by the deep-merge. Never omit story_points when turning off.
+      // SP turned off: emit an empty story_points so any stored custom-field override
+      // is cleared by the deep-merge and the disabled state round-trips back as props.
       onFieldMappingChange({
-        story_points: storyPointsDefault,
+        story_points: "",
         ...currentAcPart(),
       })
     }
@@ -239,7 +236,7 @@ export function JiraFieldMappingSection({
 
   function handleSpChange(value: string) {
     onFieldMappingChange({
-      story_points: value || storyPointsDefault,
+      story_points: value,
       ...currentAcPart(),
     })
   }

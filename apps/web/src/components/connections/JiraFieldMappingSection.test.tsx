@@ -44,12 +44,10 @@ function renderSection(
     connectionId: string
     fieldMappingValues: FieldMappingValues
     onFieldMappingChange: (v: FieldMappingValues) => void
-    storyPointsDefault: string
     acHeadingDefault: string
   }> = {},
 ) {
   const merged = {
-    storyPointsDefault: SP_DEFAULT,
     acHeadingDefault: AC_HEADING_DEFAULT,
     onFieldMappingChange: () => undefined,
     ...props,
@@ -181,22 +179,63 @@ describe("JiraFieldMappingSection — Story Points", () => {
     expect(onChange).not.toHaveBeenCalled()
   })
 
-  // [P1] Turning SP OFF must emit story_points equal to the schema default so any
-  // previously stored override is reset via the PATCH deep-merge.
-  it("emits story_points set to the schema default (not omitted, not empty) when SP is turned OFF", () => {
+  // [R1] Turning SP OFF must emit an empty story_points (mirrors AC's null "off" state):
+  // this clears any stored override via the PATCH deep-merge AND round-trips back as an
+  // empty value so the switch stays reliably off (see the round-trip test below).
+  it("emits an empty story_points (not the default, not omitted) when SP is turned OFF", () => {
     const onChange = vi.fn()
     renderSection({
+      // A stored value keeps SP enabled at first.
       fieldMappingValues: { story_points: "customfield_99999" },
       onFieldMappingChange: onChange,
     })
 
-    // SP starts enabled (storyPointsValue is non-empty)
+    // SP starts enabled (stored value is non-empty)
     fireEvent.click(screen.getAllByRole("switch")[0])
 
     expect(onChange).toHaveBeenCalledOnce()
     const emitted = onChange.mock.calls[0][0] as FieldMappingValues
-    // Must be the schema default, not "" and not omitted
-    expect(emitted.story_points).toBe(SP_DEFAULT)
+    // Emitted key is present (not omitted) and empty (not the schema default)
+    expect(emitted).toHaveProperty("story_points")
+    expect(emitted.story_points).toBe("")
+  })
+
+  // [R1] The value emitted when SP is turned OFF must round-trip back through props as a
+  // stable "off": re-feeding it must NOT flip the switch on again.
+  it("keeps the SP switch OFF after the emitted off-value round-trips back as props", () => {
+    const onChange = vi.fn()
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+
+    const { rerender } = render(
+      <QueryClientProvider client={qc}>
+        <JiraFieldMappingSection
+          acHeadingDefault={AC_HEADING_DEFAULT}
+          fieldMappingValues={{ story_points: "customfield_99999" }}
+          onFieldMappingChange={onChange}
+        />
+      </QueryClientProvider>,
+    )
+
+    // SP starts on (non-default value); toggling off emits the off-value.
+    expect(screen.getAllByText("Not configured")).toHaveLength(1) // only AC is off
+    fireEvent.click(screen.getAllByRole("switch")[0])
+
+    const emitted = onChange.mock.calls[0][0] as FieldMappingValues
+
+    // Feed the emitted value straight back as props, as the controlled parent would.
+    rerender(
+      <QueryClientProvider client={qc}>
+        <JiraFieldMappingSection
+          acHeadingDefault={AC_HEADING_DEFAULT}
+          fieldMappingValues={{ story_points: emitted.story_points }}
+          onFieldMappingChange={onChange}
+        />
+      </QueryClientProvider>,
+    )
+
+    // The switch must stay off: both SP and AC now read "Not configured".
+    expect(screen.getAllByText("Not configured")).toHaveLength(2)
+    expect(screen.getAllByRole("switch")[0]).toHaveAttribute("aria-checked", "false")
   })
 
   it("reveals the discovered custom-field dropdown when SP is enabled with a stored value", async () => {
@@ -230,7 +269,6 @@ describe("JiraFieldMappingSection — Story Points", () => {
           acHeadingDefault={AC_HEADING_DEFAULT}
           fieldMappingValues={{}}
           onFieldMappingChange={() => undefined}
-          storyPointsDefault={SP_DEFAULT}
         />
       </QueryClientProvider>,
     )
@@ -244,7 +282,6 @@ describe("JiraFieldMappingSection — Story Points", () => {
           acHeadingDefault={AC_HEADING_DEFAULT}
           fieldMappingValues={{ story_points: "customfield_20000" }}
           onFieldMappingChange={() => undefined}
-          storyPointsDefault={SP_DEFAULT}
         />
       </QueryClientProvider>,
     )
@@ -266,7 +303,6 @@ describe("JiraFieldMappingSection — Story Points", () => {
           connectionId="conn-A"
           fieldMappingValues={{}}
           onFieldMappingChange={() => undefined}
-          storyPointsDefault={SP_DEFAULT}
         />
       </QueryClientProvider>,
     )
@@ -283,7 +319,6 @@ describe("JiraFieldMappingSection — Story Points", () => {
           connectionId="conn-B"
           fieldMappingValues={{}}
           onFieldMappingChange={() => undefined}
-          storyPointsDefault={SP_DEFAULT}
         />
       </QueryClientProvider>,
     )

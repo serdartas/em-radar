@@ -717,6 +717,49 @@ describe("SignalForm — nested/advanced expression guard", () => {
 })
 
 // ---------------------------------------------------------------------------
+// Top-level bare condition (no group wrapper) — engine accepts it; must not be discarded
+// ---------------------------------------------------------------------------
+
+describe("SignalForm — top-level bare condition", () => {
+  // A condition without a `type:"group"` wrapper and without a `conditions` array.
+  const BARE_EXPRESSION = { field: "status_category", operator: "is_not", value: "done" }
+
+  it("shows the rule builder (not the advanced Callout) for a bare condition", () => {
+    renderForm({ mode: "edit", initialValue: makeDefinition({ expression: BARE_EXPRESSION }) })
+
+    expect(screen.queryByText(/advanced condition/i)).not.toBeInTheDocument()
+    expect(screen.getByLabelText("Field")).toBeInTheDocument()
+  })
+
+  it("prefills field and operator from the bare condition instead of a blank default row", () => {
+    renderForm({ mode: "edit", initialValue: makeDefinition({ expression: BARE_EXPRESSION }) })
+
+    expect((screen.getByLabelText("Field") as HTMLSelectElement).value).toBe("status_category")
+    expect((screen.getByLabelText("Operator") as HTMLSelectElement).value).toBe("is_not")
+  })
+
+  it("preserves the real rule on save (does not silently discard it)", () => {
+    const { onSave } = renderForm({
+      mode: "edit",
+      initialValue: makeDefinition({ name: "Bare signal", expression: BARE_EXPRESSION }),
+    })
+
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }))
+
+    expect(onSave).toHaveBeenCalledOnce()
+    const call = onSave.mock.calls[0][0] as {
+      expression: { conditions: Array<{ field: string; operator: string; value: unknown }> }
+    }
+    expect(call.expression.conditions).toHaveLength(1)
+    expect(call.expression.conditions[0]).toMatchObject({
+      field: "status_category",
+      operator: "is_not",
+      value: "done",
+    })
+  })
+})
+
+// ---------------------------------------------------------------------------
 // P2 — Sprint entity type shown correctly in Type selector
 // ---------------------------------------------------------------------------
 
