@@ -149,13 +149,14 @@ class ConnectorBase(Protocol):
 
 The schema includes:
 
-- supported entity types, such as `issue` or `merge_request`
+- supported entity types, such as `issue`, `merge_request`, or `sprint`
 - field definitions with labels, data types, valid operators, and value providers
 - field availability constraints, such as sprint-only fields requiring a sprint-capable scope
 
-In MVP each signal declares one of those entity types. `issue` represents the work-tracking domain
-and `merge_request` represents the code-repository domain; connector instance and team source
-selection are not signal fields. Cross-domain signals are deferred until after MVP.
+In MVP each signal declares one of those entity types. `issue` represents the work-tracking domain,
+`merge_request` represents the code-repository domain, and `sprint` represents sprint-scope signals;
+connector instance and team source selection are not signal fields. Cross-domain signals are deferred
+until after MVP.
 
 The UI must use this schema to render field/operator/value controls. The importer must use the
 same schema to validate imported signals before enabling them. Project and board discovery for team
@@ -174,7 +175,8 @@ class ConnectorBase(Protocol):
 
     def __init__(self, config: dict) -> None: ...
     async def test_connection(self) -> ConnectionTestResult: ...
-    def describe_capabilities(self) -> Capabilities: ...
+    @classmethod
+    def describe_capabilities(cls) -> Capabilities: ...
     def describe_signal_schema(self) -> SignalCapabilitySchema: ...
     async def close(self) -> None: ...
 ```
@@ -188,6 +190,7 @@ class ConnectionTestResult:
     detail: str               # human-readable, suitable for UI
     user_display_name: str | None = None   # name of the authenticated user
     permissions: list[str] = field(default_factory=list)
+    code: ConnectionErrorCode | None = None   # structured error code when ok is False
 ```
 
 ### 6.2 `WorkItemProvider` (Jira, Linear, GitHub Issues)
@@ -210,8 +213,8 @@ class WorkItemProvider(Protocol):
 ```python
 @dataclass
 class WorkItemScope:
-    project_external_id: str
-    board_external_id: str
+    project_external_ids: list[str]
+    board_external_ids: list[str] = field(default_factory=list)
     workitem_types: list[WorkItemType] | None = None   # None means all
 ```
 
@@ -310,7 +313,7 @@ Pagination concerns the connector hides from the engine:
 ## 9. Rate Limiting and Retries
 
 - The connector must respect source rate limits. The standard practice is exponential backoff on `429` and `5xx`, with a maximum of 5 retries.
-- The connector must surface a clear, structured error (`SourceRateLimitedError`) if it exhausts retries. The engine catches this and reports it as a partial-data condition in the report, not as a crash.
+- The connector must surface a clear, structured error (`ConnectorRateLimitedError`) if it exhausts retries. The engine catches this and reports it as a partial-data condition in the report, not as a crash.
 - Long fetches must yield items as they arrive so the UI can show progress.
 
 ## 10. Errors

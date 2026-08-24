@@ -304,7 +304,7 @@ erDiagram
         uuid id PK
         string name
         text description
-        string entity_type "issue|merge_request in MVP"
+        string entity_type "issue|merge_request|sprint in MVP"
         json expression
         json report_settings
         enum origin "system_template|user_created|imported"
