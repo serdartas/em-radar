@@ -193,6 +193,10 @@ class ConnectionTestResult:
     code: ConnectionErrorCode | None = None   # structured error code when ok is False
 ```
 
+`ConnectionErrorCode` is a string enum with the permitted values `auth`, `config`, `data`,
+`not_found`, `rate_limited`, `transient`, and `unknown`. It is populated when `ok` is `False` so the
+UI can present a structured reason instead of parsing `detail`.
+
 ### 6.2 `WorkItemProvider` (Jira, Linear, GitHub Issues)
 
 ```python

@@ -36,9 +36,9 @@ connectors provide access, teams own the board scope, and a pack is just the rul
 - **Signal Config Group.** The in-app entity a pack maps to: a reusable bundle of signals, attached to any number of teams. See [data model §5.12C](./05-data-model.md#512c-signalconfiggroup).
 - **Template.** A pre-authored signal definition shipped with the application (the default pack). A template seeds a signal in a group; it is configuration, not executable code, and carries no privileged behavior — a user can recreate the same signal from scratch. Templates are catalogued in §12.
 - **Signal.** A named, structured rule expression over one signal entity type, carrying its own
-  configuration (params, severity). In MVP, `issue` belongs to the work-tracking
+  configuration (params, severity). In MVP, `issue` and `sprint` belong to the work-tracking
   domain — the **task-board source** — and `merge_request` belongs to the code-repository domain —
-  the **code source**. These entity types line up 1:1 with the two team sources of the same names
+  the **code source**. Each entity type is supplied by one of the two team sources
   ([data model §5.12](./05-data-model.md#512-teamprofile)). A signal selects neither a connection nor
   a project, board, or repository; the team supplies compatible source data at report time.
   Cross-domain signals are deferred until after MVP.
