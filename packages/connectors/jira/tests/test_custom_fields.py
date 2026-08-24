@@ -138,53 +138,48 @@ class TestCoerceCustomField:
 
 class TestCustomFieldsFromPayload:
     def test_coerces_requested_field(self) -> None:
-        fm = _field_mapping_config()
         fields = {"customfield_10100": 5}
         types = {"customfield_10100": "number"}
-        result = _custom_fields_from_payload(fields, types, fm)
+        result = _custom_fields_from_payload(fields, types)
         assert result == {"customfield_10100": 5.0}
 
-    def test_excludes_sprint_field(self) -> None:
-        fm = _field_mapping_config()
-        fields = {"customfield_10020": [{"id": 1}], "customfield_10100": "hello"}
+    def test_retains_requested_sprint_field(self) -> None:
+        # A signal that explicitly selects the mapped sprint id must observe its value,
+        # not None. ``types`` only ever contains signal-requested ids.
+        fields = {"customfield_10020": [{"value": "Sprint 1"}], "customfield_10100": "hello"}
         types = {"customfield_10020": "array", "customfield_10100": "string"}
-        result = _custom_fields_from_payload(fields, types, fm)
-        assert "customfield_10020" not in result
+        result = _custom_fields_from_payload(fields, types)
+        assert result["customfield_10020"] == ["Sprint 1"]
 
-    def test_excludes_story_points_field(self) -> None:
+    def test_retains_requested_story_points_field(self) -> None:
         fm = _field_mapping_config()
         fields = {fm.story_points: 8.0, "customfield_10100": 1.0}
         types = {fm.story_points: "number", "customfield_10100": "number"}
-        result = _custom_fields_from_payload(fields, types, fm)
-        assert fm.story_points not in result
+        result = _custom_fields_from_payload(fields, types)
+        assert result[fm.story_points] == 8.0
 
-    def test_excludes_acceptance_criteria_when_configured(self) -> None:
-        fm = _field_mapping_config()
-        fm.acceptance_criteria = "customfield_10300"
+    def test_retains_requested_acceptance_criteria_field(self) -> None:
         fields = {"customfield_10300": "Given When Then", "customfield_10100": "x"}
         types = {"customfield_10300": "string", "customfield_10100": "string"}
-        result = _custom_fields_from_payload(fields, types, fm)
-        assert "customfield_10300" not in result
+        result = _custom_fields_from_payload(fields, types)
+        assert result["customfield_10300"] == "Given When Then"
 
     def test_omits_none_fields(self) -> None:
-        fm = _field_mapping_config()
         fields: dict[str, object] = {"customfield_10100": None}
         types = {"customfield_10100": "string"}
-        result = _custom_fields_from_payload(fields, types, fm)
+        result = _custom_fields_from_payload(fields, types)
         assert "customfield_10100" not in result
 
     def test_omits_fields_missing_from_payload(self) -> None:
-        fm = _field_mapping_config()
         fields: dict[str, object] = {}
         types = {"customfield_10100": "string"}
-        result = _custom_fields_from_payload(fields, types, fm)
+        result = _custom_fields_from_payload(fields, types)
         assert result == {}
 
     def test_omits_coercion_failure(self) -> None:
-        fm = _field_mapping_config()
         fields = {"customfield_10100": True}  # bool → None for number type
         types = {"customfield_10100": "number"}
-        result = _custom_fields_from_payload(fields, types, fm)
+        result = _custom_fields_from_payload(fields, types)
         assert "customfield_10100" not in result
 
 

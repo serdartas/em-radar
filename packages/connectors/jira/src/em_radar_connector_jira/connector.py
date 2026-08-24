@@ -850,7 +850,7 @@ def _workitem_from_payload(
         current_sprint_id=_current_sprint_id(sprints),
         created_at=_parse_datetime(_optional_str(fields, "created")),
         updated_at=_parse_datetime(_optional_str(fields, "updated")),
-        custom_fields=_custom_fields_from_payload(fields, custom_field_types or {}, field_mapping),
+        custom_fields=_custom_fields_from_payload(fields, custom_field_types or {}),
     )
 
 
@@ -1198,21 +1198,17 @@ def _number_or_none(value: object, field_name: str) -> float | None:
 def _custom_fields_from_payload(
     fields: Mapping[str, object],
     custom_field_types: Mapping[str, str | None],
-    field_mapping: JiraFieldMappingConfig,
 ) -> dict[str, object]:
     """Coerce requested custom fields from a Jira issue fields payload.
 
-    Built-in-consumed ids (story_points, sprint, acceptance_criteria) are excluded.
-    Missing or None values are omitted. No field values are logged.
+    ``custom_field_types`` contains only the ids a signal explicitly requested. Mapped
+    ids (story_points/sprint/acceptance_criteria) are intentionally retained here when
+    requested so a signal selecting one observes its value rather than ``None``; their
+    canonical attributes remain populated alongside. Missing or None values are omitted.
+    No field values are logged.
     """
-    builtin_consumed = {_SPRINT_FIELD, field_mapping.story_points}
-    if field_mapping.acceptance_criteria is not None:
-        builtin_consumed.add(field_mapping.acceptance_criteria)
-
     result: dict[str, object] = {}
     for field_id, field_type in custom_field_types.items():
-        if field_id in builtin_consumed:
-            continue
         raw = fields.get(field_id)
         if raw is None:
             continue
