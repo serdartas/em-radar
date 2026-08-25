@@ -590,6 +590,9 @@ async def _run_team_report(
     mr_window = _code_fetch_window(window, board_meta.sprints if board_meta else [], started_at)
     jira_schema = JiraConnector.describe_signal_schema()
     custom_field_ids = _referenced_custom_field_ids(board_definitions, jira_schema)
+    # Gate the code fetch on the selected signals actually needing it.  When the selected signal
+    # group contains no merge-request signals, skip _fetch_code_data entirely so that a transient
+    # connector error on the code source does not produce a spurious partial-data note.
     wi_result, code_result = await asyncio.gather(
         (
             _fetch_workitems_and_transitions(board_meta, window, custom_field_ids)
@@ -598,7 +601,9 @@ async def _run_team_report(
         ),
         (
             _fetch_code_data(session, team_row.code_connection_id, mr_window)
-            if has_code_source and team_row.code_connection_id is not None
+            if has_code_source
+            and team_row.code_connection_id is not None
+            and bool(code_definitions)
             else _resolved(None)
         ),
         return_exceptions=True,

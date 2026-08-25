@@ -183,6 +183,37 @@ def _create_gitlab_connection(api_client: TestClient) -> str:
     ).json()["id"]
 
 
+def _create_mr_signal(api_client: TestClient, name: str) -> str:
+    """Create a merge-request signal definition and return its id.
+
+    Required so that _fetch_code_data is not skipped by the source guard (code_definitions must
+    be non-empty for the code fetch to run).
+    """
+    return api_client.post(
+        "/api/signal-definitions",
+        json={
+            "name": name,
+            "entity_type": "merge_request",
+            "expression": {
+                "type": "group",
+                "operator": "all",
+                "conditions": [{"field": "state", "operator": "is", "value": "open"}],
+            },
+            "report_settings": {"severity": "info", "category": "code"},
+            "origin": "user_created",
+        },
+    ).json()["id"]
+
+
+def _create_mr_signal_group(api_client: TestClient, name: str) -> str:
+    """Create a single-MR-signal group and return the group id."""
+    signal_id = _create_mr_signal(api_client, f"{name} — MR open")
+    return api_client.post(
+        "/api/signal-config-groups",
+        json={"name": name, "signal_ids": [signal_id]},
+    ).json()["id"]
+
+
 def test_scrum_sprint_window_is_converted_to_date_range_for_mr_fetch(
     api_client: TestClient, monkeypatch
 ) -> None:
@@ -196,6 +227,7 @@ def test_scrum_sprint_window_is_converted_to_date_range_for_mr_fetch(
     jira_id = _create_jira_connection(api_client)
     scope_id = _create_board_scope(api_client, jira_id, _BOARD_CAPABILITIES)
     gitlab_id = _create_gitlab_connection(api_client)
+    group_id = _create_mr_signal_group(api_client, "Scrum dated sprint MR group")
     team_id = api_client.post(
         "/api/teams",
         json={
@@ -203,6 +235,7 @@ def test_scrum_sprint_window_is_converted_to_date_range_for_mr_fetch(
             "connection_ids": [jira_id],
             "scope_ids": [scope_id],
             "code_connection_id": gitlab_id,
+            "signal_config_group_ids": [group_id],
             "working_mode": "scrum",
             "sprint_length_days": 14,
         },
@@ -232,6 +265,7 @@ def test_sprint_without_dates_uses_fallback_lookback_window(
     jira_id = _create_jira_connection(api_client)
     scope_id = _create_board_scope(api_client, jira_id, _BOARD_CAPABILITIES)
     gitlab_id = _create_gitlab_connection(api_client)
+    group_id = _create_mr_signal_group(api_client, "Undated sprint MR group")
     team_id = api_client.post(
         "/api/teams",
         json={
@@ -239,6 +273,7 @@ def test_sprint_without_dates_uses_fallback_lookback_window(
             "connection_ids": [jira_id],
             "scope_ids": [scope_id],
             "code_connection_id": gitlab_id,
+            "signal_config_group_ids": [group_id],
             "working_mode": "scrum",
             "sprint_length_days": 14,
         },
@@ -267,6 +302,7 @@ def test_future_sprint_code_window_is_clamped_to_report_time(
     jira_id = _create_jira_connection(api_client)
     scope_id = _create_board_scope(api_client, jira_id, _BOARD_CAPABILITIES)
     gitlab_id = _create_gitlab_connection(api_client)
+    group_id = _create_mr_signal_group(api_client, "Future sprint MR group")
     team_id = api_client.post(
         "/api/teams",
         json={
@@ -274,6 +310,7 @@ def test_future_sprint_code_window_is_clamped_to_report_time(
             "connection_ids": [jira_id],
             "scope_ids": [scope_id],
             "code_connection_id": gitlab_id,
+            "signal_config_group_ids": [group_id],
             "working_mode": "scrum",
             "sprint_length_days": 14,
         },
@@ -313,6 +350,7 @@ def test_closed_undated_sprint_code_window_ends_at_completion_date(
     jira_id = _create_jira_connection(api_client)
     scope_id = _create_board_scope(api_client, jira_id, _BOARD_CAPABILITIES)
     gitlab_id = _create_gitlab_connection(api_client)
+    group_id = _create_mr_signal_group(api_client, "Closed sprint MR group")
     team_id = api_client.post(
         "/api/teams",
         json={
@@ -320,6 +358,7 @@ def test_closed_undated_sprint_code_window_ends_at_completion_date(
             "connection_ids": [jira_id],
             "scope_ids": [scope_id],
             "code_connection_id": gitlab_id,
+            "signal_config_group_ids": [group_id],
             "working_mode": "scrum",
             "sprint_length_days": 14,
         },
@@ -390,6 +429,7 @@ def test_report_run_populates_merge_request_workitem_links(
     jira_id = _create_jira_connection(api_client)
     scope_id = _create_board_scope(api_client, jira_id, _BOARD_CAPABILITIES)
     gitlab_id = _create_gitlab_connection(api_client)
+    group_id = _create_mr_signal_group(api_client, "Linking MR group")
     team_id = api_client.post(
         "/api/teams",
         json={
@@ -397,6 +437,7 @@ def test_report_run_populates_merge_request_workitem_links(
             "connection_ids": [jira_id],
             "scope_ids": [scope_id],
             "code_connection_id": gitlab_id,
+            "signal_config_group_ids": [group_id],
             "working_mode": "scrum",
             "sprint_length_days": 14,
         },
@@ -426,11 +467,13 @@ def test_date_range_window_passes_through_unchanged_to_mr_fetch(
     monkeypatch.setattr("em_radar_api.routers.reports.datetime", FrozenReportDateTime)
 
     gitlab_id = _create_gitlab_connection(api_client)
+    group_id = _create_mr_signal_group(api_client, "Kanban code-only MR group")
     team_id = api_client.post(
         "/api/teams",
         json={
             "name": "Code only kanban",
             "code_connection_id": gitlab_id,
+            "signal_config_group_ids": [group_id],
             "working_mode": "kanban",
         },
     ).json()["id"]
