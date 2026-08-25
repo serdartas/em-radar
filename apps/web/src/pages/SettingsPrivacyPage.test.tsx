@@ -5,9 +5,17 @@ import { MemoryRouter } from "react-router-dom"
 
 import { SettingsPrivacyPage } from "@/pages/SettingsPrivacyPage"
 
+const mockNavigate = vi.fn()
+
+vi.mock("react-router-dom", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("react-router-dom")>()
+  return { ...actual, useNavigate: () => mockNavigate }
+})
+
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
+  mockNavigate.mockClear()
   localStorage.clear()
 })
 
@@ -224,16 +232,14 @@ describe("SettingsPrivacyPage", () => {
     expect(screen.getByRole("switch", { name: "Enable anonymous telemetry" })).toBeDisabled()
   })
 
-  it("renders a Re-run setup link pointing to /setup", () => {
+  it("renders a Re-run setup button", () => {
     mockFetch()
     renderPage()
 
-    const link = screen.getByRole("link", { name: /re-run setup/i })
-    expect(link).toBeInTheDocument()
-    expect(link).toHaveAttribute("href", "/setup")
+    expect(screen.getByRole("button", { name: /re-run setup/i })).toBeInTheDocument()
   })
 
-  it("clicking Re-run setup clears wizard progress so the wizard does not immediately redirect back", () => {
+  it("clicking Re-run setup clears wizard progress and navigates to /setup", () => {
     localStorage.setItem(
       "em-radar.wizard-progress",
       JSON.stringify({ step: "sources", currentTeamId: null, completed: true, furthestStep: "sources" }),
@@ -241,9 +247,10 @@ describe("SettingsPrivacyPage", () => {
     mockFetch()
     renderPage()
 
-    fireEvent.click(screen.getByRole("link", { name: /re-run setup/i }))
+    fireEvent.click(screen.getByRole("button", { name: /re-run setup/i }))
 
     expect(localStorage.getItem("em-radar.wizard-progress")).toBeNull()
+    expect(mockNavigate).toHaveBeenCalledWith("/setup")
   })
 
   it("shows a Callout alert when the delete report history mutation fails", async () => {

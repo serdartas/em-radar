@@ -3,7 +3,7 @@
 import { useState } from "react"
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Link } from "react-router-dom"
+import { useNavigate } from "react-router-dom"
 
 import { ConnectionDeleteConfirm } from "@/components/connections/ConnectionDeleteConfirm"
 import { Button } from "@/components/ui/button"
@@ -25,6 +25,7 @@ const GUARANTEES = [
 
 export function SettingsPrivacyPage() {
   const queryClient = useQueryClient()
+  const navigate = useNavigate()
   const settingsQuery = useQuery({ queryKey: ["settings"], queryFn: getSettings })
   const telemetryEnabled = settingsQuery.data?.telemetry_enabled ?? false
 
@@ -108,8 +109,14 @@ export function SettingsPrivacyPage() {
             Run through the setup wizard again to add or reconfigure connections.
           </p>
           <div className="mt-3">
-            <Button asChild variant="outline">
-              <Link onClick={() => clearWizardProgress()} to="/setup">Re-run setup</Link>
+            <Button
+              onClick={() => {
+                clearWizardProgress()
+                navigate("/setup")
+              }}
+              variant="outline"
+            >
+              Re-run setup
             </Button>
           </div>
         </CardContent>
