@@ -416,7 +416,8 @@ describe("SignalConfigGroupsPage — AUDIT-9: Callout errors", () => {
     const alert = await screen.findByRole("alert")
     expect(alert).toBeInTheDocument()
     expect(alert.textContent).toMatch(/server error/i)
-    expect(alert.textContent).toMatch(/detach/i)
+    // Detach guidance must NOT appear for non-409 errors
+    expect(alert.textContent).not.toMatch(/detach/i)
   })
 
   it("shows a Callout alert when the rename mutation fails", async () => {
@@ -473,7 +474,11 @@ describe("SignalConfigGroupsPage — AUDIT-9: Callout errors", () => {
     fireEvent.click(deleteBtn)
 
     const alert = await screen.findByRole("alert")
+    // Backend detail is surfaced verbatim
     expect(alert.textContent).toMatch(/signal config group is referenced by a team/i)
-    expect(alert.textContent).toMatch(/detach/i)
+    // Detach guidance is appended with a separator (no run-on sentence)
+    expect(alert.textContent).toMatch(
+      /signal config group is referenced by a team\. Detach this group from all teams/i,
+    )
   })
 })

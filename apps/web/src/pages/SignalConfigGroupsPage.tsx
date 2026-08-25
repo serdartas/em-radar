@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input"
 import { InlineCreateRow } from "@/components/ui/inline-create-row"
 import { Label } from "@/components/ui/label"
 import { Select } from "@/components/ui/select"
-import { apiErrorMessage } from "@/lib/api"
+import { ApiError, apiErrorMessage } from "@/lib/api"
 import {
   createSignalConfigGroup,
   deleteSignalConfigGroup,
@@ -128,8 +128,15 @@ function GroupCard({
   const deleteMutation = useMutation({
     mutationFn: () => deleteSignalConfigGroup(group.id),
     onSuccess: invalidate,
-    onError: (error) =>
-      setDeleteError(apiErrorMessage(error, "Could not delete the group. Please try again.")),
+    onError: (error) => {
+      const base = apiErrorMessage(error, "Could not delete the group. Please try again.")
+      const isRefConflict = error instanceof ApiError && error.status === 409
+      setDeleteError(
+        isRefConflict
+          ? `${base}. Detach this group from all teams before deleting it.`
+          : base,
+      )
+    },
   })
 
   const definitionsById = new Map(definitions.map((definition) => [definition.id, definition]))
@@ -186,7 +193,7 @@ function GroupCard({
         )}
         {deleteError && (
           <Callout role="alert" variant="error">
-            {deleteError} Detach this group from all teams before deleting it.
+            {deleteError}
           </Callout>
         )}
 
