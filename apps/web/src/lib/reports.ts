@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-
+import type { DateFormat } from "@/lib/settings"
 import { API_BASE_URL, ApiError, apiFetch } from "@/lib/api"
 import type { Severity } from "@/lib/severity"
 
@@ -72,9 +72,26 @@ export function parseApiTimestamp(value: string): Date {
   return new Date(normalized)
 }
 
-export function formatTimestamp(value: string): string {
+const _DATE_FORMAT_LOCALE: Record<DateFormat, string> = {
+  "dd/mm/yyyy": "en-GB",
+  "mm/dd/yyyy": "en-US",
+  "yyyy-mm-dd": "iso",
+}
+
+const _DATE_FORMAT_OPTIONS: Intl.DateTimeFormatOptions = {
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric",
+}
+
+export function formatTimestamp(value: string, dateFormat: DateFormat = "dd/mm/yyyy"): string {
   const parsed = parseApiTimestamp(value)
-  return Number.isNaN(parsed.valueOf()) ? value : parsed.toLocaleString()
+  if (Number.isNaN(parsed.valueOf())) return value
+  const locale = _DATE_FORMAT_LOCALE[dateFormat]
+  if (locale === "iso") {
+    return parsed.toISOString().slice(0, 10)
+  }
+  return new Intl.DateTimeFormat(locale, _DATE_FORMAT_OPTIONS).format(parsed)
 }
 
 export function extractPartialDataNotes(snapshot: unknown): PartialDataNote[] {

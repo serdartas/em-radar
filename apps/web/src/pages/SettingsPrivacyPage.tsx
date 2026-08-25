@@ -11,10 +11,11 @@ import { Callout } from "@/components/ui/callout"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { Label } from "@/components/ui/label"
+import { Select } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import { listConnections, type SourceConnection } from "@/lib/connections"
 import { deleteReportHistory } from "@/lib/reports"
-import { getSettings, updateSettings } from "@/lib/settings"
+import { DATE_FORMAT_OPTIONS, getSettings, updateSettings, type DateFormat } from "@/lib/settings"
 import { clearWizardProgress } from "@/lib/wizardProgress"
 
 const GUARANTEES = [
@@ -28,9 +29,17 @@ export function SettingsPrivacyPage() {
   const navigate = useNavigate()
   const settingsQuery = useQuery({ queryKey: ["settings"], queryFn: getSettings })
   const telemetryEnabled = settingsQuery.data?.telemetry_enabled ?? false
+  const dateFormat: DateFormat = settingsQuery.data?.date_format ?? "dd/mm/yyyy"
 
   const telemetryMutation = useMutation({
     mutationFn: (value: boolean) => updateSettings({ telemetry_enabled: value }),
+    onSuccess: (data) => {
+      queryClient.setQueryData(["settings"], data)
+    },
+  })
+
+  const dateFormatMutation = useMutation({
+    mutationFn: (value: DateFormat) => updateSettings({ date_format: value }),
     onSuccess: (data) => {
       queryClient.setQueryData(["settings"], data)
     },
@@ -95,6 +104,39 @@ export function SettingsPrivacyPage() {
           {telemetryMutation.isError && (
             <Callout role="alert" variant="error">
               Could not update the telemetry setting. Try again.
+            </Callout>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <h2 className="text-lg font-semibold">Date format</h2>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <Label htmlFor="date-format-select">Date display format</Label>
+              <p className="mt-1 text-sm text-slate-600">
+                Choose how dates are displayed in reports and throughout the interface.
+              </p>
+            </div>
+            <Select
+              disabled={!settingsQuery.isSuccess || dateFormatMutation.isPending}
+              id="date-format-select"
+              onChange={(e) => dateFormatMutation.mutate(e.target.value as DateFormat)}
+              value={dateFormat}
+            >
+              {DATE_FORMAT_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </Select>
+          </div>
+          {dateFormatMutation.isError && (
+            <Callout role="alert" variant="error">
+              Could not update the date format setting. Try again.
             </Callout>
           )}
         </CardContent>
