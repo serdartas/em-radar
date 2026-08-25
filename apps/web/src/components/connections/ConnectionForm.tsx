@@ -278,10 +278,14 @@ export function ConnectionForm({
             const { acHeadingDefault, spDefault } = jiraFieldMappingDefaults(
               selectedConnector.config_schema,
             )
+            // Field mapping requires a saved connection ID and a passing test so that
+            // field discovery (listJiraFields) has a real connection to query.
+            const fieldMappingEnabled = !!editing?.id && testMutation.isSuccess
             return (
               <JiraFieldMappingSection
                 acHeadingDefault={acHeadingDefault}
                 connectionId={editing?.id}
+                disabled={!fieldMappingEnabled}
                 fieldMappingValues={toFieldMappingValues(values.field_mapping)}
                 onFieldMappingChange={(next) => changeField("field_mapping", next)}
                 spDefault={spDefault}

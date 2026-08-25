@@ -392,3 +392,66 @@ describe("ConnectionForm — token help links", () => {
     expect(link).toHaveAttribute("rel", "noopener noreferrer")
   })
 })
+
+// ---------------------------------------------------------------------------
+// Jira field mapping gate (M8.7-02)
+// ---------------------------------------------------------------------------
+
+describe("ConnectionForm — Jira field mapping gate", () => {
+  it("shows the gate callout (not the form controls) in add mode before any test", () => {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter>
+          <ConnectionForm connectors={[jiraConnector]} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    expect(
+      screen.getByText(/Save the connection and run a successful test to configure field mapping/i),
+    ).toBeInTheDocument()
+    // Switches inside the field-mapping section must not be present while gated.
+    // (The SchemaForm above may still render other controls, but the mapping toggles are absent.)
+    const switches = screen.queryAllByRole("switch")
+    expect(switches).toHaveLength(0)
+  })
+
+  it("shows the gate callout in edit mode before a successful test", () => {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter>
+          <ConnectionForm connectors={[jiraConnector]} editing={existingConnection} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    expect(
+      screen.getByText(/Run a successful test to configure field mapping/i),
+    ).toBeInTheDocument()
+  })
+
+  it("reveals the field-mapping switches after a successful test in edit mode", async () => {
+    const { testConnectionDraft } = await import("@/lib/connections")
+    vi.mocked(testConnectionDraft).mockResolvedValueOnce({
+      ok: true,
+      detail: "OK",
+      user_display_name: "Test User",
+      permissions: [],
+    })
+
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter>
+          <ConnectionForm connectors={[jiraConnector]} editing={existingConnection} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    fireEvent.click(screen.getByRole("button", { name: "Test connection" }))
+
+    await waitFor(() => {
+      expect(screen.queryByText(/configure field mapping/i)).not.toBeInTheDocument()
+      expect(screen.getAllByRole("switch").length).toBeGreaterThanOrEqual(2)
+    })
+  })
+})

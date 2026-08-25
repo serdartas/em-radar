@@ -46,6 +46,7 @@ function renderSection(
     onFieldMappingChange: (v: FieldMappingValues) => void
     acHeadingDefault: string
     spDefault: string
+    disabled: boolean
   }> = {},
 ) {
   const merged = {
@@ -544,5 +545,54 @@ describe("JiraFieldMappingSection — stale field value", () => {
         Array.from(select.options).some((o) => o.text.includes("not in discovered fields")),
       ).toBe(true)
     })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// JiraFieldMappingSection — disabled gate
+// ---------------------------------------------------------------------------
+
+describe("JiraFieldMappingSection — disabled gate", () => {
+  it("shows a gate callout when disabled without a connectionId (new connection)", () => {
+    renderSection({ disabled: true })
+
+    expect(
+      screen.getByText(/Save the connection and run a successful test to configure field mapping/i),
+    ).toBeInTheDocument()
+    expect(screen.queryByRole("switch")).not.toBeInTheDocument()
+  })
+
+  it("shows a shorter gate callout when disabled with a connectionId (saved but not tested)", () => {
+    renderSection({ disabled: true, connectionId: "conn-1" })
+
+    expect(
+      screen.getByText(/Run a successful test to configure field mapping/i),
+    ).toBeInTheDocument()
+    expect(screen.queryByRole("switch")).not.toBeInTheDocument()
+  })
+
+  it("shows the form controls when not disabled", () => {
+    renderSection({ disabled: false })
+
+    expect(screen.queryByText(/configure field mapping/i)).not.toBeInTheDocument()
+    expect(screen.getAllByRole("switch")).toHaveLength(2)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// JiraFieldMappingSection — row-level tooltips
+// ---------------------------------------------------------------------------
+
+describe("JiraFieldMappingSection — row tooltips", () => {
+  it("Story Points row exposes an InfoTooltip button", () => {
+    renderSection({ disabled: false })
+
+    expect(screen.getByRole("button", { name: /About Story Points/i })).toBeInTheDocument()
+  })
+
+  it("Acceptance Criteria row exposes an InfoTooltip button", () => {
+    renderSection({ disabled: false })
+
+    expect(screen.getByRole("button", { name: /About Acceptance Criteria/i })).toBeInTheDocument()
   })
 })

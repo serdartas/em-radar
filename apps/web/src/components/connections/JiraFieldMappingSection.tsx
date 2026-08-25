@@ -136,11 +136,17 @@ interface JiraFieldMappingSectionProps {
    * connector actually uses at runtime rather than displaying it as unconfigured.
    */
   spDefault: string
+  /**
+   * When true, the section is locked and shows an explanation in place of its controls.
+   * Kept false once the connection is saved and a test has passed.
+   */
+  disabled?: boolean
 }
 
 export function JiraFieldMappingSection({
   acHeadingDefault,
   connectionId,
+  disabled = false,
   fieldMappingValues,
   onFieldMappingChange,
   spDefault,
@@ -311,10 +317,21 @@ export function JiraFieldMappingSection({
     })
   }
 
+  const gateCopy = connectionId
+    ? "Run a successful test to configure field mapping."
+    : "Save the connection and run a successful test to configure field mapping."
+
   return (
     <fieldset className="rounded-md border px-4 pb-4">
       <legend className="px-1 text-sm font-medium">Jira Field Mapping</legend>
 
+      {disabled ? (
+        <div className="pt-4">
+          <Callout variant="info">
+            <p>{gateCopy}</p>
+          </Callout>
+        </div>
+      ) : (
       <div className="space-y-6 pt-4">
         {/* Story Points */}
         <FieldMappingRow
@@ -322,6 +339,12 @@ export function JiraFieldMappingSection({
           label="Story Points"
           onEnabledChange={handleSpToggle}
           switchId={spSwitchId}
+          tooltip={
+            <p>
+              Select the Jira custom field that stores story point estimates. EM Radar reads
+              this field to calculate velocity and sizing metrics.
+            </p>
+          }
         >
           <CustomFieldSelect
             fields={customFields}
@@ -338,6 +361,12 @@ export function JiraFieldMappingSection({
           label="Acceptance Criteria"
           onEnabledChange={handleAcToggle}
           switchId={acSwitchId}
+          tooltip={
+            <p>
+              Specify where acceptance criteria are recorded in your Jira issues. EM Radar
+              extracts this text to evaluate definition-of-done completeness.
+            </p>
+          }
         >
           <div className="space-y-3">
             <FormRow htmlFor={acModeSelectId} label="How is it recorded?">
@@ -393,6 +422,7 @@ export function JiraFieldMappingSection({
           <p>{HELPER_COPY}</p>
         </Callout>
       </div>
+      )}
     </fieldset>
   )
 }
