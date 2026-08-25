@@ -112,19 +112,24 @@ function GroupCard({
   const updateMutation = useMutation({
     mutationFn: (signal_ids: string[]) => updateSignalConfigGroup(group.id, { signal_ids }),
     onSuccess: invalidate,
-    onError: () => setUpdateError("Could not update signals in this group. Please try again."),
+    onError: (error) =>
+      setUpdateError(
+        apiErrorMessage(error, "Could not update signals in this group. Please try again."),
+      ),
   })
 
   const renameMutation = useMutation({
     mutationFn: (newName: string) => updateSignalConfigGroup(group.id, { name: newName }),
     onSuccess: invalidate,
-    onError: () => setRenameError("Could not rename the group. Please try again."),
+    onError: (error) =>
+      setRenameError(apiErrorMessage(error, "Could not rename the group. Please try again.")),
   })
 
   const deleteMutation = useMutation({
     mutationFn: () => deleteSignalConfigGroup(group.id),
     onSuccess: invalidate,
-    onError: () => setDeleteError("Could not delete the group. Please try again."),
+    onError: (error) =>
+      setDeleteError(apiErrorMessage(error, "Could not delete the group. Please try again.")),
   })
 
   const definitionsById = new Map(definitions.map((definition) => [definition.id, definition]))
@@ -181,7 +186,7 @@ function GroupCard({
         )}
         {deleteError && (
           <Callout role="alert" variant="error">
-            {deleteError}
+            {deleteError} Detach this group from all teams before deleting it.
           </Callout>
         )}
 
