@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { useQuery } from "@tanstack/react-query"
 
+import type { DateFormat } from "@/lib/settings"
+import { getSettings } from "@/lib/settings"
 import { API_BASE_URL, ApiError, apiFetch } from "@/lib/api"
 import type { Severity } from "@/lib/severity"
 
@@ -72,9 +75,40 @@ export function parseApiTimestamp(value: string): Date {
   return new Date(normalized)
 }
 
-export function formatTimestamp(value: string): string {
+const _DATE_ONLY_OPTIONS: Intl.DateTimeFormatOptions = {
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric",
+}
+
+// Swedish locale produces YYYY-MM-DD in local time — consistent with the other branches.
+const _ISO_DATE_FMT = new Intl.DateTimeFormat("sv-SE", _DATE_ONLY_OPTIONS)
+
+export function formatTimestamp(value: string, dateFormat: DateFormat = "dd/mm/yyyy"): string {
   const parsed = parseApiTimestamp(value)
-  return Number.isNaN(parsed.valueOf()) ? value : parsed.toLocaleString()
+  if (Number.isNaN(parsed.valueOf())) return value
+  const timePart = parsed.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+  let datePart: string
+  if (dateFormat === "yyyy-mm-dd") {
+    datePart = _ISO_DATE_FMT.format(parsed)
+  } else {
+    const locale = dateFormat === "mm/dd/yyyy" ? "en-US" : "en-GB"
+    datePart = new Intl.DateTimeFormat(locale, _DATE_ONLY_OPTIONS).format(parsed)
+  }
+  return `${datePart}, ${timePart}`
+}
+
+/**
+ * Hook that returns a `formatTimestamp` function bound to the user's date-format preference.
+ * Use this in components instead of calling `formatTimestamp` directly.
+ */
+export function useFormatTimestamp(): (ts: string | null | undefined) => string {
+  const settingsQuery = useQuery({ queryKey: ["settings"], queryFn: getSettings })
+  const dateFormat: DateFormat = settingsQuery.data?.date_format ?? "dd/mm/yyyy"
+  return (ts: string | null | undefined) => {
+    if (ts == null) return ""
+    return formatTimestamp(ts, dateFormat)
+  }
 }
 
 export function extractPartialDataNotes(snapshot: unknown): PartialDataNote[] {

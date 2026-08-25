@@ -52,6 +52,25 @@ function renderReportsList() {
   )
 }
 
+const DEFAULT_SETTINGS = { telemetry_enabled: false, date_format: "dd/mm/yyyy" }
+
+/** Mock that returns settings for /api/settings and reports list for all other requests. */
+function mockReportsFetch(reportsData: unknown) {
+  return vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = String(input)
+    if (url.includes("/api/settings")) {
+      return new Response(JSON.stringify(DEFAULT_SETTINGS), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    }
+    return new Response(JSON.stringify(reportsData), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    })
+  })
+}
+
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
@@ -59,12 +78,7 @@ afterEach(() => {
 
 describe("ReportsListPage", () => {
   it("renders persisted reports grouped under each team name", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify(reports), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }),
-    )
+    mockReportsFetch(reports)
 
     renderReportsList()
 
@@ -86,12 +100,7 @@ describe("ReportsListPage", () => {
   // AUDIT-30: history.replaceState must be called in a useEffect, not during render,
   // and only when there was state to consume (to preserve React Router's history fields).
   it("AUDIT-30: consumes history failedTeams state and clears it via useEffect", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify([]), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }),
-    )
+    mockReportsFetch([])
     const replaceStateSpy = vi.spyOn(window.history, "replaceState")
 
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -120,12 +129,7 @@ describe("ReportsListPage", () => {
   })
 
   it("AUDIT-30: does not call replaceState when location.state has no failedTeams", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify([]), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }),
-    )
+    mockReportsFetch([])
     const replaceStateSpy = vi.spyOn(window.history, "replaceState")
 
     renderReportsList() // standard render with no state
@@ -136,22 +140,44 @@ describe("ReportsListPage", () => {
   })
 
   it("falls back to Unknown team when a report has no team", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(
-        JSON.stringify([
-          {
-            ...reports[0],
-            id: "report-orphan",
-            team_profile_id: null,
-            team_name: null,
-          },
-        ]),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      ),
-    )
+    mockReportsFetch([
+      {
+        ...reports[0],
+        id: "report-orphan",
+        team_profile_id: null,
+        team_name: null,
+      },
+    ])
 
     renderReportsList()
 
     expect(await screen.findByRole("heading", { name: "Unknown team" })).toBeInTheDocument()
+  })
+
+  it("renders report link date in yyyy-mm-dd format when settings return that preference", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.includes("/api/settings")) {
+        return new Response(
+          JSON.stringify({ telemetry_enabled: false, date_format: "yyyy-mm-dd" }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        )
+      }
+      return new Response(
+        JSON.stringify([
+          {
+            ...reports[0],
+            started_at: "2026-08-13T10:00:00Z",
+          },
+        ]),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      )
+    })
+
+    renderReportsList()
+
+    // The link text should start with "Report 2026-08-13" (yyyy-mm-dd date part).
+    const link = await screen.findByRole("link", { name: /Report 2026-08-13/ })
+    expect(link).toBeInTheDocument()
   })
 })
