@@ -66,11 +66,10 @@ function writableValues(
  * validation error; the full URL is only needed when the value is sent to the API.
  */
 function normalizeBaseUrl(config: Record<string, unknown>): Record<string, unknown> {
-  const url = config.base_url
-  if (typeof url === "string" && url.trim() !== "" && !/^https?:\/\//i.test(url)) {
-    return { ...config, base_url: `https://${url.trim()}` }
-  }
-  return config
+  if (typeof config.base_url !== "string") return config
+  const url = config.base_url.trim()
+  if (!url || /^https?:\/\//i.test(url)) return { ...config, base_url: url }
+  return { ...config, base_url: `https://${url}` }
 }
 
 /**

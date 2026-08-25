@@ -213,7 +213,7 @@ function FieldLabel({ exemptSecrets, help, htmlFor, label, property, required }:
         <span aria-hidden="true" className="text-red-600">*</span>
       )}
       {isSecret(property) && (
-        <span aria-hidden="true" className="text-xs font-normal text-slate-500">
+        <span className="text-xs font-normal text-slate-500">
           {exemptSecrets
             ? "Leave blank to keep current token"
             : "Stored securely, not shown again"}

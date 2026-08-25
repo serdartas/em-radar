@@ -267,6 +267,107 @@ describe("ConnectionForm — base_url normalization", () => {
       )
     })
   })
+
+  it("passes through an http:// URL unchanged", async () => {
+    const { testConnectionDraft } = await import("@/lib/connections")
+    vi.mocked(testConnectionDraft).mockClear()
+
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter>
+          <ConnectionForm connectors={[jiraConnector]} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    fireEvent.change(screen.getByLabelText("Connection name"), {
+      target: { value: "Test Jira" },
+    })
+    fireEvent.change(screen.getByLabelText(/^Base URL/), {
+      target: { value: "http://internal.acme.net" },
+    })
+    fireEvent.change(screen.getByLabelText(/^Token/), {
+      target: { value: "tok" },
+    })
+
+    fireEvent.click(screen.getByRole("button", { name: "Test connection" }))
+
+    await waitFor(() => {
+      expect(vi.mocked(testConnectionDraft)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({ base_url: "http://internal.acme.net" }),
+        }),
+        expect.anything(),
+      )
+    })
+  })
+
+  it("trims leading/trailing whitespace and prepends https:// to a scheme-less URL", async () => {
+    const { testConnectionDraft } = await import("@/lib/connections")
+    vi.mocked(testConnectionDraft).mockClear()
+
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter>
+          <ConnectionForm connectors={[jiraConnector]} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    fireEvent.change(screen.getByLabelText("Connection name"), {
+      target: { value: "Test Jira" },
+    })
+    fireEvent.change(screen.getByLabelText(/^Base URL/), {
+      target: { value: "  bol.atlassian.net  " },
+    })
+    fireEvent.change(screen.getByLabelText(/^Token/), {
+      target: { value: "tok" },
+    })
+
+    fireEvent.click(screen.getByRole("button", { name: "Test connection" }))
+
+    await waitFor(() => {
+      expect(vi.mocked(testConnectionDraft)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({ base_url: "https://bol.atlassian.net" }),
+        }),
+        expect.anything(),
+      )
+    })
+  })
+
+  it("normalizes base_url on save (Add connection submit path)", async () => {
+    const { createConnection } = await import("@/lib/connections")
+    vi.mocked(createConnection).mockClear()
+
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter>
+          <ConnectionForm connectors={[jiraConnector]} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    fireEvent.change(screen.getByLabelText("Connection name"), {
+      target: { value: "My Jira" },
+    })
+    fireEvent.change(screen.getByLabelText(/^Base URL/), {
+      target: { value: "acme.atlassian.net" },
+    })
+    fireEvent.change(screen.getByLabelText(/^Token/), {
+      target: { value: "tok" },
+    })
+
+    fireEvent.click(screen.getByRole("button", { name: "Add connection" }))
+
+    await waitFor(() => {
+      expect(vi.mocked(createConnection)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({ base_url: "https://acme.atlassian.net" }),
+        }),
+      )
+    })
+  })
 })
 
 // ---------------------------------------------------------------------------
