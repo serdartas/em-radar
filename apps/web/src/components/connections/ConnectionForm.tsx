@@ -21,6 +21,7 @@ import {
   createConnection,
   type SourceConnection,
   testConnectionDraft,
+  testExistingConnection,
   updateConnection,
 } from "@/lib/connections"
 import { isSecret, type JsonSchema, resolveProperty, schemaType } from "@/lib/jsonSchema"
@@ -135,7 +136,12 @@ export function ConnectionForm({
     return addConnector ? defaultValues(addConnector.config_schema) : {}
   })
 
-  const testMutation = useMutation({ mutationFn: testConnectionDraft })
+  // In edit mode the form blanks secrets, so send the test through the saved-connection
+  // endpoint which uses the stored credential rather than the blank draft value.
+  const testMutation = useMutation({
+    mutationFn: (draft: ConnectionDraft) =>
+      editing?.id ? testExistingConnection(editing.id) : testConnectionDraft(draft),
+  })
   const saveMutation = useMutation({
     mutationFn: (draft: ConnectionDraft) =>
       editing ? updateConnection(editing.id, draft) : createConnection(draft),

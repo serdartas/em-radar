@@ -173,7 +173,9 @@ export function JiraFieldMappingSection({
   const { data: allFields = [] } = useQuery({
     queryKey: ["jiraFields", connectionId],
     queryFn: () => listJiraFields(connectionId!),
-    enabled: !!connectionId,
+    // Only fetch once the section is unlocked: avoids exhausting retries while
+    // disabled so the query fires fresh when the gate opens.
+    enabled: !!connectionId && !disabled,
   })
 
   const customFields = allFields

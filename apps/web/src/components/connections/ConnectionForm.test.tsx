@@ -13,6 +13,7 @@ vi.mock("@/lib/connections", async (importOriginal) => {
   return {
     ...actual,
     testConnectionDraft: vi.fn().mockResolvedValue({ ok: true, detail: "OK", user_display_name: "Test User", permissions: [] }),
+    testExistingConnection: vi.fn().mockResolvedValue({ ok: true, detail: "OK", user_display_name: "Test User", permissions: [] }),
     createConnection: vi.fn().mockResolvedValue({ id: "new-id", name: "x", connector_name: "jira", config: {}, created_at: "" }),
     updateConnection: vi.fn().mockResolvedValue({ id: "conn-1", name: "x", connector_name: "jira", config: {}, created_at: "" }),
   }
@@ -229,7 +230,6 @@ describe("ConnectionForm — base_url normalization", () => {
         expect.objectContaining({
           config: expect.objectContaining({ base_url: "https://acme.atlassian.net" }),
         }),
-        expect.anything(),
       )
     })
   })
@@ -263,7 +263,6 @@ describe("ConnectionForm — base_url normalization", () => {
         expect.objectContaining({
           config: expect.objectContaining({ base_url: "https://acme.atlassian.net" }),
         }),
-        expect.anything(),
       )
     })
   })
@@ -297,7 +296,6 @@ describe("ConnectionForm — base_url normalization", () => {
         expect.objectContaining({
           config: expect.objectContaining({ base_url: "http://internal.acme.net" }),
         }),
-        expect.anything(),
       )
     })
   })
@@ -331,7 +329,6 @@ describe("ConnectionForm — base_url normalization", () => {
         expect.objectContaining({
           config: expect.objectContaining({ base_url: "https://bol.atlassian.net" }),
         }),
-        expect.anything(),
       )
     })
   })
@@ -431,8 +428,8 @@ describe("ConnectionForm — Jira field mapping gate", () => {
   })
 
   it("reveals the field-mapping switches after a successful test in edit mode", async () => {
-    const { testConnectionDraft } = await import("@/lib/connections")
-    vi.mocked(testConnectionDraft).mockResolvedValueOnce({
+    const { testExistingConnection } = await import("@/lib/connections")
+    vi.mocked(testExistingConnection).mockResolvedValueOnce({
       ok: true,
       detail: "OK",
       user_display_name: "Test User",
@@ -456,8 +453,8 @@ describe("ConnectionForm — Jira field mapping gate", () => {
   })
 
   it("keeps the gate callout when the test returns ok:false (bad credentials)", async () => {
-    const { testConnectionDraft } = await import("@/lib/connections")
-    vi.mocked(testConnectionDraft).mockResolvedValueOnce({
+    const { testExistingConnection } = await import("@/lib/connections")
+    vi.mocked(testExistingConnection).mockResolvedValueOnce({
       ok: false,
       detail: "Bad credentials",
       user_display_name: null,
