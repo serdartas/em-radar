@@ -128,8 +128,8 @@ def test_fetch_workitems_normalizes_fixture_issues(monkeypatch: pytest.MonkeyPat
 
     assert seen_jql == [
         'project in ("10000") AND issuetype in ("Epic", "Story", "Bug") '
-        'AND created <= "2026-06-15 00:00+0000" '
-        'AND (resolutiondate is EMPTY OR resolutiondate >= "2026-06-01 00:00+0000")'
+        'AND created < "2026-06-15 00:00+0000" '
+        'AND (resolutiondate is EMPTY OR resolutiondate > "2026-06-01 00:00+0000")'
     ]
 
 
@@ -292,8 +292,9 @@ def test_fetch_workitems_falls_back_to_classic_search_when_jql_missing(
 def test_fetch_workitems_date_range_jql_uses_overlap_predicate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """DATE_RANGE windows must emit the overlap predicate: created <= end AND
-    (resolutiondate is EMPTY OR resolutiondate >= start). No updated-only upper bound.
+    """DATE_RANGE windows must emit the half-open [start, end) overlap predicate:
+    created < end AND (resolutiondate is EMPTY OR resolutiondate > start).
+    No updated-only upper bound.
     """
     seen_jql: list[str] = []
 
@@ -321,8 +322,8 @@ def test_fetch_workitems_date_range_jql_uses_overlap_predicate(
     asyncio.run(run())
 
     assert len(seen_jql) == 1
-    assert 'created <= "2026-06-15 00:00+0000"' in seen_jql[0]
-    assert "resolutiondate is EMPTY OR resolutiondate >= " in seen_jql[0]
+    assert 'created < "2026-06-15 00:00+0000"' in seen_jql[0]
+    assert "resolutiondate is EMPTY OR resolutiondate > " in seen_jql[0]
     assert '"2026-06-01 00:00+0000"' in seen_jql[0]
     assert "updated <" not in seen_jql[0]
 
@@ -331,19 +332,19 @@ def test_fetch_workitems_non_midnight_end_ceil_and_exact_postfilter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """DATE_RANGE with a non-minute-aligned end must ceil the JQL boundary and apply
-    an exact post-filter so items created after the precise end are dropped.
+    an exact post-filter using the half-open [start, end) interval.
 
     window.end = 2026-06-15T14:30:45Z, start = 2026-06-01T00:00:00Z
-      - JQL must use created <= "2026-06-15 14:31" (ceiled, NOT 14:30)
+      - JQL must use created < "2026-06-15 14:31" (ceiled, NOT 14:30)
       - issue created at 14:30:10 IS returned (created before end)
-      - issue created at 14:30:45 IS returned (created exactly at end — inclusive)
+      - issue created at 14:30:45 is EXCLUDED (created exactly at end — exclusive)
       - issue created at 14:30:50 is EXCLUDED (created after end)
     """
     seen_jql: list[str] = []
 
     async def run() -> None:
         # All three issues are returned by the mock API (JQL boundary is coarse/ceiled).
-        # The exact post-filter must drop only the issue created after the precise end.
+        # The exact post-filter must drop issues created at or after the precise end.
         def handler(request: httpx.Request) -> httpx.Response:
             seen_jql.append(request.url.params["jql"])
             return httpx.Response(
@@ -358,7 +359,7 @@ def test_fetch_workitems_non_midnight_end_ceil_and_exact_postfilter(
                         _issue(
                             issue_id="10002",
                             key="ENG-2",
-                            created="2026-06-15T14:30:45.000Z",  # exactly at end — kept (<=)
+                            created="2026-06-15T14:30:45.000Z",  # exactly at end — excluded
                         ),
                         _issue(
                             issue_id="10003",
@@ -388,27 +389,28 @@ def test_fetch_workitems_non_midnight_end_ceil_and_exact_postfilter(
         )
         await connector.close()
 
-        assert len(workitems) == 2
+        assert len(workitems) == 1
         assert workitems[0].key == "ENG-1"
-        assert workitems[1].key == "ENG-2"
 
     asyncio.run(run())
 
     assert len(seen_jql) == 1
     # Ceiled boundary: 14:30:45 → 14:31
-    assert 'created <= "2026-06-15 14:31+0000"' in seen_jql[0], f"unexpected JQL: {seen_jql[0]}"
+    assert 'created < "2026-06-15 14:31+0000"' in seen_jql[0], f"unexpected JQL: {seen_jql[0]}"
     # Must NOT use the truncated (floor) boundary
-    assert 'created <= "2026-06-15 14:30+0000"' not in seen_jql[0]
+    assert 'created < "2026-06-15 14:30+0000"' not in seen_jql[0]
 
 
 def test_workitem_in_window_date_range_overlap_semantics() -> None:
-    """_workitem_in_window uses the overlap predicate for DATE_RANGE windows.
+    """_workitem_in_window uses the half-open [start, end) overlap predicate.
 
-    Window: 2026-06-01 – 2026-06-15 (inclusive on both sides for the overlap check).
+    Window: [2026-06-01, 2026-06-15)
       - created in range, still open → included
       - created in range, resolved inside range → included
       - created in range, resolved after end → included (overlaps)
+      - created exactly at end → excluded (exclusive end)
       - created after end → excluded
+      - created in range, resolved exactly at start → excluded (exclusive start)
       - created in range, resolved before start → excluded
     """
     from uuid import uuid4 as _uuid4
@@ -447,10 +449,7 @@ def test_workitem_in_window_date_range_overlap_semantics() -> None:
     _in_window = jira_connector_module._workitem_in_window
 
     # Created in range, still open
-    assert _in_window(
-        _wi(datetime(2026, 6, 5, tzinfo=timezone.utc)),
-        window,
-    )
+    assert _in_window(_wi(datetime(2026, 6, 5, tzinfo=timezone.utc)), window)
     # Created in range, resolved inside range
     assert _in_window(
         _wi(
@@ -469,9 +468,17 @@ def test_workitem_in_window_date_range_overlap_semantics() -> None:
         ),
         window,
     )
+    # Created exactly at end → excluded (half-open exclusive end)
+    assert not _in_window(_wi(datetime(2026, 6, 15, tzinfo=timezone.utc)), window)
     # Created after end → excluded
+    assert not _in_window(_wi(datetime(2026, 6, 16, tzinfo=timezone.utc)), window)
+    # Created in range, resolved exactly at start → excluded (exclusive start)
     assert not _in_window(
-        _wi(datetime(2026, 6, 16, tzinfo=timezone.utc)),
+        _wi(
+            datetime(2026, 5, 20, tzinfo=timezone.utc),
+            datetime(2026, 6, 1, tzinfo=timezone.utc),
+            StatusCategory.DONE,
+        ),
         window,
     )
     # Created in range, resolved before start → excluded
@@ -658,8 +665,8 @@ def test_date_range_jql_includes_explicit_utc_offset_in_overlap_predicate(
     asyncio.run(run())
 
     assert len(seen_jql) == 1
-    assert 'created <= "2026-06-15 00:00+0000"' in seen_jql[0]
-    assert 'resolutiondate >= "2026-06-01 00:00+0000"' in seen_jql[0]
+    assert 'created < "2026-06-15 00:00+0000"' in seen_jql[0]
+    assert 'resolutiondate > "2026-06-01 00:00+0000"' in seen_jql[0]
     assert "updated <" not in seen_jql[0]
 
 

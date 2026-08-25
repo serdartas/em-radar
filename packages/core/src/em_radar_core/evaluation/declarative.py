@@ -911,9 +911,17 @@ def _workitems_for_scope(
         external_id = scope.external_ref.get("id")
         boards = [board for board in data.boards if board.external_id == external_id]
         board_ids = {board.id for board in boards}
-        # For DATE_RANGE windows, use the board's project scope so historical items in
-        # the range are evaluated — not just items currently assigned to a sprint.
-        if ctx.window.window_type is WindowType.DATE_RANGE:
+        # For non-zero DATE_RANGE windows, use the board's project scope so historical
+        # items in the range are evaluated — not just items currently assigned to a sprint.
+        # Zero-length windows (start == end) are preview placeholders and must retain
+        # sprint/board scoping to avoid misleading match counts in the preview route.
+        w = ctx.window
+        if (
+            w.window_type is WindowType.DATE_RANGE
+            and w.start is not None
+            and w.end is not None
+            and w.start < w.end
+        ):
             project_ids = {board.project_id for board in boards}
             return [item for item in data.workitems if item.project_id in project_ids]
         sprint_ids = {sprint.id for sprint in data.sprints if sprint.board_id in board_ids}

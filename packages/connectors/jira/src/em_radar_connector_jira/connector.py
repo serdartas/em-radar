@@ -1355,13 +1355,13 @@ def _workitem_jql(scope: WorkItemScope, window: EvaluationWindow) -> str:
     if window.window_type is WindowType.DATE_RANGE:
         if window.end is None:
             raise ConnectorDataError("Date-range window was missing end")
-        # Overlap predicate: fetch items that were active during [start, end).
-        # An item overlaps the range when it was created on or before the range end and
-        # is either still open or was resolved on/after the range start.
-        clauses.append(f'created <= "{_jql_datetime(_ceil_to_minute(window.end))}"')
+        # Overlap predicate for the half-open interval [start, end).
+        # The JQL boundary is coarse (ceiled to the next minute) so the post-filter in
+        # _workitem_in_window is the authoritative check; the JQL may over-fetch slightly.
+        clauses.append(f'created < "{_jql_datetime(_ceil_to_minute(window.end))}"')
         if window.start is not None:
             clauses.append(
-                f'(resolutiondate is EMPTY OR resolutiondate >= "{_jql_datetime(window.start)}")'
+                f'(resolutiondate is EMPTY OR resolutiondate > "{_jql_datetime(window.start)}")'
             )
     elif window.window_type is WindowType.SPRINT and scope.sprint_external_id is not None:
         # Jira's sprint clause takes a numeric id, interpolated unquoted; reject anything else
@@ -1385,14 +1385,13 @@ def _workitem_in_window(workitem: WorkItem, window: EvaluationWindow) -> bool:
             raise ConnectorDataError("Sprint window was missing sprint_id")
         return window.sprint_id in workitem.sprint_ids
     if window.window_type is WindowType.DATE_RANGE and window.end is not None:
-        # Overlap predicate: item overlaps the range when created_at <= end AND
-        # (resolved_at is None OR resolved_at >= start).
-        # The coarse JQL boundary for created is ceiled up, so items in the final partial
-        # minute are checked precisely here (created_at <= end, not <).
+        # Half-open interval [start, end): item overlaps when created_at < end AND
+        # (resolved_at is None OR resolved_at > start).
+        # This is the authoritative exact check; the JQL boundary is coarse/over-broad.
         end = (
             window.end if window.end.tzinfo is not None else window.end.replace(tzinfo=timezone.utc)
         )
-        if workitem.created_at is not None and workitem.created_at > end:
+        if workitem.created_at is not None and workitem.created_at >= end:
             return False
         if workitem.resolved_at is not None and window.start is not None:
             start = (
@@ -1400,7 +1399,7 @@ def _workitem_in_window(workitem: WorkItem, window: EvaluationWindow) -> bool:
                 if window.start.tzinfo is not None
                 else window.start.replace(tzinfo=timezone.utc)
             )
-            if workitem.resolved_at < start:
+            if workitem.resolved_at <= start:
                 return False
     return True
 
