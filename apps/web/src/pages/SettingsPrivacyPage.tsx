@@ -3,6 +3,7 @@
 import { useState } from "react"
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useNavigate } from "react-router-dom"
 
 import { ConnectionDeleteConfirm } from "@/components/connections/ConnectionDeleteConfirm"
 import { Button } from "@/components/ui/button"
@@ -14,6 +15,7 @@ import { Switch } from "@/components/ui/switch"
 import { listConnections, type SourceConnection } from "@/lib/connections"
 import { deleteReportHistory } from "@/lib/reports"
 import { getSettings, updateSettings } from "@/lib/settings"
+import { clearWizardProgress } from "@/lib/wizardProgress"
 
 const GUARANTEES = [
   "Your source data, reports, and tokens are stored locally in EM Radar's database and never leave this machine.",
@@ -23,6 +25,7 @@ const GUARANTEES = [
 
 export function SettingsPrivacyPage() {
   const queryClient = useQueryClient()
+  const navigate = useNavigate()
   const settingsQuery = useQuery({ queryKey: ["settings"], queryFn: getSettings })
   const telemetryEnabled = settingsQuery.data?.telemetry_enabled ?? false
 
@@ -94,6 +97,28 @@ export function SettingsPrivacyPage() {
               Could not update the telemetry setting. Try again.
             </Callout>
           )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <h2 className="text-lg font-semibold">Setup</h2>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-slate-600">
+            Run through the setup wizard again to add or reconfigure connections.
+          </p>
+          <div className="mt-3">
+            <Button
+              onClick={() => {
+                clearWizardProgress()
+                navigate("/setup")
+              }}
+              variant="outline"
+            >
+              Re-run setup
+            </Button>
+          </div>
         </CardContent>
       </Card>
 

@@ -1,12 +1,22 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
+import { MemoryRouter } from "react-router-dom"
 
 import { SettingsPrivacyPage } from "@/pages/SettingsPrivacyPage"
+
+const mockNavigate = vi.fn()
+
+vi.mock("react-router-dom", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("react-router-dom")>()
+  return { ...actual, useNavigate: () => mockNavigate }
+})
 
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
+  mockNavigate.mockClear()
+  localStorage.clear()
 })
 
 function renderPage() {
@@ -14,9 +24,11 @@ function renderPage() {
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
   })
   return render(
-    <QueryClientProvider client={queryClient}>
-      <SettingsPrivacyPage />
-    </QueryClientProvider>,
+    <MemoryRouter>
+      <QueryClientProvider client={queryClient}>
+        <SettingsPrivacyPage />
+      </QueryClientProvider>
+    </MemoryRouter>,
   )
 }
 
@@ -218,6 +230,27 @@ describe("SettingsPrivacyPage", () => {
     renderPage()
 
     expect(screen.getByRole("switch", { name: "Enable anonymous telemetry" })).toBeDisabled()
+  })
+
+  it("renders a Re-run setup button", () => {
+    mockFetch()
+    renderPage()
+
+    expect(screen.getByRole("button", { name: /re-run setup/i })).toBeInTheDocument()
+  })
+
+  it("clicking Re-run setup clears wizard progress and navigates to /setup", () => {
+    localStorage.setItem(
+      "em-radar.wizard-progress",
+      JSON.stringify({ step: "sources", currentTeamId: null, completed: true, furthestStep: "sources" }),
+    )
+    mockFetch()
+    renderPage()
+
+    fireEvent.click(screen.getByRole("button", { name: /re-run setup/i }))
+
+    expect(localStorage.getItem("em-radar.wizard-progress")).toBeNull()
+    expect(mockNavigate).toHaveBeenCalledWith("/setup")
   })
 
   it("shows a Callout alert when the delete report history mutation fails", async () => {

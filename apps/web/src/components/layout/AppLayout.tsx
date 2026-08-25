@@ -5,12 +5,16 @@ import { NavLink, Outlet } from "react-router-dom"
 import { Logo } from "@/components/Logo"
 import { navItems } from "@/lib/navigation"
 import { cn } from "@/lib/utils"
+import { loadWizardProgress } from "@/lib/wizardProgress"
 
 function PrimaryNav() {
+  const wizardCompleted = loadWizardProgress()?.completed === true
+  const visibleItems = wizardCompleted ? navItems.filter(({ to }) => to !== "/setup") : navItems
+
   return (
     <nav aria-label="Primary" className="p-3">
       <ul className="flex flex-wrap gap-1 md:flex-col">
-        {navItems.map(({ to, label, icon: Icon, end }) => (
+        {visibleItems.map(({ to, label, icon: Icon, end }) => (
           <li key={to}>
             <NavLink
               className={({ isActive }) =>
