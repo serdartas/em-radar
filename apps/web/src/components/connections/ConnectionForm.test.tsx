@@ -1,12 +1,22 @@
 import { useState } from "react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { cleanup, fireEvent, render, screen } from "@testing-library/react"
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { ConnectionForm } from "@/components/connections/ConnectionForm"
 import { type Connector } from "@/lib/connectors"
 import { type SourceConnection } from "@/lib/connections"
+
+vi.mock("@/lib/connections", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/connections")>()
+  return {
+    ...actual,
+    testConnectionDraft: vi.fn().mockResolvedValue({ ok: true, detail: "OK", user_display_name: "Test User", permissions: [] }),
+    createConnection: vi.fn().mockResolvedValue({ id: "new-id", name: "x", connector_name: "jira", config: {}, created_at: "" }),
+    updateConnection: vi.fn().mockResolvedValue({ id: "conn-1", name: "x", connector_name: "jira", config: {}, created_at: "" }),
+  }
+})
 
 const jiraConnector: Connector = {
   name: "jira",
@@ -182,5 +192,203 @@ describe("ConnectionForm — required schema field validation", () => {
 
     // The boolean switch is unchecked (= false) — this is a valid value, not a missing one.
     expect(screen.getByRole("button", { name: "Add connection" })).not.toBeDisabled()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Base URL https:// normalization (M8.7-01)
+// ---------------------------------------------------------------------------
+
+describe("ConnectionForm — base_url normalization", () => {
+  it("prepends https:// to a scheme-less base_url when Test connection is clicked", async () => {
+    const { testConnectionDraft } = await import("@/lib/connections")
+    vi.mocked(testConnectionDraft).mockClear()
+
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter>
+          <ConnectionForm connectors={[jiraConnector]} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    fireEvent.change(screen.getByLabelText("Connection name"), {
+      target: { value: "Test Jira" },
+    })
+    fireEvent.change(screen.getByLabelText(/^Base URL/), {
+      target: { value: "acme.atlassian.net" },
+    })
+    fireEvent.change(screen.getByLabelText(/^Token/), {
+      target: { value: "tok" },
+    })
+
+    fireEvent.click(screen.getByRole("button", { name: "Test connection" }))
+
+    await waitFor(() => {
+      expect(vi.mocked(testConnectionDraft)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({ base_url: "https://acme.atlassian.net" }),
+        }),
+        expect.anything(),
+      )
+    })
+  })
+
+  it("does not double-prepend when the URL already starts with https://", async () => {
+    const { testConnectionDraft } = await import("@/lib/connections")
+    vi.mocked(testConnectionDraft).mockClear()
+
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter>
+          <ConnectionForm connectors={[jiraConnector]} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    fireEvent.change(screen.getByLabelText("Connection name"), {
+      target: { value: "Test Jira" },
+    })
+    fireEvent.change(screen.getByLabelText(/^Base URL/), {
+      target: { value: "https://acme.atlassian.net" },
+    })
+    fireEvent.change(screen.getByLabelText(/^Token/), {
+      target: { value: "tok" },
+    })
+
+    fireEvent.click(screen.getByRole("button", { name: "Test connection" }))
+
+    await waitFor(() => {
+      expect(vi.mocked(testConnectionDraft)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({ base_url: "https://acme.atlassian.net" }),
+        }),
+        expect.anything(),
+      )
+    })
+  })
+
+  it("passes through an http:// URL unchanged", async () => {
+    const { testConnectionDraft } = await import("@/lib/connections")
+    vi.mocked(testConnectionDraft).mockClear()
+
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter>
+          <ConnectionForm connectors={[jiraConnector]} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    fireEvent.change(screen.getByLabelText("Connection name"), {
+      target: { value: "Test Jira" },
+    })
+    fireEvent.change(screen.getByLabelText(/^Base URL/), {
+      target: { value: "http://internal.acme.net" },
+    })
+    fireEvent.change(screen.getByLabelText(/^Token/), {
+      target: { value: "tok" },
+    })
+
+    fireEvent.click(screen.getByRole("button", { name: "Test connection" }))
+
+    await waitFor(() => {
+      expect(vi.mocked(testConnectionDraft)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({ base_url: "http://internal.acme.net" }),
+        }),
+        expect.anything(),
+      )
+    })
+  })
+
+  it("trims leading/trailing whitespace and prepends https:// to a scheme-less URL", async () => {
+    const { testConnectionDraft } = await import("@/lib/connections")
+    vi.mocked(testConnectionDraft).mockClear()
+
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter>
+          <ConnectionForm connectors={[jiraConnector]} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    fireEvent.change(screen.getByLabelText("Connection name"), {
+      target: { value: "Test Jira" },
+    })
+    fireEvent.change(screen.getByLabelText(/^Base URL/), {
+      target: { value: "  bol.atlassian.net  " },
+    })
+    fireEvent.change(screen.getByLabelText(/^Token/), {
+      target: { value: "tok" },
+    })
+
+    fireEvent.click(screen.getByRole("button", { name: "Test connection" }))
+
+    await waitFor(() => {
+      expect(vi.mocked(testConnectionDraft)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({ base_url: "https://bol.atlassian.net" }),
+        }),
+        expect.anything(),
+      )
+    })
+  })
+
+  it("normalizes base_url on save (Add connection submit path)", async () => {
+    const { createConnection } = await import("@/lib/connections")
+    vi.mocked(createConnection).mockClear()
+
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter>
+          <ConnectionForm connectors={[jiraConnector]} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    fireEvent.change(screen.getByLabelText("Connection name"), {
+      target: { value: "My Jira" },
+    })
+    fireEvent.change(screen.getByLabelText(/^Base URL/), {
+      target: { value: "acme.atlassian.net" },
+    })
+    fireEvent.change(screen.getByLabelText(/^Token/), {
+      target: { value: "tok" },
+    })
+
+    fireEvent.click(screen.getByRole("button", { name: "Add connection" }))
+
+    await waitFor(() => {
+      expect(vi.mocked(createConnection)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({ base_url: "https://acme.atlassian.net" }),
+        }),
+      )
+    })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Token help links open in a new tab (M8.7-01)
+// ---------------------------------------------------------------------------
+
+describe("ConnectionForm — token help links", () => {
+  it("the Jira token help link has target=_blank and rel=noopener noreferrer", () => {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter>
+          <ConnectionForm connectors={[jiraConnector]} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    // The token help is hidden behind an InfoTooltip; open it first.
+    fireEvent.click(screen.getByRole("button", { name: "About Token" }))
+
+    const link = screen.getByRole("link", { name: /how to generate a jira token/i })
+    expect(link).toHaveAttribute("target", "_blank")
+    expect(link).toHaveAttribute("rel", "noopener noreferrer")
   })
 })

@@ -2,7 +2,6 @@
 
 import { type ReactNode, useEffect, useRef, useState } from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
-import { Link } from "react-router-dom"
 
 import { SchemaForm } from "@/components/SchemaForm"
 import { TestResult } from "@/components/connections/TestResult"
@@ -59,6 +58,18 @@ function writableValues(
     next[key] = value
   }
   return next
+}
+
+/**
+ * Prepends https:// to a base_url entry when no scheme is present.
+ * Allows users to paste just the domain (e.g. acme.atlassian.net) without a
+ * validation error; the full URL is only needed when the value is sent to the API.
+ */
+function normalizeBaseUrl(config: Record<string, unknown>): Record<string, unknown> {
+  if (typeof config.base_url !== "string") return config
+  const url = config.base_url.trim()
+  if (!url || /^https?:\/\//i.test(url)) return { ...config, base_url: url }
+  return { ...config, base_url: `https://${url}` }
 }
 
 /**
@@ -190,10 +201,11 @@ export function ConnectionForm({
     if (!selectedConnector || connectionName.trim() === "") {
       return
     }
+    const rawConfig = editing ? writableValues(selectedConnector.config_schema, values) : values
     saveMutation.mutate({
       name: connectionName.trim(),
       connector_name: connectorName,
-      config: editing ? writableValues(selectedConnector.config_schema, values) : values,
+      config: normalizeBaseUrl(rawConfig),
     })
   }
 
@@ -286,7 +298,7 @@ export function ConnectionForm({
                 testMutation.mutate({
                   name: connectionName,
                   connector_name: connectorName,
-                  config: values,
+                  config: normalizeBaseUrl(values),
                 })
               }
               type="button"
@@ -382,9 +394,9 @@ const JIRA_FIELD_HELP: Record<string, ReactNode> = {
       Use a read-only API token for an account that can browse the projects and boards you report
       on. Jira Cloud uses your email plus an API token; Server/Data Center uses a Personal Access
       Token.{" "}
-      <Link className="font-medium underline" to="/help/jira">
+      <a className="font-medium underline" href="/help/jira" rel="noopener noreferrer" target="_blank">
         How to generate a Jira token
-      </Link>
+      </a>
       .
     </p>
   ),
@@ -419,9 +431,9 @@ const GITLAB_FIELD_HELP: Record<string, ReactNode> = {
       <code className="rounded bg-blue-100 px-1">read_api</code> scope - that is the only scope
       EM Radar needs. Create one under Preferences &rarr; Access Tokens for an account that can see
       the projects you report on.{" "}
-      <Link className="font-medium underline" to="/help/gitlab">
+      <a className="font-medium underline" href="/help/gitlab" rel="noopener noreferrer" target="_blank">
         How to generate a GitLab token
-      </Link>
+      </a>
       .
     </p>
   ),
