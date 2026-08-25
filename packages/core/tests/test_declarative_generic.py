@@ -592,3 +592,73 @@ def test_non_customfield_unknown_field_raises() -> None:
             JiraConnector.describe_signal_schema(),
             [_project_scope()],
         )
+
+
+# ---------------------------------------------------------------------------
+# _workitems_for_scope: DATE_RANGE board scope uses project membership
+# ---------------------------------------------------------------------------
+
+
+def test_workitems_for_scope_board_date_range_uses_project_scope() -> None:
+    """Board scope + DATE_RANGE window must return all project items, not just sprint members.
+
+    Historical items assigned to completed sprints or to no sprint at all must appear in
+    a date-range evaluation so signals see the full set of items that existed in the period.
+    """
+    from em_radar_core.evaluation.declarative import _workitems_for_scope
+    from em_radar_core.models import EvaluationWindow, WindowType
+
+    sp = sprint()
+    # Item currently in the active sprint
+    item_in_sprint = workitem(
+        "RAD-1",
+        sprint_ids=[sp.id],
+        current_sprint_id=sp.id,
+    )
+    # Item in the project but NOT in the active sprint (e.g. from a past sprint)
+    item_not_in_sprint = workitem("RAD-2")
+
+    b = board()
+    data = SignalData(
+        report_id=uuid4(),
+        projects=(project(),),
+        boards=(b,),
+        sprints=(sp,),
+        workitems=(item_in_sprint, item_not_in_sprint),
+    )
+
+    from em_radar_core.models import EvaluationContext, TeamProfile
+
+    team = TeamProfile(name="T", created_at=NOW, updated_at=NOW)
+    date_range_window = EvaluationWindow(
+        window_type=WindowType.DATE_RANGE,
+        start=NOW,
+        end=NOW,
+        team_profile_id=team.id,
+    )
+    sprint_window = EvaluationWindow(
+        window_type=WindowType.SPRINT,
+        sprint_id=sp.id,
+        team_profile_id=team.id,
+    )
+
+    date_range_ctx = EvaluationContext(now=NOW, window=date_range_window, team=team)
+    sprint_ctx = EvaluationContext(now=NOW, window=sprint_window, team=team)
+
+    board_scope = ScopeDescriptor(
+        connector_id="jira-1",
+        scope_id="scope-1",
+        scope_type="board",
+        name="Board",
+        external_ref={"id": "BOARD"},
+    )
+
+    # DATE_RANGE: both items are in scope (project-based selection)
+    date_range_items = _workitems_for_scope(data, board_scope, date_range_ctx)
+    assert item_in_sprint in date_range_items
+    assert item_not_in_sprint in date_range_items
+
+    # SPRINT: only the sprint member is in scope (current_sprint_id-based selection)
+    sprint_items = _workitems_for_scope(data, board_scope, sprint_ctx)
+    assert item_in_sprint in sprint_items
+    assert item_not_in_sprint not in sprint_items

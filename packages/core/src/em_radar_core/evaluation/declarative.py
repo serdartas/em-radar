@@ -224,7 +224,7 @@ def evaluate_signal_definition(
 
     findings: list[SignalFinding] = []
     for scope in scopes:
-        for workitem in _workitems_for_scope(data, scope):
+        for workitem in _workitems_for_scope(data, scope, ctx):
             result = _evaluate_group(definition.expression, workitem, data, ctx, scope)
             if not result.matched:
                 continue
@@ -494,7 +494,7 @@ def _evaluate_without_window_gate(
 
     findings: list[SignalFinding] = []
     for scope in scopes:
-        for workitem in _workitems_for_scope(data, scope):
+        for workitem in _workitems_for_scope(data, scope, ctx):
             result = _evaluate_group(definition.expression, workitem, data, ctx, scope)
             if not result.matched:
                 continue
@@ -895,7 +895,9 @@ def _field_schema(schema: SignalCapabilitySchema, field_key: str) -> SignalField
     return result
 
 
-def _workitems_for_scope(data: SignalData, scope: ScopeDescriptor) -> list[WorkItem]:
+def _workitems_for_scope(
+    data: SignalData, scope: ScopeDescriptor, ctx: EvaluationContext
+) -> list[WorkItem]:
     if scope.scope_type == "project":
         external_key = scope.external_ref.get("key")
         external_id = scope.external_ref.get("id")
@@ -909,6 +911,11 @@ def _workitems_for_scope(data: SignalData, scope: ScopeDescriptor) -> list[WorkI
         external_id = scope.external_ref.get("id")
         boards = [board for board in data.boards if board.external_id == external_id]
         board_ids = {board.id for board in boards}
+        # For DATE_RANGE windows, use the board's project scope so historical items in
+        # the range are evaluated — not just items currently assigned to a sprint.
+        if ctx.window.window_type is WindowType.DATE_RANGE:
+            project_ids = {board.project_id for board in boards}
+            return [item for item in data.workitems if item.project_id in project_ids]
         sprint_ids = {sprint.id for sprint in data.sprints if sprint.board_id in board_ids}
         if not sprint_ids:
             project_ids = {board.project_id for board in boards}
