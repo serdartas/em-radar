@@ -8,6 +8,7 @@ import { SettingsPrivacyPage } from "@/pages/SettingsPrivacyPage"
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
+  localStorage.clear()
 })
 
 function renderPage() {
@@ -230,6 +231,19 @@ describe("SettingsPrivacyPage", () => {
     const link = screen.getByRole("link", { name: /re-run setup/i })
     expect(link).toBeInTheDocument()
     expect(link).toHaveAttribute("href", "/setup")
+  })
+
+  it("clicking Re-run setup clears wizard progress so the wizard does not immediately redirect back", () => {
+    localStorage.setItem(
+      "em-radar.wizard-progress",
+      JSON.stringify({ step: "sources", currentTeamId: null, completed: true, furthestStep: "sources" }),
+    )
+    mockFetch()
+    renderPage()
+
+    fireEvent.click(screen.getByRole("link", { name: /re-run setup/i }))
+
+    expect(localStorage.getItem("em-radar.wizard-progress")).toBeNull()
   })
 
   it("shows a Callout alert when the delete report history mutation fails", async () => {

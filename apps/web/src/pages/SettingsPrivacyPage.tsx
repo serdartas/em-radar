@@ -15,6 +15,7 @@ import { Switch } from "@/components/ui/switch"
 import { listConnections, type SourceConnection } from "@/lib/connections"
 import { deleteReportHistory } from "@/lib/reports"
 import { getSettings, updateSettings } from "@/lib/settings"
+import { clearWizardProgress } from "@/lib/wizardProgress"
 
 const GUARANTEES = [
   "Your source data, reports, and tokens are stored locally in EM Radar's database and never leave this machine.",
@@ -108,7 +109,7 @@ export function SettingsPrivacyPage() {
           </p>
           <div className="mt-3">
             <Button asChild variant="outline">
-              <Link to="/setup">Re-run setup</Link>
+              <Link onClick={() => clearWizardProgress()} to="/setup">Re-run setup</Link>
             </Button>
           </div>
         </CardContent>
