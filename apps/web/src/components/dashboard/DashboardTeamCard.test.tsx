@@ -85,6 +85,7 @@ function renderCard(
   const queryClient = new QueryClient({
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
   })
+  queryClient.setQueryData(["settings"], { telemetry_enabled: false, date_format: "dd/mm/yyyy" })
   return render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter>
@@ -123,7 +124,7 @@ describe("DashboardTeamCard", () => {
 
   it("renders top findings after fetching report detail", async () => {
     const detail = reportDetail(succeededSummary, [topFinding])
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(detail))
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => jsonResponse(detail))
     renderCardWithSummary(succeededSummary)
     expect(await screen.findByText("PLAT-3 is blocked")).toBeInTheDocument()
   })
@@ -145,7 +146,7 @@ describe("DashboardTeamCard", () => {
         partial_data_notes: [{ source: "gitlab", reason: "Source timed out." }],
       },
     }
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(detail))
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => jsonResponse(detail))
     renderCardWithSummary(succeededSummary)
     expect(await screen.findByText("Partial data")).toBeInTheDocument()
   })
