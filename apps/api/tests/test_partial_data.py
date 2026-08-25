@@ -125,6 +125,32 @@ def _create_gitlab_connection(api_client: TestClient) -> str:
     ).json()["id"]
 
 
+def _create_mr_signal(api_client: TestClient, name: str) -> str:
+    """Create a merge-request signal definition and return its id."""
+    return api_client.post(
+        "/api/signal-definitions",
+        json={
+            "name": name,
+            "entity_type": "merge_request",
+            "expression": {
+                "type": "group",
+                "operator": "all",
+                "conditions": [{"field": "state", "operator": "is", "value": "open"}],
+            },
+            "report_settings": {"severity": "info", "category": "code"},
+            "origin": "user_created",
+        },
+    ).json()["id"]
+
+
+def _create_group(api_client: TestClient, name: str, signal_ids: list[str]) -> str:
+    """Create a signal-config group and return its id."""
+    return api_client.post(
+        "/api/signal-config-groups",
+        json={"name": name, "signal_ids": signal_ids},
+    ).json()["id"]
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -133,7 +159,10 @@ def _create_gitlab_connection(api_client: TestClient) -> str:
 def test_transient_code_source_error_produces_partial_data_note(
     api_client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """ConnectorTransientError on code fetch → succeeded report with a code partial-data note."""
+    """ConnectorTransientError on code fetch → succeeded report with a code partial-data note.
+
+    The signal group must contain a code signal so the fetch is not skipped by the source guard.
+    """
     monkeypatch.setattr(
         "em_radar_api.connector_registry._connector_types",
         lambda: [JiraTestConnector, _TransientGitLab],
@@ -141,6 +170,8 @@ def test_transient_code_source_error_produces_partial_data_note(
     jira_id = _create_jira_connection(api_client)
     scope_id = _create_board_scope(api_client, jira_id, ["sprint", "statuses", "labels"])
     gitlab_id = _create_gitlab_connection(api_client)
+    mr_signal = _create_mr_signal(api_client, "Transient-MR signal")
+    group = _create_group(api_client, "Transient group", [mr_signal])
     team_id = api_client.post(
         "/api/teams",
         json={
@@ -148,6 +179,7 @@ def test_transient_code_source_error_produces_partial_data_note(
             "connection_ids": [jira_id],
             "scope_ids": [scope_id],
             "code_connection_id": gitlab_id,
+            "signal_config_group_ids": [group],
             "working_mode": "scrum",
             "sprint_length_days": 14,
         },
@@ -165,7 +197,10 @@ def test_transient_code_source_error_produces_partial_data_note(
 def test_rate_limited_code_source_produces_partial_data_note(
     api_client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """ConnectorRateLimitedError on code fetch → succeeded report with a partial-data note."""
+    """ConnectorRateLimitedError on code fetch → succeeded report with a partial-data note.
+
+    The signal group must contain a code signal so the fetch is not skipped by the source guard.
+    """
     monkeypatch.setattr(
         "em_radar_api.connector_registry._connector_types",
         lambda: [JiraTestConnector, _RateLimitedGitLab],
@@ -173,6 +208,8 @@ def test_rate_limited_code_source_produces_partial_data_note(
     jira_id = _create_jira_connection(api_client)
     scope_id = _create_board_scope(api_client, jira_id, ["sprint", "statuses", "labels"])
     gitlab_id = _create_gitlab_connection(api_client)
+    mr_signal = _create_mr_signal(api_client, "Rate-limited MR signal")
+    group = _create_group(api_client, "Rate-limited group", [mr_signal])
     team_id = api_client.post(
         "/api/teams",
         json={
@@ -180,6 +217,7 @@ def test_rate_limited_code_source_produces_partial_data_note(
             "connection_ids": [jira_id],
             "scope_ids": [scope_id],
             "code_connection_id": gitlab_id,
+            "signal_config_group_ids": [group],
             "working_mode": "scrum",
             "sprint_length_days": 14,
         },
@@ -195,7 +233,10 @@ def test_rate_limited_code_source_produces_partial_data_note(
 def test_non_typed_connector_error_is_still_fatal(
     api_client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """ConnectorDataError (non-partial-data error) must yield 502, not a succeeded report."""
+    """ConnectorDataError (non-partial-data error) must yield 502, not a succeeded report.
+
+    The signal group must contain a code signal so the fetch is not skipped by the source guard.
+    """
     monkeypatch.setattr(
         "em_radar_api.connector_registry._connector_types",
         lambda: [JiraTestConnector, _FatalDataErrorGitLab],
@@ -203,6 +244,8 @@ def test_non_typed_connector_error_is_still_fatal(
     jira_id = _create_jira_connection(api_client)
     scope_id = _create_board_scope(api_client, jira_id, ["sprint", "statuses", "labels"])
     gitlab_id = _create_gitlab_connection(api_client)
+    mr_signal = _create_mr_signal(api_client, "Fatal error MR signal")
+    group = _create_group(api_client, "Fatal error group", [mr_signal])
     team_id = api_client.post(
         "/api/teams",
         json={
@@ -210,6 +253,7 @@ def test_non_typed_connector_error_is_still_fatal(
             "connection_ids": [jira_id],
             "scope_ids": [scope_id],
             "code_connection_id": gitlab_id,
+            "signal_config_group_ids": [group],
             "working_mode": "scrum",
             "sprint_length_days": 14,
         },
@@ -276,17 +320,23 @@ def test_scrum_board_partial_workitem_failure_fails_gracefully(
 def test_code_only_team_all_sources_failed_marks_report_failed(
     api_client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """AUDIT-5: code-only team whose sole (code) source fails → FAILED (not SUCCEEDED)."""
+    """AUDIT-5: code-only team whose sole (code) source fails → FAILED (not SUCCEEDED).
+
+    The signal group must contain a code signal so the fetch is not skipped by the source guard.
+    """
     monkeypatch.setattr(
         "em_radar_api.connector_registry._connector_types",
         lambda: [_TransientGitLab],
     )
     gitlab_id = _create_gitlab_connection(api_client)
+    mr_signal = _create_mr_signal(api_client, "Code-only fail MR signal")
+    group = _create_group(api_client, "Code-only fail group", [mr_signal])
     team_id = api_client.post(
         "/api/teams",
         json={
             "name": "Code-only fail team",
             "code_connection_id": gitlab_id,
+            "signal_config_group_ids": [group],
             "working_mode": "kanban",
         },
     ).json()["id"]

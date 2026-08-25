@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 from em_radar_core.connectors import (
     Capabilities,
     ConnectionTestResult,
+    ConnectorTransientError,
     MergeRequestScope,
 )
 from em_radar_core.models import (
@@ -315,3 +316,92 @@ def test_kanban_run_adds_window_gate_skip_for_sprint_only_signal(
     assert sprint_signal_id in skipped_ids, "repeated-carry-over must be gated on date-range run"
     skip_entry = next(s for s in snapshot["skipped_signals"] if s["id"] == sprint_signal_id)
     assert "sprint window" in skip_entry["reason"]
+
+
+# ---------------------------------------------------------------------------
+# M8.7-07: unused source must not be fetched or flagged
+# ---------------------------------------------------------------------------
+
+
+class _ErroringGitLab:
+    """GitLab connector whose MR fetch always raises a transient error."""
+
+    name: ClassVar[str] = "gitlab"
+    display_name: ClassVar[str] = "GitLab (erroring stub)"
+    config_schema: ClassVar[dict[str, object]] = {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": True,
+    }
+    min_model_version: ClassVar[int] = 1
+
+    def __init__(self, config: dict[str, object]) -> None:
+        pass
+
+    async def test_connection(self) -> ConnectionTestResult:
+        return ConnectionTestResult(ok=True, detail="ok")
+
+    @classmethod
+    def describe_capabilities(cls) -> Capabilities:
+        return Capabilities(provides_mergerequests=True, provides_repositories=True)
+
+    async def close(self) -> None:
+        pass
+
+    async def list_repositories(self) -> list[Repository]:
+        return []
+
+    async def fetch_mergerequests(
+        self,
+        scope: MergeRequestScope,
+        window: EvaluationWindow,
+    ) -> AsyncIterator[MergeRequest]:
+        raise ConnectorTransientError("simulated GitLab outage")
+        yield  # satisfy async-generator protocol
+
+
+def test_code_connection_attached_but_no_code_signals_no_partial_note(
+    api_client: TestClient, monkeypatch
+) -> None:
+    """M8.7-07: code connection attached, zero code signals selected → no source:code partial note.
+
+    The code fetch must be skipped entirely when the selected signal group contains no merge-request
+    signals, so a connector error on the code source does not produce a spurious partial-data note
+    and does not mark the report partial.
+    """
+    monkeypatch.setattr(
+        "em_radar_api.connector_registry._connector_types",
+        lambda: [JiraTestConnector, _ErroringGitLab],
+    )
+    jira_id = _create_jira_connection(api_client)
+    scope_id = _create_board_scope(api_client, jira_id, _BOARD_CAPABILITIES)
+    gitlab_id = api_client.post(
+        "/api/connections",
+        json={"name": "GitLab erroring", "connector_name": "gitlab", "config": {}},
+    ).json()["id"]
+
+    # Only WI (board) signals in the group — zero code/MR signals.
+    wi_signal = _create_wi_signal(api_client, "WI only — code unused")
+    group = _create_group(api_client, "Board-only group for M8.7-07", [wi_signal])
+
+    team_id = api_client.post(
+        "/api/teams",
+        json={
+            "name": "Board+code-attached, board-signals only",
+            "connection_ids": [jira_id],
+            "scope_ids": [scope_id],
+            "code_connection_id": gitlab_id,
+            "signal_config_group_ids": [group],
+            "working_mode": "scrum",
+            "sprint_length_days": 14,
+        },
+    ).json()["id"]
+
+    report = _run_report(api_client, team_id)
+
+    assert report["status"] == "succeeded", "report must succeed even though code connector errors"
+    notes = report["signal_pack_snapshot"]["partial_data_notes"]
+    code_notes = [n for n in notes if n["source"] == "code"]
+    assert code_notes == [], (
+        f"no source:code partial-data note expected when no code signals selected; got {code_notes}"
+    )
