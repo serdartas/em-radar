@@ -388,11 +388,11 @@ describe("SignalForm — sentinel guard", () => {
 })
 
 // ---------------------------------------------------------------------------
-// Array field type uses contains/does_not_contain
+// Array field type uses contains/does_not_contain/is_empty/is_not_empty
 // ---------------------------------------------------------------------------
 
 describe("SignalForm — array field type operators", () => {
-  it("array field type shows contains / does not contain operators", () => {
+  it("array field type shows contains, does not contain, is empty, and is not empty operators", () => {
     renderForm({ jiraCustomFields: JIRA_CUSTOM_FIELDS })
 
     fireEvent.change(screen.getByLabelText("Field"), { target: { value: "__custom__" } })
@@ -404,6 +404,8 @@ describe("SignalForm — array field type operators", () => {
     const optionLabels = Array.from(operatorSelect.options).map((o) => o.text)
     expect(optionLabels).toContain("contains")
     expect(optionLabels).toContain("does not contain")
+    expect(optionLabels).toContain("is empty")
+    expect(optionLabels).toContain("is not empty")
     expect(optionLabels).not.toContain("is")
     expect(optionLabels).not.toContain("is not")
   })
@@ -418,6 +420,34 @@ describe("SignalForm — array field type operators", () => {
 
     // contains is not a no-value operator so the value control must render
     expect(screen.getByLabelText("Value")).toBeInTheDocument()
+  })
+
+  it("choosing is_empty on an array field hides the value control and leaves Save enabled", () => {
+    renderForm({ jiraCustomFields: JIRA_CUSTOM_FIELDS })
+
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "My signal" } })
+    fireEvent.change(screen.getByLabelText("Field"), { target: { value: "__custom__" } })
+    fireEvent.change(screen.getByLabelText("Jira field"), {
+      target: { value: "customfield_10004" }, // Labels List — array
+    })
+    fireEvent.change(screen.getByLabelText("Operator"), { target: { value: "is_empty" } })
+
+    expect(screen.queryByLabelText("Value")).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Save signal" })).not.toBeDisabled()
+  })
+
+  it("choosing is_not_empty on an array field hides the value control and leaves Save enabled", () => {
+    renderForm({ jiraCustomFields: JIRA_CUSTOM_FIELDS })
+
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "My signal" } })
+    fireEvent.change(screen.getByLabelText("Field"), { target: { value: "__custom__" } })
+    fireEvent.change(screen.getByLabelText("Jira field"), {
+      target: { value: "customfield_10004" }, // Labels List — array
+    })
+    fireEvent.change(screen.getByLabelText("Operator"), { target: { value: "is_not_empty" } })
+
+    expect(screen.queryByLabelText("Value")).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Save signal" })).not.toBeDisabled()
   })
 })
 
