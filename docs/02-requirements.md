@@ -696,6 +696,116 @@ Acceptance criteria:
 
 ---
 
+### REQ-F-041D — Team GitLab Members
+
+**MVP** (M9)
+
+The system shall let each team define, at team level, which GitLab users belong to it, so that
+GitLab reports can scope activity to team members. Members are a team-scoped concept resolved
+against the team's existing code connection (`TeamProfile.code_connection_id`, the GitLab instance
+anchor); they are not stored on the `SourceConnection` and do not replace the code source.
+
+Each selected member is stored by its stable GitLab identity (`gitlab_user_id`) alongside a cached
+display name and username for the UI. Membership is explicit and deterministic: a user is only a
+team member after the EM confirms and stores the selection. Membership is never inferred or
+auto-assigned from observed activity. Member selection uses a server-side, paginated, debounced,
+permission-aware user search (see REQ-F-041F and REQ-NF-011, REQ-NF-020); the system never
+downloads the whole instance user directory. Stored members are preserved if the code connection
+later becomes invalid, and are surfaced as unverified until the connection is valid again.
+
+Acceptance criteria:
+
+* a team can define a set of GitLab members via a searchable, validated user picker
+* each selected member is stored by stable `gitlab_user_id`, with cached display name and username
+* a member is stored only after explicit confirmation; membership is never derived from activity
+* user search is server-side and paginated, with no whole-instance download
+* membership is company-agnostic: no GitLab-group-equals-team assumption and no company-specific data
+* stored membership is preserved and marked unverified if the code connection becomes invalid
+
+---
+
+### REQ-F-041E — Team GitLab Repositories
+
+**MVP** (M9)
+
+The system shall let each team define, at team level, which GitLab repositories it owns, so that
+GitLab reports can scope activity to team-owned repositories. Team repositories are a team-scoped
+concept resolved against the team's existing code connection; they refine — but do not remove — the
+whole-connection code source from REQ-F-041A. Per-repository ownership is the MVP mechanism for
+scoping code reports to a team.
+
+Each selected repository is stored by its stable GitLab identity (`gitlab_project_id`) alongside a
+cached path and name for the UI. The system uses GitLab as a discovery source only: it may suggest
+candidate repositories from recent activity on the connection, but a repository becomes team-owned
+only after the EM explicitly confirms and stores it. Ownership is never auto-assigned from activity.
+Repository selection also supports a server-side, paginated, debounced, permission-aware project
+search (see REQ-F-041F and REQ-NF-011, REQ-NF-020); the system never downloads every project the
+token can see. Stored repositories are preserved if the code connection later becomes invalid, and
+are surfaced as unverified until the connection is valid again.
+
+Acceptance criteria:
+
+* a team can define a set of owned GitLab repositories via suggestions plus a validated search
+* suggestions are drawn from recent activity but require explicit confirmation before being stored
+* each stored repository is identified by stable `gitlab_project_id`, with cached path and name
+* project search and activity-based discovery are server-side and paginated, with no whole-instance
+  download
+* ownership is company-agnostic: no company-specific repositories or YAML and no group-equals-team
+  assumption
+* stored repositories are preserved and marked unverified if the code connection becomes invalid
+
+---
+
+### REQ-F-041F — GitLab Report Scope: Team-authored vs Team-owned
+
+**MVP** (M9)
+
+The system shall distinguish two GitLab scoping modes and let each GitLab report or check pick
+exactly one:
+
+* **team-owned repository** scope: merge requests whose `project.gitlab_project_id` is in the team's
+  owned repositories (REQ-F-041E)
+* **team-authored** scope: merge requests whose `author.gitlab_user_id` is in the team's members
+  (REQ-F-041D)
+
+Reports consume the central, team-scoped membership and repository definitions rather than defining
+their own scope. The MVP report path scopes GitLab activity to team-owned repositories; team-authored
+scoping is delivered as a follow-up within M9 and reuses the same central member definitions. Scope
+resolution is deterministic and depends only on stored stable ids and the injected evaluation
+context.
+
+Acceptance criteria:
+
+* every GitLab report or check declares exactly one scope mode: team-owned repository or
+  team-authored
+* team-owned repository scope selects merge requests by `project.gitlab_project_id` membership
+* team-authored scope selects merge requests by `author.gitlab_user_id` membership
+* reports read the team's central member and repository definitions and never define their own scope
+* scope resolution is deterministic given stored stable ids and the evaluation context
+* a report whose required scope is empty or unverified is handled clearly (skipped with a note),
+  consistent with REQ-F-041A
+
+---
+
+### REQ-F-041G — GitLab Membership & Repository Enhancements
+
+**Later**
+
+The system may extend team GitLab members and repositories beyond the M9 MVP with:
+
+* Jira-activity-based suggestions to cross-seed likely GitLab members
+* bulk paste of usernames or repository paths for fast setup
+* GitLab group import as a starting point for member or repository selection (still explicitly
+  confirmed, never treated as the team)
+* an adaptive discovery window that widens the activity lookback when few suggestions are found
+* proactive config-health checks that continuously surface unverified or stale members and
+  repositories when a connector's permissions or validity change
+* reuse of the same team-scoped member/repository model for the GitHub connector (REQ-F-015)
+
+These are not required for MVP.
+
+---
+
 ### REQ-F-041C — Reusable Signal Config Groups
 
 **MVP**

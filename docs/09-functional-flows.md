@@ -48,7 +48,9 @@ below are written source-agnostically so adding a source does not reshape them.
 | **Connection** | One **named** source instance with connector-defined access configuration (for example Jira Cloud URL + email + token, or GitLab URL + token). | `SourceConnection` ([architecture §8.1](./03-architecture-overview.md#81-stored-data), M2-03) | Reusable across teams. Managed independently of teams. `name` is required and unique per workspace; the connection stores no discovered project, board, or repository data. |
 | **Team** | A named unit of work the EM manages. Carries up to two sources + working mode. | `TeamProfile` ([data model §5.12](./05-data-model.md#512-teamprofile)) | First-class; multiple per install. Created with just a name; **saveable with no sources**. See §12 for fields added by this doc. |
 | **Task-board source** | The team's workflow project and board (later, other trackers). | One `ScopeDefinition` (`scope_type = board`, [requirements REQ-F-041A](./02-requirements.md#req-f-041a--team-owned-sources)) | Owned by the **team** (0..1 in MVP), chosen via a searchable project → board picker. Its `external_ref` contains both project and board identity. |
-| **Code source** | The team's code repository host: a whole GitLab/GitHub connection (all its repos in scope). | `TeamProfile.code_connection_id` ([data model §5.12](./05-data-model.md#512-teamprofile)) | Owned by the **team** (0..1 in MVP). Per-repository scoping is a later phase. |
+| **Code source** | The team's code repository host: a whole GitLab/GitHub connection. In MVP the team narrows it to its own members and owned repositories (see below). | `TeamProfile.code_connection_id` ([data model §5.12](./05-data-model.md#512-teamprofile)) | Owned by the **team** (0..1 in MVP). Team-scoped members/repositories are realized in **M9** (see §12). |
+| **Team GitLab member** | A GitLab user the EM assigns to a team, chosen via a server-side searchable, selection-only autocomplete over the code connection's users. | `TeamGitLabMember` (team-scoped; `gitlab_user_id` + `username` + `display_name`, see §12) | 0..N per team; removable. Requires a GitLab connection to exist. Drives repository suggestions. |
+| **Team GitLab repository** | A repository the team owns, chosen from ranked suggestions (from members' recent activity) plus a validated autocomplete. | `TeamGitLabRepository` (team-scoped; `gitlab_project_id` + `name` + `path_with_namespace`, see §12) | 0..N per team; removable. Defines the team-owned repository scope used by code-repository signals and reports. |
 | **Signal** | A structured rule expression carrying its own configuration for one signal entity type. | `SignalDefinition` ([signal spec §9](./06-signal-yaml-spec.md#9-signal-definitions)) | In MVP, either work tracking (`issue`) or code repository (`merge_request`). It contains no connection or project/board/repository selection. |
 | **Signal Config Group** | A reusable, named bundle of signals (e.g. "Scrum signals"). | `SignalConfigGroup` ([data model §5.12C](./05-data-model.md#512c-signalconfiggroup)) | Many-to-many with teams and with signals. Attach a group to as many teams as you like. |
 | **Working mode** | `scrum` or `kanban`, plus sprint length for scrum. | On `TeamProfile` (`working_mode`, `sprint_length_days`) | Derived from the board; user-confirmable. |
@@ -232,17 +234,35 @@ requires at least one source** (see [Flow E](#7-flow-e--generate--refresh-a-repo
    - **Kanban detected (or no sprints):** show "Kanban"; default report window = **date range**
      (last `N` days, default 14).
    - User can **confirm or override** either field.
-3. **Attach the code source.** Pick one of the team's code connections (GitLab/GitHub) by name. The
-   **whole connection** is attached (`TeamProfile.code_connection_id`) — every repository the token
-   can access is in scope; there is no per-repository picker in MVP. `list_repositories`
+3. **Attach the code source.** Pick one of the team's code connections (GitLab/GitHub) by name and
+   attach it (`TeamProfile.code_connection_id`). In MVP the team then narrows this connection to its
+   own **members** (step 4) and **owned repositories** (step 5); it no longer relies on the whole
+   token's access being in scope. `list_repositories`
    ([connector spec §6.3](./07-connector-interface.md#63-mergerequestprovider-gitlab-github-prs-bitbucket))
-   is resolved at report time.
-4. **Field mappings (defaults, advanced deferred).** Default Jira mappings are applied
+   is resolved against the team's owned repositories at report time. **This entire GitLab setup is
+   gated on a GitLab connection existing** — if none is configured, steps 3–5 are hidden and the team
+   is fully creatable without GitLab (see [Flow C.1](#51-flow-c1--connecting-gitlab-after-teams-exist)).
+   All of steps 3–5 are **optional**: the EM can skip and finish, leaving the code source unconfigured.
+4. **Select the team's GitLab members (M9).** Add members via a **server-side searchable,
+   selection-only autocomplete** over the code connection's users (no free-text values). Each stored
+   member records `gitlab_user_id`, `username`, and `display_name`; members are **removable**. This is
+   the team-scoped member identity that also drives repository suggestions in step 5.
+5. **Select the team's owned GitLab repositories (M9).** The wizard shows ranked **"Suggested
+   repositories"** derived from the selected members' **recent activity** (last **90 days**, widening
+   to **180 days** if the 90-day window is thin). Suggestions **require explicit confirmation** — none
+   is added automatically. The EM can also add repositories via a **validated autocomplete** (the
+   entry must resolve to a real project on the connection). Each stored repository records
+   `gitlab_project_id`, `name`, and `path_with_namespace`; repositories are **removable**.
+6. **Review & save the GitLab setup.** A review step summarizes selected members and repositories.
+   The EM may **skip and finish** at any point, leaving the GitLab setup incomplete without blocking
+   team creation.
+7. **Field mappings (defaults, advanced deferred).** Default Jira mappings are applied
    silently ([data model §8.1](./05-data-model.md#81-jira--workitem-defaults)); an "advanced
    field mapping" affordance exists but is optional (M3-05).
-5. **Persist** the board scope, `code_connection_id`, and working mode on the `TeamProfile`. The
-   board scope belongs to the team and references the Jira connection; the connection itself is
-   unchanged. Any source may be left unset and saved.
+8. **Persist** the board scope, `code_connection_id`, the team's GitLab members and owned
+   repositories, and working mode on the `TeamProfile`. The board scope belongs to the team and
+   references the Jira connection; the connection itself is unchanged. Any source may be left unset
+   and saved.
 
 ```mermaid
 flowchart TD
@@ -252,8 +272,13 @@ flowchart TD
     C -->|kanban / no sprints| E["Mode=Kanban<br/>default window = date range (N days)"]
     D --> F["Confirm / override"]
     E --> F
-    F --> G["Attach code source<br/>(whole GitLab/GitHub connection)"]
-    G --> H["Save team sources + mode<br/>(connection records unchanged)"]
+    F --> GL{"GitLab connection<br/>exists?"}
+    GL -->|no| H["Save team sources + mode<br/>(connection records unchanged)"]
+    GL -->|yes| G["Attach code source<br/>(GitLab/GitHub connection)"]
+    G --> M["Select team GitLab members<br/>(searchable, selection-only)"]
+    M --> RSug["Suggested repositories<br/>(members' 90d→180d activity)<br/>+ validated autocomplete"]
+    RSug --> Rev["Review GitLab setup<br/>(skip & finish allowed)"]
+    Rev --> H
 ```
 
 **Why mode matters downstream.** Working mode sets the team's **default report window**, which
@@ -262,6 +287,36 @@ in turn determines **which signals can fire**: sprint-only signals
 note** for date-range/Kanban runs, mirroring connector-capability skipping
 ([connector spec §6.5](./07-connector-interface.md#65-transitionprovider-optional)). Which signals
 run is decided by the signal config groups attached to the team — see §10.
+
+### 5.1 Flow C.1 — Connecting GitLab after teams exist (M9)
+
+**Goal.** Handle the case where teams were created **before** any GitLab connection existed, then a
+GitLab connection is added later, so those teams can be given their members and owned repositories.
+
+**Entry condition.** One or more `TeamProfile` rows exist with no code source, and the EM adds the
+first GitLab connection on the Connections page (Flow B).
+
+**Steps.**
+
+1. **Single post-connection notification.** On saving the first GitLab connection, EM Radar shows
+   **one** notification (not one per team) inviting the EM to configure GitLab for their teams. It
+   links to the Teams page.
+2. **Per-team status on the Teams page.** Each team card shows a **"GitLab configured"** or
+   **"GitLab setup required"** badge derived from whether the team has a code source with members and
+   owned repositories.
+3. **Non-blocking per-team warning.** Opening an individual team that still lacks GitLab setup shows a
+   **non-blocking warning** with a **"Configure GitLab"** action that drops into Flow C steps 3–5.
+   The warning never blocks running reports; code-repository signals are simply skipped until GitLab
+   is configured (§10).
+
+```mermaid
+flowchart TD
+    A["Add first GitLab connection<br/>(Flow B)"] --> B["Single notification<br/>(one, not per-team)"]
+    B --> C["Teams page:<br/>per-team badge<br/>'GitLab configured' /<br/>'GitLab setup required'"]
+    C --> D["Open a team lacking setup"]
+    D --> E["Non-blocking warning +<br/>'Configure GitLab'"]
+    E --> F["Flow C steps 3–5<br/>(members + repositories)"]
+```
 
 ---
 
@@ -456,9 +511,25 @@ for traceability; applying them is a separate step.
 - Add a required, workspace-unique `name` to `SourceConnection`, and remove all connection-level
   discovered selections: the Connections page manages access configuration only and the
   project/board selection lives in one team-owned board scope.
-- Add `TeamProfile.code_connection_id: UUID | null` (§5.12) for the team's whole-connection code
-  source; keep the board scope on `scope_ids`. A team may be saved with no sources; a report run
-  requires at least one.
+- Add `TeamProfile.code_connection_id: UUID | null` (§5.12) for the team's code source; keep the
+  board scope on `scope_ids`. A team may be saved with no sources; a report run requires at least one.
+- **(M9) Team-scoped GitLab entities.** Add two team-owned entities under the code source:
+  `TeamGitLabMember` (`gitlab_user_id`, `username`, `display_name`) and `TeamGitLabRepository`
+  (`gitlab_project_id`, `name`, `path_with_namespace`), each `0..N` per team and removable. These
+  realize the **per-repository scoping** and **team-scoped member identity** previously listed as
+  deferred (§11 "Cross-source user identity resolution", and the old "whole connection, no
+  per-repository picker" note in Flow C). The whole-connection fallback is superseded by the
+  team-owned repository scope.
+- **(M9) Report scope disclosure.** Reports distinguish **team-owned repository scope** (MVP,
+  the team's `TeamGitLabRepository` set) from **team-authored scope** (follow-up: activity authored by
+  the team's members regardless of repository), and show which scope was used for the run.
+
+**Connector interface ([07-connector-interface.md](./07-connector-interface.md)).**
+
+- **(M9)** The code-repository provider gains **discovery capabilities** used by team setup:
+  server-side user search (for the selection-only member autocomplete), repository validation/lookup
+  by path (for the validated repository autocomplete), and recent-activity lookup per member
+  (last 90 days, widening to 180 days) to rank **suggested repositories**.
 
 **UI pages ([architecture §12.1](./03-architecture-overview.md#121-mvp-ui-pages), backlog M2).**
 
@@ -482,6 +553,13 @@ for traceability; applying them is a separate step.
 - **M4-06** (GitLab connection UI) becomes create-and-test only (no repository picker, no run), and
   **M4-12** (onboarding wizard) follows the two-source team model.
 - Engine gains **window-gating** of sprint-only signals (M5 area).
+- **Milestone M9** (team-level GitLab members & owned repositories) adds: the `TeamGitLabMember` and
+  `TeamGitLabRepository` entities; the gated GitLab setup sub-flow in team creation (Flow C steps
+  3–5, skippable); the "connecting GitLab after teams exist" behavior (single post-connection
+  notification, per-team status badges, non-blocking per-team warning + "Configure GitLab", Flow
+  C.1); connector discovery capabilities (user search, repository validation, member recent-activity
+  ranking); and report scope disclosure (team-owned repository scope in MVP vs team-authored scope as
+  a follow-up).
 
 **Requirements ([02-requirements.md](./02-requirements.md)).**
 

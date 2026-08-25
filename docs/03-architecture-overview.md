@@ -215,6 +215,9 @@ A source connector is responsible for:
 * authenticating with the source system
 * testing the connection
 * listing available projects, boards, repositories, or groups
+* server-side, permission-aware member/user and project discovery (paginated, respecting token
+  permissions), expressed provider-agnostically so future connectors can reuse it
+* discovering repositories by member activity within a team's scope
 * fetching source data
 * handling pagination and API limitations
 * mapping obvious source fields
@@ -280,6 +283,10 @@ It also extracts work item keys from:
 * merge request title
 * merge request description
 * source branch name
+
+The GitLab connector also supports server-side discovery for team setup: user search, project
+search, and repository-discovery-by-member-activity, all paginated and permission-aware. These
+capabilities are exposed provider-agnostically so a future GitHub connector reuses the same contract.
 
 Example key pattern:
 
@@ -363,10 +370,16 @@ Sprint
 MergeRequest
 Repository
 TeamProfile
+TeamGitLabMember
+TeamGitLabRepository
 EvaluationWindow
 SignalFinding
 Report
 ```
+
+`TeamGitLabMember` and `TeamGitLabRepository` are team-scoped GitLab identity and ownership records
+(stored by stable GitLab id, anchored to the team's code connection); the team's existing code
+connection remains the instance anchor.
 
 These models are source-agnostic and are the only models the signal engine should evaluate.
 
@@ -399,8 +412,8 @@ The storage layer stores:
 
 * source connection metadata (connector type, required unique name, and connector-defined access
   configuration; no discovered scope)
-* team profiles, including each team's project/board scope, code connection, and attached signal
-  config groups
+* team profiles, including each team's project/board scope, code connection, attached signal
+  config groups, and each team's GitLab members and owned repositories (stored by stable GitLab id)
 * board scope definitions whose external reference contains both selected project and board identity
   (the code source is attached as a whole connection, not a repository scope, in MVP)
 * signal definitions and signal config groups
