@@ -3,6 +3,7 @@
 import { useState } from "react"
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { Link } from "react-router-dom"
 
 import { ConnectionDeleteConfirm } from "@/components/connections/ConnectionDeleteConfirm"
 import { Button } from "@/components/ui/button"
@@ -94,6 +95,22 @@ export function SettingsPrivacyPage() {
               Could not update the telemetry setting. Try again.
             </Callout>
           )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <h2 className="text-lg font-semibold">Setup</h2>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-slate-600">
+            Run through the setup wizard again to add or reconfigure connections.
+          </p>
+          <div className="mt-3">
+            <Button asChild variant="outline">
+              <Link to="/setup">Re-run setup</Link>
+            </Button>
+          </div>
         </CardContent>
       </Card>
 

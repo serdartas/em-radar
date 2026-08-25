@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
+import { MemoryRouter } from "react-router-dom"
 
 import { SettingsPrivacyPage } from "@/pages/SettingsPrivacyPage"
 
@@ -14,9 +15,11 @@ function renderPage() {
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
   })
   return render(
-    <QueryClientProvider client={queryClient}>
-      <SettingsPrivacyPage />
-    </QueryClientProvider>,
+    <MemoryRouter>
+      <QueryClientProvider client={queryClient}>
+        <SettingsPrivacyPage />
+      </QueryClientProvider>
+    </MemoryRouter>,
   )
 }
 
@@ -218,6 +221,15 @@ describe("SettingsPrivacyPage", () => {
     renderPage()
 
     expect(screen.getByRole("switch", { name: "Enable anonymous telemetry" })).toBeDisabled()
+  })
+
+  it("renders a Re-run setup link pointing to /setup", () => {
+    mockFetch()
+    renderPage()
+
+    const link = screen.getByRole("link", { name: /re-run setup/i })
+    expect(link).toBeInTheDocument()
+    expect(link).toHaveAttribute("href", "/setup")
   })
 
   it("shows a Callout alert when the delete report history mutation fails", async () => {
