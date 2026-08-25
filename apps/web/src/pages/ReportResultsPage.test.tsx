@@ -20,9 +20,40 @@ function renderReportResults() {
   )
 }
 
+const DEFAULT_SETTINGS = { telemetry_enabled: false, date_format: "dd/mm/yyyy" }
+
+/** Mock fetch that handles settings + a default report body for all other routes. */
+function mockReportFetch(body: unknown) {
+  return vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+    const url = String(input)
+    if (url.includes("/api/settings")) {
+      return Promise.resolve(
+        new Response(JSON.stringify(DEFAULT_SETTINGS), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+    }
+    return Promise.resolve(
+      new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    )
+  })
+}
+
 function mockReportAndExportFetch() {
   return vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
     const url = String(input)
+    if (url.includes("/api/settings")) {
+      return Promise.resolve(
+        new Response(JSON.stringify(DEFAULT_SETTINGS), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+    }
     if (url.endsWith("/export.md")) {
       return Promise.resolve(
         new Response(MARKDOWN_EXPORT, {
@@ -98,12 +129,7 @@ afterEach(() => {
 
 describe("ReportResultsPage", () => {
   it("loads a report by id and renders its findings and severity counts", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify(report), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }),
-    )
+    mockReportFetch(report)
 
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     render(
@@ -125,12 +151,7 @@ describe("ReportResultsPage", () => {
   })
 
   it("omits the Evidence block for empty evidence and pluralizes the total", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify(report), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }),
-    )
+    mockReportFetch(report)
 
     renderReportResults()
     await screen.findByText("PLAT-9 blocked for 6 days")
@@ -194,12 +215,7 @@ describe("ReportResultsPage", () => {
         },
       ],
     }
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify(sectionedReport), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }),
-    )
+    mockReportFetch(sectionedReport)
 
     renderReportResults()
     await screen.findByRole("heading", { level: 2, name: "Detailed Findings" })
@@ -225,21 +241,13 @@ describe("ReportResultsPage", () => {
   })
 
   it("shows failed report errors before empty findings", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          ...report,
-          status: "failed",
-          error: "Connector timed out.",
-          findings_count_by_severity: { info: 0, warning: 0, critical: 0 },
-          findings: [],
-        }),
-        {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        },
-      ),
-    )
+    mockReportFetch({
+      ...report,
+      status: "failed",
+      error: "Connector timed out.",
+      findings_count_by_severity: { info: 0, warning: 0, critical: 0 },
+      findings: [],
+    })
 
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     render(
@@ -257,19 +265,14 @@ describe("ReportResultsPage", () => {
   })
 
   it("shows an in-progress message (not empty sections) while the run is still running", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          ...report,
-          status: "running",
-          finished_at: null,
-          summary: { counts_by_severity: { info: 0, warning: 0, critical: 0 }, total: 0 },
-          sections: buildSections({}),
-          findings: [],
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      ),
-    )
+    mockReportFetch({
+      ...report,
+      status: "running",
+      finished_at: null,
+      summary: { counts_by_severity: { info: 0, warning: 0, critical: 0 }, total: 0 },
+      sections: buildSections({}),
+      findings: [],
+    })
 
     renderReportResults()
 
@@ -326,6 +329,14 @@ describe("ReportResultsPage", () => {
   it("renders persisted findings offline when only the report and signal-definitions endpoints resolve", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const url = String(input)
+      if (url.includes("/api/settings")) {
+        return Promise.resolve(
+          new Response(JSON.stringify(DEFAULT_SETTINGS), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
+        )
+      }
       if (url.endsWith("/api/reports/report-1")) {
         return Promise.resolve(
           new Response(JSON.stringify(report), {
@@ -353,20 +364,15 @@ describe("ReportResultsPage", () => {
   })
 
   it("renders partial-data notes captured in the snapshot", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          ...report,
-          signal_pack_snapshot: {
-            partial_data_notes: [
-              { source: "board", reason: "board data unavailable: ConnectorTransientError" },
-              { source: "code", reason: "code data unavailable: ConnectorAuthError" },
-            ],
-          },
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      ),
-    )
+    mockReportFetch({
+      ...report,
+      signal_pack_snapshot: {
+        partial_data_notes: [
+          { source: "board", reason: "board data unavailable: ConnectorTransientError" },
+          { source: "code", reason: "code data unavailable: ConnectorAuthError" },
+        ],
+      },
+    })
 
     renderReportResults()
 
@@ -382,6 +388,14 @@ describe("ReportResultsPage", () => {
   it("surfaces an error when the export cannot be generated", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const url = String(input)
+      if (url.includes("/api/settings")) {
+        return Promise.resolve(
+          new Response(JSON.stringify(DEFAULT_SETTINGS), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
+        )
+      }
       if (url.endsWith("/export.md")) {
         return Promise.resolve(new Response("nope", { status: 500 }))
       }
@@ -404,12 +418,7 @@ describe("ReportResultsPage", () => {
   })
 
   it("shows immutability copy on every report results page", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify(report), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }),
-    )
+    mockReportFetch(report)
     renderReportResults()
     await screen.findByText("PLAT-9 blocked for 6 days")
     expect(
@@ -437,6 +446,14 @@ describe("ReportResultsPage", () => {
     }
     vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const url = String(input)
+      if (url.includes("/api/settings")) {
+        return Promise.resolve(
+          new Response(JSON.stringify(DEFAULT_SETTINGS), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
+        )
+      }
       if (url.endsWith("/api/signal-definitions")) {
         return Promise.resolve(
           new Response(JSON.stringify([]), {
@@ -489,6 +506,14 @@ describe("ReportResultsPage", () => {
     }
     vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const url = String(input)
+      if (url.includes("/api/settings")) {
+        return Promise.resolve(
+          new Response(JSON.stringify(DEFAULT_SETTINGS), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
+        )
+      }
       if (url.endsWith("/api/signal-definitions")) {
         return Promise.resolve(
           new Response(JSON.stringify([signalDef]), {
@@ -529,6 +554,14 @@ describe("ReportResultsPage", () => {
     }
     vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const url = String(input)
+      if (url.includes("/api/settings")) {
+        return Promise.resolve(
+          new Response(JSON.stringify(DEFAULT_SETTINGS), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
+        )
+      }
       if (url.endsWith("/api/signal-definitions")) {
         return Promise.resolve(
           new Response(JSON.stringify([]), {

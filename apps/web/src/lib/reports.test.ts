@@ -2,32 +2,39 @@ import { describe, expect, it } from "vitest"
 
 import { extractPartialDataNotes, extractSnapshotSignals, formatTimestamp } from "@/lib/reports"
 
-const _DATE_FMT_EN_GB = new Intl.DateTimeFormat("en-GB", {
+const _DATE_ONLY_OPTIONS: Intl.DateTimeFormatOptions = {
   day: "2-digit",
   month: "2-digit",
   year: "numeric",
-})
+}
 
-const _DATE_FMT_EN_US = new Intl.DateTimeFormat("en-US", {
-  day: "2-digit",
-  month: "2-digit",
-  year: "numeric",
-})
+function expected(ts: string, locale: string): string {
+  const parsed = new Date(ts)
+  const datePart = new Intl.DateTimeFormat(locale, _DATE_ONLY_OPTIONS).format(parsed)
+  const timePart = parsed.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+  return `${datePart}, ${timePart}`
+}
+
+function expectedIso(ts: string): string {
+  const parsed = new Date(ts)
+  const datePart = new Intl.DateTimeFormat("sv-SE", _DATE_ONLY_OPTIONS).format(parsed)
+  const timePart = parsed.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+  return `${datePart}, ${timePart}`
+}
 
 describe("formatTimestamp", () => {
   it("interprets an offset-less API timestamp as UTC and uses dd/mm/yyyy by default", () => {
-    const parsed = new Date("2026-08-13T10:00:00Z")
-    expect(formatTimestamp("2026-08-13T10:00:00")).toBe(_DATE_FMT_EN_GB.format(parsed))
+    expect(formatTimestamp("2026-08-13T10:00:00")).toBe(expected("2026-08-13T10:00:00Z", "en-GB"))
   })
 
   it("leaves a Z-suffixed timestamp and formats as dd/mm/yyyy by default", () => {
-    const parsed = new Date("2026-08-13T10:00:00Z")
-    expect(formatTimestamp("2026-08-13T10:00:00Z")).toBe(_DATE_FMT_EN_GB.format(parsed))
+    expect(formatTimestamp("2026-08-13T10:00:00Z")).toBe(expected("2026-08-13T10:00:00Z", "en-GB"))
   })
 
   it("respects an explicit numeric offset without double-shifting", () => {
-    const parsed = new Date("2026-08-13T10:00:00+02:00")
-    expect(formatTimestamp("2026-08-13T10:00:00+02:00")).toBe(_DATE_FMT_EN_GB.format(parsed))
+    expect(formatTimestamp("2026-08-13T10:00:00+02:00")).toBe(
+      expected("2026-08-13T10:00:00+02:00", "en-GB"),
+    )
   })
 
   it("returns the raw string when unparseable", () => {
@@ -35,14 +42,15 @@ describe("formatTimestamp", () => {
   })
 
   it("formats as mm/dd/yyyy when preference is mm/dd/yyyy", () => {
-    const parsed = new Date("2026-08-13T10:00:00Z")
     expect(formatTimestamp("2026-08-13T10:00:00Z", "mm/dd/yyyy")).toBe(
-      _DATE_FMT_EN_US.format(parsed),
+      expected("2026-08-13T10:00:00Z", "en-US"),
     )
   })
 
-  it("formats as yyyy-mm-dd ISO slice when preference is yyyy-mm-dd", () => {
-    expect(formatTimestamp("2026-08-13T10:00:00Z", "yyyy-mm-dd")).toBe("2026-08-13")
+  it("formats date part as yyyy-mm-dd (local time) when preference is yyyy-mm-dd", () => {
+    expect(formatTimestamp("2026-08-13T10:00:00Z", "yyyy-mm-dd")).toBe(
+      expectedIso("2026-08-13T10:00:00Z"),
+    )
   })
 
   it("dd/mm/yyyy and mm/dd/yyyy produce different outputs for ambiguous dates", () => {

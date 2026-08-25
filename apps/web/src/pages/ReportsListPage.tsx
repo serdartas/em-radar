@@ -7,7 +7,7 @@ import { Link, useLocation } from "react-router-dom"
 import { SeverityCounts } from "@/components/SeverityCounts"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
-import { formatTimestamp, listReports, type ReportSummary } from "@/lib/reports"
+import { listReports, type ReportSummary, useFormatTimestamp } from "@/lib/reports"
 
 interface TeamReportGroup {
   key: string
@@ -130,6 +130,7 @@ function TeamReportGroupSection({ group }: { group: TeamReportGroup }) {
 }
 
 function ReportRow({ report }: { report: ReportSummary }) {
+  const formatTs = useFormatTimestamp()
   return (
     <li>
       <Card>
@@ -139,7 +140,7 @@ function ReportRow({ report }: { report: ReportSummary }) {
               className="font-medium text-blue-700 underline-offset-4 hover:underline"
               to={`/reports/results/${report.id}`}
             >
-              Report {formatTimestamp(report.started_at)}
+              Report {formatTs(report.started_at)}
             </Link>
             <p className="text-xs uppercase tracking-wide text-slate-500">{report.status}</p>
           </div>

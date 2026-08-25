@@ -14,10 +14,10 @@ import { apiErrorMessage } from "@/lib/api"
 import {
   extractPartialDataNotes,
   type Finding,
-  formatTimestamp,
   getReport,
   type ReportSummary,
   runTeamReport,
+  useFormatTimestamp,
 } from "@/lib/reports"
 import { teamHasNoSources, type TeamProfile } from "@/lib/teams"
 
@@ -37,6 +37,7 @@ function DashboardTeamCard({
   team,
 }: DashboardTeamCardProps) {
   const queryClient = useQueryClient()
+  const formatTs = useFormatTimestamp()
   const reportId = latestSummary?.id
   const succeeded = latestSummary?.status === "succeeded"
   // Failed runs still persist partial-data notes worth surfacing; running/pending have no
@@ -112,7 +113,7 @@ function DashboardTeamCard({
               <>
                 <SeverityCounts counts={latestSummary.findings_count_by_severity} />
                 <p className="text-xs text-slate-500">
-                  Last run {formatTimestamp(latestSummary.started_at)}
+                  Last run {formatTs(latestSummary.started_at)}
                 </p>
                 <TopRisksList
                   detail={detail}
@@ -128,7 +129,7 @@ function DashboardTeamCard({
                   status={latestSummary.status}
                 />
                 <p className="text-xs text-slate-500">
-                  Last run {formatTimestamp(latestSummary.started_at)}
+                  Last run {formatTs(latestSummary.started_at)}
                 </p>
               </>
             )}

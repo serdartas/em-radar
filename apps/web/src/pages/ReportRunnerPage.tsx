@@ -11,12 +11,12 @@ import { Select } from "@/components/ui/select"
 import { apiErrorMessage } from "@/lib/api"
 import {
   enqueueTeamReport,
-  formatTimestamp,
   getJob,
   getTeamSprints,
   listJobs,
   parseApiTimestamp,
   type ReportJob,
+  useFormatTimestamp,
 } from "@/lib/reports"
 import { listTeams, teamHasNoSources } from "@/lib/teams"
 
@@ -52,6 +52,7 @@ function isTerminal(status: ReportJob["status"]): boolean {
 export function ReportRunnerPage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
+  const formatTs = useFormatTimestamp()
   const teamsQuery = useQuery({ queryKey: ["teams"], queryFn: listTeams })
   const [selectedTeamIds, setSelectedTeamIds] = useState<string[]>([])
   const [windowMode, setWindowMode] = useState<WindowMode>("sprint")
@@ -354,12 +355,12 @@ export function ReportRunnerPage() {
                     </span>
                     {job.started_at && (
                       <span className="text-slate-500">
-                        Started: {formatTimestamp(job.started_at)}
+                        Started: {formatTs(job.started_at)}
                       </span>
                     )}
                     {job.finished_at && (
                       <span className="text-slate-500">
-                        Finished: {formatTimestamp(job.finished_at)}
+                        Finished: {formatTs(job.finished_at)}
                       </span>
                     )}
                     {jobRuntime(job) && (
