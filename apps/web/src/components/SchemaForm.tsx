@@ -102,7 +102,6 @@ function SchemaField({ defs, exemptSecrets, fieldId, help, name, onChange, prope
     return (
       <ObjectField
         defs={defs}
-        exemptSecrets={exemptSecrets}
         fieldId={fieldId}
         help={help}
         label={label}
@@ -139,7 +138,6 @@ function SchemaField({ defs, exemptSecrets, fieldId, help, name, onChange, prope
 
 interface ObjectFieldProps {
   defs: Record<string, JsonSchemaProperty>
-  exemptSecrets?: boolean
   fieldId: string
   help?: ReactNode
   label: string
@@ -152,7 +150,6 @@ interface ObjectFieldProps {
 
 function ObjectField({
   defs,
-  exemptSecrets,
   fieldId,
   help,
   label,
@@ -181,7 +178,6 @@ function ObjectField({
         {Object.entries(properties).map(([subKey, subProperty]) => (
           <SchemaField
             defs={defs}
-            exemptSecrets={exemptSecrets}
             fieldId={`${fieldId}-${subKey}`}
             key={subKey}
             name={subKey}
