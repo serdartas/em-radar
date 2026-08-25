@@ -65,6 +65,7 @@ export function SchemaForm({ exemptSecrets = false, fieldHelp, idPrefix, onChang
         return (
           <SchemaField
             defs={defs}
+            exemptSecrets={exemptSecrets}
             fieldId={`${idPrefix}-${key}`}
             help={fieldHelp?.[key]}
             key={key}
@@ -89,9 +90,10 @@ interface SchemaFieldProps {
   onChange: (key: string, value: unknown) => void
   help?: ReactNode
   defs: Record<string, JsonSchemaProperty>
+  exemptSecrets?: boolean
 }
 
-function SchemaField({ defs, fieldId, help, name, onChange, property, required, value }: SchemaFieldProps) {
+function SchemaField({ defs, exemptSecrets, fieldId, help, name, onChange, property, required, value }: SchemaFieldProps) {
   const resolved = resolveProperty(property, defs)
   const label = fieldLabel(name, resolved)
   const type = schemaType(resolved)
@@ -100,6 +102,7 @@ function SchemaField({ defs, fieldId, help, name, onChange, property, required, 
     return (
       <ObjectField
         defs={defs}
+        exemptSecrets={exemptSecrets}
         fieldId={fieldId}
         help={help}
         label={label}
@@ -115,7 +118,7 @@ function SchemaField({ defs, fieldId, help, name, onChange, property, required, 
   if (type === "boolean") {
     return (
       <div className="flex items-center justify-between gap-4">
-        <FieldLabel help={help} htmlFor={fieldId} label={label} property={resolved} required={required} />
+        <FieldLabel exemptSecrets={exemptSecrets} help={help} htmlFor={fieldId} label={label} property={resolved} required={required} />
         <Switch
           checked={value === true}
           id={fieldId}
@@ -127,7 +130,7 @@ function SchemaField({ defs, fieldId, help, name, onChange, property, required, 
 
   return (
     <div className="space-y-1.5">
-      <FieldLabel help={help} htmlFor={fieldId} label={label} property={resolved} required={required} />
+      <FieldLabel exemptSecrets={exemptSecrets} help={help} htmlFor={fieldId} label={label} property={resolved} required={required} />
       {renderControl({ fieldId, name, onChange, property: resolved, required, type, value })}
       {resolved.description && <p className="text-xs text-slate-500">{resolved.description}</p>}
     </div>
@@ -136,6 +139,7 @@ function SchemaField({ defs, fieldId, help, name, onChange, property, required, 
 
 interface ObjectFieldProps {
   defs: Record<string, JsonSchemaProperty>
+  exemptSecrets?: boolean
   fieldId: string
   help?: ReactNode
   label: string
@@ -148,6 +152,7 @@ interface ObjectFieldProps {
 
 function ObjectField({
   defs,
+  exemptSecrets,
   fieldId,
   help,
   label,
@@ -176,6 +181,7 @@ function ObjectField({
         {Object.entries(properties).map(([subKey, subProperty]) => (
           <SchemaField
             defs={defs}
+            exemptSecrets={exemptSecrets}
             fieldId={`${fieldId}-${subKey}`}
             key={subKey}
             name={subKey}
@@ -196,9 +202,10 @@ interface FieldLabelProps {
   property: JsonSchemaProperty
   required: boolean
   help?: ReactNode
+  exemptSecrets?: boolean
 }
 
-function FieldLabel({ help, htmlFor, label, property, required }: FieldLabelProps) {
+function FieldLabel({ exemptSecrets, help, htmlFor, label, property, required }: FieldLabelProps) {
   return (
     <div className="flex items-center gap-1.5">
       <Label htmlFor={htmlFor}>{label}</Label>
@@ -207,7 +214,9 @@ function FieldLabel({ help, htmlFor, label, property, required }: FieldLabelProp
       )}
       {isSecret(property) && (
         <span aria-hidden="true" className="text-xs font-normal text-slate-500">
-          (write-only)
+          {exemptSecrets
+            ? "Leave blank to keep current token"
+            : "Stored securely, not shown again"}
         </span>
       )}
       {help && <InfoTooltip label={`About ${label}`}>{help}</InfoTooltip>}
