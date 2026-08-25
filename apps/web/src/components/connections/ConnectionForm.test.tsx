@@ -454,4 +454,32 @@ describe("ConnectionForm — Jira field mapping gate", () => {
       expect(screen.getAllByRole("switch").length).toBeGreaterThanOrEqual(2)
     })
   })
+
+  it("keeps the gate callout when the test returns ok:false (bad credentials)", async () => {
+    const { testConnectionDraft } = await import("@/lib/connections")
+    vi.mocked(testConnectionDraft).mockResolvedValueOnce({
+      ok: false,
+      detail: "Bad credentials",
+      user_display_name: null,
+      permissions: [],
+    })
+
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter>
+          <ConnectionForm connectors={[jiraConnector]} editing={existingConnection} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    fireEvent.click(screen.getByRole("button", { name: "Test connection" }))
+
+    await waitFor(() => {
+      // The mutation resolves (no throw), but ok:false must NOT unlock field mapping.
+      expect(
+        screen.getByText(/Run a successful test to configure field mapping/i),
+      ).toBeInTheDocument()
+      expect(screen.queryByRole("switch")).not.toBeInTheDocument()
+    })
+  })
 })

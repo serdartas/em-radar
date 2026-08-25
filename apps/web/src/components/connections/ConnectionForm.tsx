@@ -280,7 +280,9 @@ export function ConnectionForm({
             )
             // Field mapping requires a saved connection ID and a passing test so that
             // field discovery (listJiraFields) has a real connection to query.
-            const fieldMappingEnabled = !!editing?.id && testMutation.isSuccess
+            // testMutation.isSuccess is true even for ok:false responses (HTTP 200), so
+            // we check the payload directly.
+            const fieldMappingEnabled = !!editing?.id && testMutation.data?.ok === true
             return (
               <JiraFieldMappingSection
                 acHeadingDefault={acHeadingDefault}
