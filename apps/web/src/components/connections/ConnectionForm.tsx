@@ -21,6 +21,7 @@ import {
   createConnection,
   type SourceConnection,
   testConnectionDraft,
+  testExistingConnection,
   updateConnection,
 } from "@/lib/connections"
 import { isSecret, type JsonSchema, resolveProperty, schemaType } from "@/lib/jsonSchema"
@@ -135,7 +136,12 @@ export function ConnectionForm({
     return addConnector ? defaultValues(addConnector.config_schema) : {}
   })
 
-  const testMutation = useMutation({ mutationFn: testConnectionDraft })
+  // In edit mode the form blanks secrets, so send the test through the saved-connection
+  // endpoint which uses the stored credential rather than the blank draft value.
+  const testMutation = useMutation({
+    mutationFn: (draft: ConnectionDraft) =>
+      editing?.id ? testExistingConnection(editing.id) : testConnectionDraft(draft),
+  })
   const saveMutation = useMutation({
     mutationFn: (draft: ConnectionDraft) =>
       editing ? updateConnection(editing.id, draft) : createConnection(draft),
@@ -278,10 +284,16 @@ export function ConnectionForm({
             const { acHeadingDefault, spDefault } = jiraFieldMappingDefaults(
               selectedConnector.config_schema,
             )
+            // Field mapping requires a saved connection ID and a passing test so that
+            // field discovery (listJiraFields) has a real connection to query.
+            // testMutation.isSuccess is true even for ok:false responses (HTTP 200), so
+            // we check the payload directly.
+            const fieldMappingEnabled = !!editing?.id && testMutation.data?.ok === true
             return (
               <JiraFieldMappingSection
                 acHeadingDefault={acHeadingDefault}
                 connectionId={editing?.id}
+                disabled={!fieldMappingEnabled}
                 fieldMappingValues={toFieldMappingValues(values.field_mapping)}
                 onFieldMappingChange={(next) => changeField("field_mapping", next)}
                 spDefault={spDefault}

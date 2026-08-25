@@ -13,6 +13,7 @@ vi.mock("@/lib/connections", async (importOriginal) => {
   return {
     ...actual,
     testConnectionDraft: vi.fn().mockResolvedValue({ ok: true, detail: "OK", user_display_name: "Test User", permissions: [] }),
+    testExistingConnection: vi.fn().mockResolvedValue({ ok: true, detail: "OK", user_display_name: "Test User", permissions: [] }),
     createConnection: vi.fn().mockResolvedValue({ id: "new-id", name: "x", connector_name: "jira", config: {}, created_at: "" }),
     updateConnection: vi.fn().mockResolvedValue({ id: "conn-1", name: "x", connector_name: "jira", config: {}, created_at: "" }),
   }
@@ -229,7 +230,6 @@ describe("ConnectionForm — base_url normalization", () => {
         expect.objectContaining({
           config: expect.objectContaining({ base_url: "https://acme.atlassian.net" }),
         }),
-        expect.anything(),
       )
     })
   })
@@ -263,7 +263,6 @@ describe("ConnectionForm — base_url normalization", () => {
         expect.objectContaining({
           config: expect.objectContaining({ base_url: "https://acme.atlassian.net" }),
         }),
-        expect.anything(),
       )
     })
   })
@@ -297,7 +296,6 @@ describe("ConnectionForm — base_url normalization", () => {
         expect.objectContaining({
           config: expect.objectContaining({ base_url: "http://internal.acme.net" }),
         }),
-        expect.anything(),
       )
     })
   })
@@ -331,7 +329,6 @@ describe("ConnectionForm — base_url normalization", () => {
         expect.objectContaining({
           config: expect.objectContaining({ base_url: "https://bol.atlassian.net" }),
         }),
-        expect.anything(),
       )
     })
   })
@@ -390,5 +387,96 @@ describe("ConnectionForm — token help links", () => {
     const link = screen.getByRole("link", { name: /how to generate a jira token/i })
     expect(link).toHaveAttribute("target", "_blank")
     expect(link).toHaveAttribute("rel", "noopener noreferrer")
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Jira field mapping gate (M8.7-02)
+// ---------------------------------------------------------------------------
+
+describe("ConnectionForm — Jira field mapping gate", () => {
+  it("shows the gate callout (not the form controls) in add mode before any test", () => {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter>
+          <ConnectionForm connectors={[jiraConnector]} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    expect(
+      screen.getByText(/Save the connection and run a successful test to configure field mapping/i),
+    ).toBeInTheDocument()
+    // Switches inside the field-mapping section must not be present while gated.
+    // (The SchemaForm above may still render other controls, but the mapping toggles are absent.)
+    const switches = screen.queryAllByRole("switch")
+    expect(switches).toHaveLength(0)
+  })
+
+  it("shows the gate callout in edit mode before a successful test", () => {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter>
+          <ConnectionForm connectors={[jiraConnector]} editing={existingConnection} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    expect(
+      screen.getByText(/Run a successful test to configure field mapping/i),
+    ).toBeInTheDocument()
+  })
+
+  it("reveals the field-mapping switches after a successful test in edit mode", async () => {
+    const { testExistingConnection } = await import("@/lib/connections")
+    vi.mocked(testExistingConnection).mockResolvedValueOnce({
+      ok: true,
+      detail: "OK",
+      user_display_name: "Test User",
+      permissions: [],
+    })
+
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter>
+          <ConnectionForm connectors={[jiraConnector]} editing={existingConnection} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    fireEvent.click(screen.getByRole("button", { name: "Test connection" }))
+
+    await waitFor(() => {
+      expect(screen.queryByText(/configure field mapping/i)).not.toBeInTheDocument()
+      expect(screen.getAllByRole("switch").length).toBeGreaterThanOrEqual(2)
+    })
+  })
+
+  it("keeps the gate callout when the test returns ok:false (bad credentials)", async () => {
+    const { testExistingConnection } = await import("@/lib/connections")
+    vi.mocked(testExistingConnection).mockResolvedValueOnce({
+      ok: false,
+      detail: "Bad credentials",
+      user_display_name: null,
+      permissions: [],
+    })
+
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter>
+          <ConnectionForm connectors={[jiraConnector]} editing={existingConnection} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    fireEvent.click(screen.getByRole("button", { name: "Test connection" }))
+
+    await waitFor(() => {
+      // The mutation resolves (no throw), but ok:false must NOT unlock field mapping.
+      expect(
+        screen.getByText(/Run a successful test to configure field mapping/i),
+      ).toBeInTheDocument()
+      expect(screen.queryByRole("switch")).not.toBeInTheDocument()
+    })
   })
 })
