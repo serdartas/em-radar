@@ -22,6 +22,7 @@ from em_radar_api.repositories.source_connections import (
     delete_source_connection,
     get_source_connection,
     instantiate_connector,
+    instantiate_connector_with_overrides,
     list_source_connections,
     update_source_connection,
 )
@@ -67,6 +68,16 @@ class SourceConnectionDraft(BaseModel):
     """Request body for the draft connection test — no name required since nothing is persisted."""
 
     connector_name: ConnectorName
+    config: dict[str, object] = {}
+
+
+class SourceConnectionTestOverride(BaseModel):
+    """Optional body for testing a saved connection with pending, unsaved form values.
+
+    Omitted secrets fall back to the stored credential; other fields override the stored
+    config for the test only. An empty/absent body tests the stored connection as-is.
+    """
+
     config: dict[str, object] = {}
 
 
@@ -177,17 +188,26 @@ async def test_connection_draft(connection: SourceConnectionDraft) -> Connection
 @router.post("/connections/{connection_id}/test", response_model=ConnectionTestResponse)
 async def test_existing_connection(
     connection_id: UUID,
+    override: SourceConnectionTestOverride | None = None,
     session: Session = Depends(get_session),
 ) -> ConnectionTestResponse:
     connection = get_source_connection(session, connection_id)
     if connection is None:
         raise _connection_not_found()
     try:
-        connector = instantiate_connector(
-            session,
-            connection_id,
-            lambda config: create_connector(connection.connector_name, config),
-        )
+        if override is not None and override.config:
+            connector = instantiate_connector_with_overrides(
+                session,
+                connection_id,
+                override.config,
+                lambda config: create_connector(connection.connector_name, config),
+            )
+        else:
+            connector = instantiate_connector(
+                session,
+                connection_id,
+                lambda config: create_connector(connection.connector_name, config),
+            )
     except ConnectorConfigError as error:
         return _failed_test(str(error), _error_code(error))
     if connector is None:

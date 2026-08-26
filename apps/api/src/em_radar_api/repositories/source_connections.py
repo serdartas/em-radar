@@ -251,6 +251,27 @@ def instantiate_connector(
     return connector_factory(_connector_config(row.config))
 
 
+def instantiate_connector_with_overrides(
+    session: Session,
+    connection_id: UUID,
+    overrides: Mapping[str, object],
+    connector_factory: Callable[[dict[str, object]], ConnectorT],
+) -> ConnectorT | None:
+    """Instantiate a connector from the stored config merged with pending form overrides.
+
+    Used to test edited-but-unsaved connection values: the client sends the current form
+    config (with omitted or masked secrets), which is merged onto the stored config so blank
+    secrets fall back to the persisted credential while base URL / TLS / other edits take
+    effect. Nothing is persisted — the merged config is only used to build a throwaway
+    connector for the test call.
+    """
+    row = session.get(SourceConnectionTable, connection_id)
+    if row is None:
+        return None
+    merged = _deep_merge_config(_stored_config(overrides), dict(row.config))
+    return connector_factory(_connector_config(merged))
+
+
 def _write(session: Session, row: SourceConnectionTable) -> None:
     session.add(row)
     session.commit()

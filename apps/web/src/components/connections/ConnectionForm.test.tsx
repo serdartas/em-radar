@@ -452,6 +452,66 @@ describe("ConnectionForm — Jira field mapping gate", () => {
     })
   })
 
+  it("re-locks field mapping when a connection field changes after a successful test", async () => {
+    const { testExistingConnection } = await import("@/lib/connections")
+    vi.mocked(testExistingConnection).mockResolvedValueOnce({
+      ok: true,
+      detail: "OK",
+      user_display_name: "Test User",
+      permissions: [],
+    })
+
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter>
+          <ConnectionForm connectors={[jiraConnector]} editing={existingConnection} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    fireEvent.click(screen.getByRole("button", { name: "Test connection" }))
+    await waitFor(() => {
+      expect(screen.getAllByRole("switch").length).toBeGreaterThanOrEqual(2)
+    })
+
+    // Editing the base URL invalidates the stale success and re-gates field mapping.
+    fireEvent.change(screen.getByLabelText(/^Base URL/), {
+      target: { value: "https://acme.atlassian.net/changed" },
+    })
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Run a successful test to configure field mapping/i),
+      ).toBeInTheDocument()
+      expect(screen.queryByRole("switch")).not.toBeInTheDocument()
+    })
+  })
+
+  it("tests the pending edited form values, not just the stored connection", async () => {
+    const { testExistingConnection } = await import("@/lib/connections")
+    vi.mocked(testExistingConnection).mockClear()
+
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter>
+          <ConnectionForm connectors={[jiraConnector]} editing={existingConnection} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    fireEvent.change(screen.getByLabelText(/^Base URL/), {
+      target: { value: "https://edited.atlassian.net" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "Test connection" }))
+
+    await waitFor(() => {
+      expect(vi.mocked(testExistingConnection)).toHaveBeenCalledWith(
+        "conn-1",
+        expect.objectContaining({ base_url: "https://edited.atlassian.net" }),
+      )
+    })
+  })
+
   it("keeps the gate callout when the test returns ok:false (bad credentials)", async () => {
     const { testExistingConnection } = await import("@/lib/connections")
     vi.mocked(testExistingConnection).mockResolvedValueOnce({

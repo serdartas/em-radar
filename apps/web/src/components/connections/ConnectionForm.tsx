@@ -136,11 +136,13 @@ export function ConnectionForm({
     return addConnector ? defaultValues(addConnector.config_schema) : {}
   })
 
-  // In edit mode the form blanks secrets, so send the test through the saved-connection
-  // endpoint which uses the stored credential rather than the blank draft value.
+  // In edit mode the form blanks secrets, so send the current form config to the
+  // saved-connection endpoint, which merges the pending values with the stored credential
+  // (blank secrets fall back to the server-side token) rather than testing only the
+  // persisted config.
   const testMutation = useMutation({
     mutationFn: (draft: ConnectionDraft) =>
-      editing?.id ? testExistingConnection(editing.id) : testConnectionDraft(draft),
+      editing?.id ? testExistingConnection(editing.id, draft.config) : testConnectionDraft(draft),
   })
   const saveMutation = useMutation({
     mutationFn: (draft: ConnectionDraft) =>
@@ -200,6 +202,12 @@ export function ConnectionForm({
   }
 
   function changeField(key: string, value: unknown) {
+    // Editing any connection field invalidates a prior test result so a stale success can no
+    // longer unlock field mapping (or hide a now-untested config). Field-mapping edits happen
+    // after the gate opens and must not re-lock it, so they are exempt.
+    if (key !== "field_mapping" && values[key] !== value) {
+      testMutation.reset()
+    }
     setValues((current) => ({ ...current, [key]: value }))
   }
 
@@ -306,13 +314,19 @@ export function ConnectionForm({
           <div className="flex flex-wrap gap-3">
             <Button
               disabled={!selectedConnector || testMutation.isPending}
-              onClick={() =>
+              onClick={() => {
+                // Mirror submit: in edit mode drop blank secrets so the server merges the
+                // stored token; new/edited values are sent and tested as they will be saved.
+                const rawConfig =
+                  editing && selectedConnector
+                    ? writableValues(selectedConnector.config_schema, values)
+                    : values
                 testMutation.mutate({
                   name: connectionName,
                   connector_name: connectorName,
-                  config: normalizeBaseUrl(values),
+                  config: normalizeBaseUrl(rawConfig),
                 })
-              }
+              }}
               type="button"
               variant="outline"
             >

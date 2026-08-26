@@ -104,8 +104,16 @@ export async function testConnectionDraft(draft: ConnectionDraft): Promise<Conne
   })
 }
 
-export async function testExistingConnection(id: string): Promise<ConnectionTestResult> {
-  return apiFetch<ConnectionTestResult>(`/connections/${id}/test`, { method: "POST" })
+export async function testExistingConnection(
+  id: string,
+  config?: Record<string, unknown>,
+): Promise<ConnectionTestResult> {
+  return apiFetch<ConnectionTestResult>(`/connections/${id}/test`, {
+    method: "POST",
+    // Send pending form values so edits (base URL, TLS, replacement token) are what gets
+    // tested; omitted secrets fall back to the stored credential on the server.
+    body: config ? JSON.stringify({ config }) : undefined,
+  })
 }
 
 export async function listJiraProjects(connectionId: string): Promise<JiraProject[]> {
