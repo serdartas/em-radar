@@ -56,6 +56,7 @@ export function ReportRunnerPage() {
   const teamsQuery = useQuery({ queryKey: ["teams"], queryFn: listTeams })
   const [selectedTeamIds, setSelectedTeamIds] = useState<string[]>([])
   const [windowMode, setWindowMode] = useState<WindowMode>("sprint")
+  const [userChoseWindowMode, setUserChoseWindowMode] = useState(false)
   const [startDate, setStartDate] = useState("")
   const [endDate, setEndDate] = useState("")
   const [selectedSprintExternalId, setSelectedSprintExternalId] = useState("")
@@ -65,6 +66,30 @@ export function ReportRunnerPage() {
   const [pendingJobIds, setPendingJobIds] = useState<string[]>([])
 
   const teams = teamsQuery.data ?? []
+
+  // Sprint mode is only valid when every selected team uses scrum. Kanban teams (and multi-team
+  // selections that include at least one kanban team) fall back to date-range mode.
+  const sprintAllowed = useMemo(() => {
+    const loadedTeams = teamsQuery.data ?? []
+    return (
+      selectedTeamIds.length > 0 &&
+      selectedTeamIds.every((id) => loadedTeams.find((t) => t.id === id)?.working_mode === "scrum")
+    )
+  }, [selectedTeamIds, teamsQuery.data])
+
+  // Keep window mode consistent with sprint eligibility. When sprint becomes unavailable,
+  // force date-range and clear the explicit-choice flag so the next eligible selection
+  // re-defaults to sprint. When sprint becomes newly eligible and the user has not
+  // explicitly chosen a mode in this eligibility window, default to sprint.
+  useEffect(() => {
+    if (!sprintAllowed) {
+      setWindowMode("date_range")
+      setUserChoseWindowMode(false)
+    } else if (!userChoseWindowMode) {
+      setWindowMode("sprint")
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sprintAllowed])
 
   // Clear any previously selected sprint whenever the team selection changes so stale sprint IDs
   // are never carried forward to a different team or a multi-team batch run.
@@ -171,6 +196,11 @@ export function ReportRunnerPage() {
 
   const running = teamRun.isPending
 
+  function handleWindowModeChange(mode: WindowMode) {
+    setWindowMode(mode)
+    setUserChoseWindowMode(true)
+  }
+
   function toggleTeam(teamId: string) {
     setSelectedTeamIds((current) =>
       current.includes(teamId)
@@ -262,10 +292,10 @@ export function ReportRunnerPage() {
               <Select
                 className="sm:max-w-xs"
                 id="window-mode"
-                onChange={(event) => setWindowMode(event.target.value as WindowMode)}
+                onChange={(event) => handleWindowModeChange(event.target.value as WindowMode)}
                 value={windowMode}
               >
-                <option value="sprint">Active sprint</option>
+                {sprintAllowed && <option value="sprint">Active sprint</option>}
                 <option value="date_range">Date range</option>
               </Select>
             </div>
