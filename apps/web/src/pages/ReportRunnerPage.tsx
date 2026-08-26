@@ -55,7 +55,8 @@ export function ReportRunnerPage() {
   const formatTs = useFormatTimestamp()
   const teamsQuery = useQuery({ queryKey: ["teams"], queryFn: listTeams })
   const [selectedTeamIds, setSelectedTeamIds] = useState<string[]>([])
-  const [windowMode, setWindowMode] = useState<WindowMode>("date_range")
+  const [windowMode, setWindowMode] = useState<WindowMode>("sprint")
+  const [userChoseWindowMode, setUserChoseWindowMode] = useState(false)
   const [startDate, setStartDate] = useState("")
   const [endDate, setEndDate] = useState("")
   const [selectedSprintExternalId, setSelectedSprintExternalId] = useState("")
@@ -76,10 +77,18 @@ export function ReportRunnerPage() {
     )
   }, [selectedTeamIds, teamsQuery.data])
 
-  // Reset the window mode to date-range whenever sprint is no longer allowed so that the
-  // internal state stays consistent with the visible options.
+  // Keep window mode consistent with sprint eligibility. When sprint becomes unavailable,
+  // force date-range and clear the explicit-choice flag so the next eligible selection
+  // re-defaults to sprint. When sprint becomes newly eligible and the user has not
+  // explicitly chosen a mode in this eligibility window, default to sprint.
   useEffect(() => {
-    if (!sprintAllowed) setWindowMode("date_range")
+    if (!sprintAllowed) {
+      setWindowMode("date_range")
+      setUserChoseWindowMode(false)
+    } else if (!userChoseWindowMode) {
+      setWindowMode("sprint")
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sprintAllowed])
 
   // Clear any previously selected sprint whenever the team selection changes so stale sprint IDs
@@ -187,6 +196,11 @@ export function ReportRunnerPage() {
 
   const running = teamRun.isPending
 
+  function handleWindowModeChange(mode: WindowMode) {
+    setWindowMode(mode)
+    setUserChoseWindowMode(true)
+  }
+
   function toggleTeam(teamId: string) {
     setSelectedTeamIds((current) =>
       current.includes(teamId)
@@ -278,7 +292,7 @@ export function ReportRunnerPage() {
               <Select
                 className="sm:max-w-xs"
                 id="window-mode"
-                onChange={(event) => setWindowMode(event.target.value as WindowMode)}
+                onChange={(event) => handleWindowModeChange(event.target.value as WindowMode)}
                 value={windowMode}
               >
                 {sprintAllowed && <option value="sprint">Active sprint</option>}
