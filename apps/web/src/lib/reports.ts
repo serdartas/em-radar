@@ -193,13 +193,19 @@ export async function getTeamSprints(teamId: string): Promise<SprintOption[]> {
 export async function enqueueTeamReport(
   teamProfileId: string,
   window?: { start: string; end: string },
-  sprintExternalId?: string,
+  startSprintExternalId?: string,
+  endSprintExternalId?: string,
 ): Promise<ReportJob> {
   let body: Record<string, unknown> = { connector: "jira", team_profile_id: teamProfileId }
   if (window) {
     body = { ...body, window_type: "date_range", start: window.start, end: window.end }
-  } else if (sprintExternalId) {
-    body = { ...body, window_type: "sprint", sprint_external_id: sprintExternalId }
+  } else if (startSprintExternalId && endSprintExternalId) {
+    body = {
+      ...body,
+      window_type: "sprint",
+      start_sprint_external_id: startSprintExternalId,
+      end_sprint_external_id: endSprintExternalId,
+    }
   }
   return apiFetch<ReportJob>("/reports/run", {
     method: "POST",
