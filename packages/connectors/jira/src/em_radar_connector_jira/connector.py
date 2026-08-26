@@ -1355,9 +1355,14 @@ def _workitem_jql(scope: WorkItemScope, window: EvaluationWindow) -> str:
     if window.window_type is WindowType.DATE_RANGE:
         if window.end is None:
             raise ConnectorDataError("Date-range window was missing end")
-        # No lower-bound predicate: stale issues updated before window.start must still appear
-        # so snapshot signals (e.g. StaleInProgressSignal) can evaluate them.
-        clauses.append(f'updated < "{_jql_datetime(_ceil_to_minute(window.end))}"')
+        # Overlap predicate for the half-open interval [start, end).
+        # The JQL boundary is coarse (ceiled to the next minute) so the post-filter in
+        # _workitem_in_window is the authoritative check; the JQL may over-fetch slightly.
+        clauses.append(f'created < "{_jql_datetime(_ceil_to_minute(window.end))}"')
+        if window.start is not None:
+            clauses.append(
+                f'(resolutiondate is EMPTY OR resolutiondate > "{_jql_datetime(window.start)}")'
+            )
     elif window.window_type is WindowType.SPRINT and scope.sprint_external_id is not None:
         # Jira's sprint clause takes a numeric id, interpolated unquoted; reject anything else
         # so a malformed value cannot produce invalid or injected JQL.
@@ -1380,14 +1385,22 @@ def _workitem_in_window(workitem: WorkItem, window: EvaluationWindow) -> bool:
             raise ConnectorDataError("Sprint window was missing sprint_id")
         return window.sprint_id in workitem.sprint_ids
     if window.window_type is WindowType.DATE_RANGE and window.end is not None:
-        # Exact exclusive-end filter: the coarse JQL boundary is rounded up to the next
-        # minute, so items in the final partial minute must be dropped here precisely.
-        if workitem.updated_at is None:
-            return True
+        # Half-open interval [start, end): item overlaps when created_at < end AND
+        # (resolved_at is None OR resolved_at > start).
+        # This is the authoritative exact check; the JQL boundary is coarse/over-broad.
         end = (
             window.end if window.end.tzinfo is not None else window.end.replace(tzinfo=timezone.utc)
         )
-        return workitem.updated_at < end
+        if workitem.created_at is not None and workitem.created_at >= end:
+            return False
+        if workitem.resolved_at is not None and window.start is not None:
+            start = (
+                window.start
+                if window.start.tzinfo is not None
+                else window.start.replace(tzinfo=timezone.utc)
+            )
+            if workitem.resolved_at <= start:
+                return False
     return True
 
 
