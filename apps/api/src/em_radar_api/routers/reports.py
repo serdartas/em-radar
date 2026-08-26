@@ -1271,12 +1271,18 @@ def _sprint_range_window(
                 "cannot resolve multi-sprint range window"
             ),
         )
-    # End of range: prefer complete_date for closed sprints so historical ranges are not
-    # contaminated with activity after the sprint closed; fall back to end_date (planned),
-    # then to the report snapshot time for open sprints that have no completion date.
-    range_end = end_sprint.complete_date
-    if range_end is None or range_end >= started_at:
-        range_end = end_sprint.end_date if end_sprint.end_date is not None else started_at
+    # End of range: use the end sprint's planned end_date per the sprint-range spec.
+    # Falls back to the report snapshot time when end_date is not set.
+    range_end = end_sprint.end_date if end_sprint.end_date is not None else started_at
+    # Guard: after resolving range_end, ensure start sprint does not come after the resolved end.
+    # This catches the case where end_sprint has no start_date but its end_date precedes start.
+    if start_sprint.start_date > range_end:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"start sprint '{start_external_id}' begins after end sprint '{end_external_id}'"
+            ),
+        )
     # Clamp start to range_end to handle future sprints whose start_date is after the snapshot.
     range_start = min(start_sprint.start_date, range_end)
     return EvaluationWindow(

@@ -577,7 +577,8 @@ _RANGE_SPRINT_1_START = datetime(2026, 5, 1, tzinfo=UTC)
 _RANGE_SPRINT_1_END = datetime(2026, 5, 14, tzinfo=UTC)
 _RANGE_SPRINT_2_START = datetime(2026, 5, 15, tzinfo=UTC)
 _RANGE_SPRINT_2_END = datetime(2026, 5, 28, tzinfo=UTC)
-_RANGE_SPRINT_2_COMPLETE = datetime(2026, 5, 28, tzinfo=UTC)
+# Deliberately differs from _RANGE_SPRINT_2_END to confirm end_date (not complete_date) is used.
+_RANGE_SPRINT_2_COMPLETE = datetime(2026, 5, 30, tzinfo=UTC)
 
 
 class _JiraTwoSprintConnector(JiraTestConnector):
@@ -675,8 +676,9 @@ def test_sprint_range_resolves_to_date_range_window(
     window = _get_window(session_factory, job["report_id"])
     assert window.window_type is WindowType.DATE_RANGE
     # SQLite stores datetimes without timezone; compare against naive UTC equivalents.
+    # The window end must be end_date, not complete_date (which differs here by design).
     assert window.start == _RANGE_SPRINT_1_START.replace(tzinfo=None)
-    assert window.end == _RANGE_SPRINT_2_COMPLETE.replace(tzinfo=None)
+    assert window.end == _RANGE_SPRINT_2_END.replace(tzinfo=None)
 
 
 def test_sprint_range_single_sprint_produces_sprint_window(
@@ -797,3 +799,128 @@ def test_sprint_range_fields_rejected_on_non_sprint_window(api_client: TestClien
         },
     )
     assert resp.status_code == 422
+
+
+def test_sprint_range_uses_end_date_not_complete_date(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Window end is taken from end_sprint.end_date, not complete_date (the two differ here)."""
+    _use_two_sprint_connector(monkeypatch)
+    connection_id = _create_jira_connection(api_client)
+    scope_id = _create_board_scope(api_client, connection_id, _BOARD_CAPABILITIES)
+    team_id = _create_jira_team(api_client, connection_id, scope_id, "scrum", sprint_length_days=14)
+
+    resp = api_client.post(
+        "/api/reports/run",
+        json={
+            "connector": "jira",
+            "team_profile_id": team_id,
+            "window_type": "sprint",
+            "start_sprint_external_id": "sp-1",
+            "end_sprint_external_id": "sp-2",
+        },
+    )
+
+    assert resp.status_code == 202
+    job = api_client.get(f"/api/reports/jobs/{resp.json()['id']}").json()
+    assert job["status"] == "done", f"job failed: {job.get('error')}"
+    window = _get_window(session_factory, job["report_id"])
+    # _RANGE_SPRINT_2_END (2026-05-28) != _RANGE_SPRINT_2_COMPLETE (2026-05-30);
+    # the window must use end_date, so end should be 2026-05-28, not 2026-05-30.
+    assert window.end == _RANGE_SPRINT_2_END.replace(tzinfo=None)
+    assert window.end != _RANGE_SPRINT_2_COMPLETE.replace(tzinfo=None)
+
+
+class _JiraStartAfterResolvedEndConnector(JiraTestConnector):
+    """Start sprint start_date (2026-05-20) is after end sprint's end_date (2026-04-30).
+
+    The end sprint has no start_date so the first ordering check (comparing start_dates)
+    is skipped; the post-resolution guard must catch the inversion.
+    """
+
+    async def list_sprints(self, board_id: str) -> list[Sprint]:
+        assert board_id == "20000"
+        return [
+            Sprint(
+                id="eeeeeeee-0005-0005-0005-eeeeeeeeeeee",
+                source=Source.JIRA,
+                external_id="sp-late",
+                board_id="54111f22-2a3a-4cb4-8c8a-4fc0942dba49",
+                name="Late Sprint",
+                state=SprintState.CLOSED,
+                start_date=datetime(2026, 5, 20, tzinfo=UTC),
+                end_date=datetime(2026, 6, 3, tzinfo=UTC),
+            ),
+            Sprint(
+                id="ffffffff-0006-0006-0006-ffffffffffff",
+                source=Source.JIRA,
+                external_id="sp-early",
+                board_id="54111f22-2a3a-4cb4-8c8a-4fc0942dba49",
+                name="Early Sprint (no start_date)",
+                state=SprintState.CLOSED,
+                # No start_date — first ordering check cannot fire; relies on post-resolution guard.
+                end_date=datetime(2026, 4, 30, tzinfo=UTC),
+            ),
+        ]
+
+
+def test_sprint_range_start_after_resolved_end_returns_failed_job(
+    api_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Start sprint begins after end sprint's resolved end_date when end has no start_date."""
+    monkeypatch.setattr(
+        "em_radar_api.connector_registry._connector_types",
+        lambda: [_JiraStartAfterResolvedEndConnector],
+    )
+    connection_id = _create_jira_connection(api_client)
+    scope_id = _create_board_scope(api_client, connection_id, _BOARD_CAPABILITIES)
+    team_id = _create_jira_team(api_client, connection_id, scope_id, "scrum", sprint_length_days=14)
+
+    resp = api_client.post(
+        "/api/reports/run",
+        json={
+            "connector": "jira",
+            "team_profile_id": team_id,
+            "window_type": "sprint",
+            "start_sprint_external_id": "sp-late",
+            "end_sprint_external_id": "sp-early",
+        },
+    )
+
+    assert resp.status_code == 202
+    job = api_client.get(f"/api/reports/jobs/{resp.json()['id']}").json()
+    assert job["status"] == "failed"
+    assert "sp-late" in job["error"]
+    assert "sp-early" in job["error"]
+
+
+def test_sprint_range_start_sprint_no_start_date_returns_failed_job(
+    api_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A multi-sprint range where the start sprint has no start_date fails with 422."""
+    monkeypatch.setattr(
+        "em_radar_api.connector_registry._connector_types",
+        lambda: [_JiraTwoSprintNoDateConnector],
+    )
+    connection_id = _create_jira_connection(api_client)
+    scope_id = _create_board_scope(api_client, connection_id, _BOARD_CAPABILITIES)
+    team_id = _create_jira_team(api_client, connection_id, scope_id, "scrum", sprint_length_days=14)
+
+    # sp-a has no start_date; a multi-sprint range cannot be resolved.
+    resp = api_client.post(
+        "/api/reports/run",
+        json={
+            "connector": "jira",
+            "team_profile_id": team_id,
+            "window_type": "sprint",
+            "start_sprint_external_id": "sp-a",
+            "end_sprint_external_id": "sp-b",
+        },
+    )
+
+    assert resp.status_code == 202
+    job = api_client.get(f"/api/reports/jobs/{resp.json()['id']}").json()
+    assert job["status"] == "failed"
+    assert "sp-a" in job["error"]
