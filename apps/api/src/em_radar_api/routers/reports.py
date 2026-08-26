@@ -131,14 +131,21 @@ class ReportRunRequest(BaseModel):
     window_type: WindowType | None = None
     start: datetime | None = None
     end: datetime | None = None
-    sprint_external_id: str | None = None
+    start_sprint_external_id: str | None = None
+    end_sprint_external_id: str | None = None
 
     @model_validator(mode="after")
     def validate_connector_scope(self) -> Self:
         if self.connector == "jira" and self.team_profile_id is None:
             raise ValueError("jira reports require a team_profile_id")
-        if self.sprint_external_id is not None and self.window_type is not WindowType.SPRINT:
-            raise ValueError("sprint_external_id requires window_type=sprint")
+        has_start = self.start_sprint_external_id is not None
+        has_end = self.end_sprint_external_id is not None
+        if has_start != has_end:
+            raise ValueError(
+                "start_sprint_external_id and end_sprint_external_id must both be provided together"
+            )
+        if has_start and self.window_type is not WindowType.SPRINT:
+            raise ValueError("sprint range fields require window_type=sprint")
         if self.window_type is WindowType.DATE_RANGE:
             if self.start is None or self.end is None:
                 raise ValueError("date_range windows require both start and end")
@@ -308,7 +315,8 @@ async def run_report(
         request.team_profile_id,
         requested_window,
         sf,
-        request.sprint_external_id,
+        request.start_sprint_external_id,
+        request.end_sprint_external_id,
     )
     return ReportJobResponse.from_job(job)
 
@@ -413,7 +421,8 @@ async def _run_report_job(
     team_profile_id: UUID,
     requested_window: EvaluationWindow | None,
     sf: sessionmaker[Session],
-    sprint_external_id: str | None = None,
+    start_sprint_external_id: str | None = None,
+    end_sprint_external_id: str | None = None,
 ) -> None:
     # Phase 1: mark running — hold write lock only for the DB write, then release.
     with write_session(sf) as session:
@@ -429,7 +438,11 @@ async def _run_report_job(
     try:
         with sf() as session:
             result = await _run_team_report(
-                team_profile_id, session, requested_window, sprint_external_id
+                team_profile_id,
+                session,
+                requested_window,
+                start_sprint_external_id,
+                end_sprint_external_id,
             )
         report_id = result.id
         if result.status == ReportStatus.FAILED:
@@ -493,7 +506,8 @@ async def _run_team_report(
     team_profile_id: UUID,
     session: Session,
     requested_window: EvaluationWindow | None = None,
-    sprint_external_id: str | None = None,
+    start_sprint_external_id: str | None = None,
+    end_sprint_external_id: str | None = None,
 ) -> ReportDetailResponse:
     started_at = datetime.now(timezone.utc)
     team_row = session.get(TeamProfileTable, team_profile_id)
@@ -560,7 +574,7 @@ async def _run_team_report(
     # window from the team's working mode (flows §6): with a board it is the active sprint
     # (scrum) or a rolling range (kanban); without one it falls back to a date range.
     try:
-        if sprint_external_id is not None:
+        if start_sprint_external_id is not None and end_sprint_external_id is not None:
             if board_meta is None:
                 raise HTTPException(
                     status_code=422,
@@ -571,7 +585,13 @@ async def _run_team_report(
                     status_code=422,
                     detail="Cannot resolve sprint: sprint metadata could not be fetched from the board",
                 )
-            window = _sprint_window_by_external_id(sprint_external_id, board_meta.sprints, team.id)
+            window = _sprint_range_window(
+                start_sprint_external_id,
+                end_sprint_external_id,
+                board_meta.sprints,
+                team.id,
+                started_at,
+            )
         else:
             window = requested_window or _default_evaluation_window(
                 team, board_meta.sprints if board_meta is not None else None, started_at
@@ -1194,25 +1214,81 @@ def _default_evaluation_window(
     )
 
 
-def _sprint_window_by_external_id(
-    external_id: str,
+def _sprint_range_window(
+    start_external_id: str,
+    end_external_id: str,
     sprints: list[Sprint],
     team_profile_id: UUID,
+    started_at: datetime,
 ) -> EvaluationWindow:
-    """Build a sprint window from a user-selected sprint external ID.
+    """Build an evaluation window from a user-selected sprint range (start → end sprint).
 
-    Matches against the sprints returned by the connector in this run; raises 422
-    if the sprint is not found on the board (it may have been closed or deleted).
+    Both sprint external IDs must exist on the board. A range where start == end preserves
+    sprint-window semantics (work items filtered by sprint membership). A multi-sprint range
+    resolves to a DATE_RANGE window spanning start_sprint.start_date to end_sprint's
+    completion or planned end date, validated that start does not come after end temporally.
+
+    Raises 422 if either sprint is not found, if dates are insufficient to resolve the range,
+    or if the start sprint begins after the end sprint.
     """
-    selected = next((s for s in sprints if s.external_id == external_id), None)
-    if selected is None:
+    start_sprint = next((s for s in sprints if s.external_id == start_external_id), None)
+    if start_sprint is None:
         raise HTTPException(
             status_code=422,
-            detail=f"sprint '{external_id}' not found on board",
+            detail=f"sprint '{start_external_id}' not found on board",
         )
+    end_sprint = next((s for s in sprints if s.external_id == end_external_id), None)
+    if end_sprint is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"sprint '{end_external_id}' not found on board",
+        )
+    # Single-sprint range: preserve sprint-window semantics so work items are filtered by
+    # sprint membership rather than date range, matching existing single-sprint behaviour.
+    if start_external_id == end_external_id:
+        return EvaluationWindow(
+            window_type=WindowType.SPRINT,
+            sprint_id=start_sprint.id,
+            team_profile_id=team_profile_id,
+        )
+    # Multi-sprint range: validate temporal ordering then resolve to a concrete date-range window.
+    if (
+        start_sprint.start_date is not None
+        and end_sprint.start_date is not None
+        and start_sprint.start_date > end_sprint.start_date
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"start sprint '{start_external_id}' begins after end sprint '{end_external_id}'"
+            ),
+        )
+    if start_sprint.start_date is None:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"start sprint '{start_external_id}' has no start date; "
+                "cannot resolve multi-sprint range window"
+            ),
+        )
+    # End of range: use the end sprint's planned end_date per the sprint-range spec.
+    # Falls back to the report snapshot time when end_date is not set.
+    range_end = end_sprint.end_date if end_sprint.end_date is not None else started_at
+    # Guard: after resolving range_end, ensure start sprint does not come after the resolved end.
+    # This catches the case where end_sprint has no start_date but its end_date precedes start.
+    if start_sprint.start_date > range_end:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"start sprint '{start_external_id}' begins after end sprint '{end_external_id}'"
+            ),
+        )
+    # Clamp start to range_end to handle future sprints whose start_date is after the snapshot.
+    range_start = min(start_sprint.start_date, range_end)
     return EvaluationWindow(
-        window_type=WindowType.SPRINT,
-        sprint_id=selected.id,
+        window_type=WindowType.DATE_RANGE,
+        start=range_start,
+        end=range_end,
         team_profile_id=team_profile_id,
     )
 

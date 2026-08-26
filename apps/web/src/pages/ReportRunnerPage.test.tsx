@@ -442,7 +442,7 @@ describe("ReportRunnerPage", () => {
     expect(screen.getByText("no active sprint")).toBeInTheDocument()
   })
 
-  it("shows a sprint picker for a single team and sends sprint_external_id in the run request", async () => {
+  it("shows a start sprint picker for a single team and sends sprint range in the run request", async () => {
     const sprints = [
       {
         id: "sprint-db-1",
@@ -470,11 +470,74 @@ describe("ReportRunnerPage", () => {
     fireEvent.click(await screen.findByLabelText("Platform"))
     // Switch to sprint mode (the scrum team makes this option available).
     fireEvent.change(screen.getByLabelText("Window"), { target: { value: "sprint" } })
-    const sprintSelect = await screen.findByLabelText("Sprint")
-    expect(sprintSelect).toBeInTheDocument()
+    const startSprintSelect = await screen.findByLabelText("Start sprint")
+    expect(startSprintSelect).toBeInTheDocument()
     // Wait for sprint options to load from the mocked API before selecting.
     await screen.findByText("Platform Sprint 12")
-    fireEvent.change(sprintSelect, { target: { value: "30000" } })
+    fireEvent.change(startSprintSelect, { target: { value: "30000" } })
+    fireEvent.click(screen.getByRole("button", { name: "Run team reports" }))
+
+    expect(await screen.findByText("PLAT-2 stale for 12 days")).toBeInTheDocument()
+    // Single-sprint selection: start and end are both set to the same sprint external id.
+    expect(
+      fetchMock.mock.calls.some(
+        ([url, requestInit]) =>
+          String(url).endsWith("/api/reports/run") &&
+          requestInit?.method === "POST" &&
+          String(requestInit?.body) ===
+            JSON.stringify({
+              connector: "jira",
+              team_profile_id: "team-1",
+              window_type: "sprint",
+              start_sprint_external_id: "30000",
+              end_sprint_external_id: "30000",
+            }),
+      ),
+    ).toBe(true)
+  })
+
+  it("shows start and end sprint pickers and sends a range when different sprints are selected", async () => {
+    const sprints = [
+      {
+        id: "sprint-db-1",
+        external_id: "sp-1",
+        name: "Sprint 1",
+        state: "closed",
+        start_date: "2026-05-01T00:00:00Z",
+        end_date: "2026-05-14T00:00:00Z",
+      },
+      {
+        id: "sprint-db-2",
+        external_id: "sp-2",
+        name: "Sprint 2",
+        state: "closed",
+        start_date: "2026-05-15T00:00:00Z",
+        end_date: "2026-05-28T00:00:00Z",
+      },
+    ]
+
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = typeof input === "string" ? input : input.toString()
+      if (url.endsWith("/api/teams")) return Promise.resolve(jsonResponse([team]))
+      if (url.includes("/api/teams/team-1/sprints")) return Promise.resolve(jsonResponse(sprints))
+      if (url.endsWith("/api/reports/run")) return Promise.resolve(jsonResponse(doneJob))
+      if (url.includes("/api/reports/jobs/")) return Promise.resolve(jsonResponse(doneJob))
+      if (url.endsWith("/api/reports/jobs")) return Promise.resolve(jsonResponse([doneJob]))
+      if (url.endsWith("/api/reports/report-1")) return Promise.resolve(jsonResponse(report))
+      throw new Error(`unexpected fetch: ${url}`)
+    })
+
+    renderApp()
+
+    fireEvent.click(await screen.findByLabelText("Platform"))
+    fireEvent.change(screen.getByLabelText("Window"), { target: { value: "sprint" } })
+    const startSprintSelect = await screen.findByLabelText("Start sprint")
+    await screen.findByText("Sprint 1")
+    // Select the first sprint as start — this also shows the end sprint picker.
+    fireEvent.change(startSprintSelect, { target: { value: "sp-1" } })
+    const endSprintSelect = await screen.findByLabelText("End sprint")
+    // Change the end sprint to Sprint 2 to form a range.
+    fireEvent.change(endSprintSelect, { target: { value: "sp-2" } })
     fireEvent.click(screen.getByRole("button", { name: "Run team reports" }))
 
     expect(await screen.findByText("PLAT-2 stale for 12 days")).toBeInTheDocument()
@@ -488,7 +551,8 @@ describe("ReportRunnerPage", () => {
               connector: "jira",
               team_profile_id: "team-1",
               window_type: "sprint",
-              sprint_external_id: "30000",
+              start_sprint_external_id: "sp-1",
+              end_sprint_external_id: "sp-2",
             }),
       ),
     ).toBe(true)

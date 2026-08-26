@@ -322,7 +322,8 @@ def test_future_sprint_code_window_is_clamped_to_report_time(
             "connector": "jira",
             "team_profile_id": team_id,
             "window_type": "sprint",
-            "sprint_external_id": "30000",
+            "start_sprint_external_id": "30000",
+            "end_sprint_external_id": "30000",
         },
     )
     assert resp.status_code == 202
@@ -370,7 +371,8 @@ def test_closed_undated_sprint_code_window_ends_at_completion_date(
             "connector": "jira",
             "team_profile_id": team_id,
             "window_type": "sprint",
-            "sprint_external_id": "30000",
+            "start_sprint_external_id": "30000",
+            "end_sprint_external_id": "30000",
         },
     )
     assert resp.status_code == 202
