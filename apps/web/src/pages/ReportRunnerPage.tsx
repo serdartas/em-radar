@@ -55,7 +55,7 @@ export function ReportRunnerPage() {
   const formatTs = useFormatTimestamp()
   const teamsQuery = useQuery({ queryKey: ["teams"], queryFn: listTeams })
   const [selectedTeamIds, setSelectedTeamIds] = useState<string[]>([])
-  const [windowMode, setWindowMode] = useState<WindowMode>("sprint")
+  const [windowMode, setWindowMode] = useState<WindowMode>("date_range")
   const [startDate, setStartDate] = useState("")
   const [endDate, setEndDate] = useState("")
   const [selectedSprintExternalId, setSelectedSprintExternalId] = useState("")
@@ -65,6 +65,22 @@ export function ReportRunnerPage() {
   const [pendingJobIds, setPendingJobIds] = useState<string[]>([])
 
   const teams = teamsQuery.data ?? []
+
+  // Sprint mode is only valid when every selected team uses scrum. Kanban teams (and multi-team
+  // selections that include at least one kanban team) fall back to date-range mode.
+  const sprintAllowed = useMemo(() => {
+    const loadedTeams = teamsQuery.data ?? []
+    return (
+      selectedTeamIds.length > 0 &&
+      selectedTeamIds.every((id) => loadedTeams.find((t) => t.id === id)?.working_mode === "scrum")
+    )
+  }, [selectedTeamIds, teamsQuery.data])
+
+  // Reset the window mode to date-range whenever sprint is no longer allowed so that the
+  // internal state stays consistent with the visible options.
+  useEffect(() => {
+    if (!sprintAllowed) setWindowMode("date_range")
+  }, [sprintAllowed])
 
   // Clear any previously selected sprint whenever the team selection changes so stale sprint IDs
   // are never carried forward to a different team or a multi-team batch run.
@@ -265,7 +281,7 @@ export function ReportRunnerPage() {
                 onChange={(event) => setWindowMode(event.target.value as WindowMode)}
                 value={windowMode}
               >
-                <option value="sprint">Active sprint</option>
+                {sprintAllowed && <option value="sprint">Active sprint</option>}
                 <option value="date_range">Date range</option>
               </Select>
             </div>

@@ -134,6 +134,8 @@ describe("ReportRunnerPage", () => {
     renderApp()
 
     fireEvent.click(await screen.findByLabelText("Platform"))
+    // The scrum team unlocks the sprint option; switch to it explicitly.
+    fireEvent.change(screen.getByLabelText("Window"), { target: { value: "sprint" } })
     fireEvent.click(screen.getByRole("button", { name: "Run team reports" }))
 
     expect(await screen.findByText("PLAT-2 stale for 12 days")).toBeInTheDocument()
@@ -148,23 +150,94 @@ describe("ReportRunnerPage", () => {
     ).toBe(true)
   })
 
-  it("exposes a sprint and date-range window picker", async () => {
+  it("exposes a sprint and date-range window picker for a scrum team", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const url = typeof input === "string" ? input : input.toString()
       if (url.endsWith("/api/teams")) return Promise.resolve(jsonResponse([team]))
+      if (url.includes("/api/teams/team-1/sprints")) return Promise.resolve(jsonResponse([]))
       if (url.endsWith("/api/reports/jobs")) return Promise.resolve(jsonResponse([]))
       throw new Error(`unexpected fetch: ${url}`)
     })
 
     renderPage()
-    const modeSelect = (await screen.findByLabelText("Window")) as HTMLSelectElement
+    // Before any team is selected the date inputs are visible (default mode is date range).
+    await screen.findByLabelText("Platform")
+    expect(screen.getByLabelText("Start date")).toBeInTheDocument()
+
+    // Selecting a scrum team unlocks the sprint option.
+    fireEvent.click(screen.getByLabelText("Platform"))
+    const modeSelect = screen.getByLabelText("Window") as HTMLSelectElement
     const options = Array.from(modeSelect.options, (option) => option.value)
     expect(options).toEqual(["sprint", "date_range"])
 
+    // Switching to sprint hides the date inputs.
+    fireEvent.change(modeSelect, { target: { value: "sprint" } })
     expect(screen.queryByLabelText("Start date")).toBeNull()
+
+    // Switching back reveals them again.
     fireEvent.change(modeSelect, { target: { value: "date_range" } })
     expect(screen.getByLabelText("Start date")).toBeInTheDocument()
     expect(screen.getByLabelText("End date")).toBeInTheDocument()
+  })
+
+  it("does not render the Active sprint option for a kanban team", async () => {
+    const kanbanTeam = { ...team, id: "team-kanban", name: "Kanban Team", working_mode: "kanban" }
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = typeof input === "string" ? input : input.toString()
+      if (url.endsWith("/api/teams")) return Promise.resolve(jsonResponse([kanbanTeam]))
+      if (url.endsWith("/api/reports/jobs")) return Promise.resolve(jsonResponse([]))
+      throw new Error(`unexpected fetch: ${url}`)
+    })
+
+    renderPage()
+    fireEvent.click(await screen.findByLabelText("Kanban Team"))
+
+    const modeSelect = screen.getByLabelText("Window") as HTMLSelectElement
+    const optionValues = Array.from(modeSelect.options, (o) => o.value)
+    expect(optionValues).not.toContain("sprint")
+    expect(optionValues).toContain("date_range")
+    // The window mode defaults to date range so date inputs are visible.
+    expect(screen.getByLabelText("Start date")).toBeInTheDocument()
+  })
+
+  it("renders the Active sprint option for a scrum team", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = typeof input === "string" ? input : input.toString()
+      if (url.endsWith("/api/teams")) return Promise.resolve(jsonResponse([team]))
+      if (url.includes("/api/teams/team-1/sprints")) return Promise.resolve(jsonResponse([]))
+      if (url.endsWith("/api/reports/jobs")) return Promise.resolve(jsonResponse([]))
+      throw new Error(`unexpected fetch: ${url}`)
+    })
+
+    renderPage()
+    fireEvent.click(await screen.findByLabelText("Platform"))
+
+    const modeSelect = screen.getByLabelText("Window") as HTMLSelectElement
+    const optionValues = Array.from(modeSelect.options, (o) => o.value)
+    expect(optionValues).toContain("sprint")
+  })
+
+  it("falls back to date range when a kanban team is mixed into a multi-team selection", async () => {
+    const scrumTeam = { ...team, id: "team-scrum", name: "Scrum Team" }
+    const kanbanTeam = { ...team, id: "team-kanban", name: "Kanban Team", working_mode: "kanban" }
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = typeof input === "string" ? input : input.toString()
+      if (url.endsWith("/api/teams")) return Promise.resolve(jsonResponse([scrumTeam, kanbanTeam]))
+      if (url.includes("/api/teams/team-scrum/sprints")) return Promise.resolve(jsonResponse([]))
+      if (url.endsWith("/api/reports/jobs")) return Promise.resolve(jsonResponse([]))
+      throw new Error(`unexpected fetch: ${url}`)
+    })
+
+    renderPage()
+    // Select scrum team first to enable sprint mode, then switch to it.
+    fireEvent.click(await screen.findByLabelText("Scrum Team"))
+    fireEvent.change(screen.getByLabelText("Window"), { target: { value: "sprint" } })
+    expect((screen.getByLabelText("Window") as HTMLSelectElement).value).toBe("sprint")
+
+    // Adding a kanban team should force back to date range.
+    fireEvent.click(screen.getByLabelText("Kanban Team"))
+    expect((screen.getByLabelText("Window") as HTMLSelectElement).value).toBe("date_range")
+    expect(screen.getByLabelText("Start date")).toBeInTheDocument()
   })
 
   it("posts a date-range window when date-range mode is selected", async () => {
@@ -310,6 +383,8 @@ describe("ReportRunnerPage", () => {
 
     fireEvent.click(await screen.findByLabelText("Alpha"))
     fireEvent.click(screen.getByLabelText("Beta"))
+    // Both teams are scrum so the sprint option is available; switch to it.
+    fireEvent.change(screen.getByLabelText("Window"), { target: { value: "sprint" } })
     fireEvent.click(screen.getByRole("button", { name: "Run team reports" }))
 
     await screen.findByRole("heading", { name: "Report Results", level: 1 })
@@ -374,6 +449,8 @@ describe("ReportRunnerPage", () => {
     renderApp()
 
     fireEvent.click(await screen.findByLabelText("Platform"))
+    // Switch to sprint mode (the scrum team makes this option available).
+    fireEvent.change(screen.getByLabelText("Window"), { target: { value: "sprint" } })
     const sprintSelect = await screen.findByLabelText("Sprint")
     expect(sprintSelect).toBeInTheDocument()
     // Wait for sprint options to load from the mocked API before selecting.
@@ -412,6 +489,8 @@ describe("ReportRunnerPage", () => {
     renderPage()
 
     fireEvent.click(await screen.findByLabelText("Platform"))
+    // Switch to sprint mode so the run fires without requiring date inputs.
+    fireEvent.change(screen.getByLabelText("Window"), { target: { value: "sprint" } })
     fireEvent.click(screen.getByRole("button", { name: "Run team reports" }))
 
     const alert = await screen.findByRole("alert")
