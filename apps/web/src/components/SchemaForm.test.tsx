@@ -292,6 +292,52 @@ describe("SchemaForm — required field attributes", () => {
 })
 
 // ---------------------------------------------------------------------------
+// Secret field label copy (M8.7-01)
+// ---------------------------------------------------------------------------
+
+describe("SchemaForm — secret field label copy", () => {
+  it("shows 'Stored securely, not shown again' for a secret field in add mode", () => {
+    render(
+      <SchemaForm
+        idPrefix="conn"
+        onChange={() => undefined}
+        schema={gitlabSchema}
+        values={{}}
+      />,
+    )
+
+    expect(screen.getByText("Stored securely, not shown again")).toBeInTheDocument()
+  })
+
+  it("shows 'Leave blank to keep current token' for a secret field in edit mode (exemptSecrets)", () => {
+    render(
+      <SchemaForm
+        exemptSecrets
+        idPrefix="conn"
+        onChange={() => undefined}
+        schema={gitlabSchema}
+        values={{ token: "" }}
+      />,
+    )
+
+    expect(screen.getByText("Leave blank to keep current token")).toBeInTheDocument()
+  })
+
+  it("does not render the literal text 'write-only' anywhere", () => {
+    render(
+      <SchemaForm
+        idPrefix="conn"
+        onChange={() => undefined}
+        schema={gitlabSchema}
+        values={{}}
+      />,
+    )
+
+    expect(screen.queryByText(/write-only/i)).not.toBeInTheDocument()
+  })
+})
+
+// ---------------------------------------------------------------------------
 // exemptSecrets: secret fields are non-required in edit mode
 // ---------------------------------------------------------------------------
 

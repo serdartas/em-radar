@@ -501,7 +501,7 @@ function operatorsForJiraFieldType(fieldType: string | null): {
     case "array":
       // list[str] coercion means is/is_not always mismatch; contains/does_not_contain
       // compare correctly against list values and are in the engine allowlist.
-      return { operators: ["contains", "does_not_contain"], values: [] }
+      return { operators: ["contains", "does_not_contain", "is_empty", "is_not_empty"], values: [] }
     default:
       return { operators: ["is", "is_not", "is_empty", "is_not_empty"], values: [] }
   }

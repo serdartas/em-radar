@@ -125,6 +125,7 @@ class Capabilities:
     provides_repositories: bool = False
     provides_reviews: bool = False
     provides_comments: bool = False
+    provides_members: bool = False
     provides_transitions: bool = False
     supports_incremental_fetch: bool = False     # if false, every fetch is a full re-fetch within scope
     supports_pagination_cursor: bool = False     # if false, pagination is offset/page-based
@@ -136,6 +137,11 @@ The Jira connector returns capabilities like:
 
 The GitLab connector returns:
 `provides_mergerequests=True, provides_repositories=True, provides_reviews=True, supports_incremental_fetch=True`.
+
+`provides_members` declares that the connector can resolve people (users, group members) and
+discover repositories for team setup via the `MemberProvider` interface (§6.7) and the discovery
+methods on `MergeRequestProvider` (§6.3). The GitLab connector sets `provides_members=True`; a future
+GitHub connector implementing the same contract would do the same.
 
 ### 5.1 Signal Builder Capability Schema
 
@@ -238,6 +244,16 @@ class MergeRequestProvider(Protocol):
         scope: MergeRequestScope,
         window: EvaluationWindow,
     ) -> AsyncIterator[MergeRequest]: ...
+
+    async def search_projects(self, query: str, *, limit: int) -> list[RepositoryRef]: ...
+    async def get_project(self, provider_project_id: str) -> RepositoryRef | None: ...
+    async def discover_repositories_by_activity(
+        self,
+        member_provider_user_ids: list[str],
+        *,
+        since: datetime,
+        limit: int,
+    ) -> list[RepositoryActivity]: ...
 ```
 
 `MergeRequestScope`:
@@ -253,6 +269,29 @@ class MergeRequestScope:
 The team does not persist a repository selection in MVP. At report time, the runner resolves every
 repository accessible through the team's whole code connection and supplies those IDs to
 `MergeRequestScope`.
+
+`search_projects`, `get_project`, and `discover_repositories_by_activity` support team setup (M9):
+the UI can search repositories by name, resolve a single repository, or discover the repositories a
+set of team members have contributed to within a window. They return lightweight repository
+references rather than full `Repository` payloads.
+
+```python
+@dataclass(frozen=True)
+class RepositoryRef:
+    provider_project_id: str        # stable, provider-assigned identifier
+    name: str
+    path_with_namespace: str
+
+@dataclass(frozen=True)
+class RepositoryActivity(RepositoryRef):
+    contributing_member_count: int
+    merge_request_count: int
+    last_activity_at: datetime
+```
+
+`discover_repositories_by_activity` takes the provider-side user IDs returned by the
+`MemberProvider` (§6.7), so member discovery and repository discovery compose without leaking
+source-specific identifiers into the engine.
 
 ### 6.4 `ReviewProvider` (optional)
 
@@ -289,6 +328,39 @@ class CommentProvider(Protocol):
         entity_external_ids: list[str],
     ) -> AsyncIterator[Comment]: ...
 ```
+
+### 6.7 `MemberProvider` (optional)
+
+```python
+class MemberProvider(Protocol):
+    async def search_users(self, query: str, *, limit: int) -> list[MemberRef]: ...
+    async def get_user(self, provider_user_id: str) -> MemberRef | None: ...
+    async def list_group_members(self, group_id: str, *, limit: int) -> list[MemberRef]: ...
+```
+
+`MemberRef`:
+
+```python
+@dataclass(frozen=True)
+class MemberRef:
+    provider_user_id: str           # stable, provider-assigned identifier
+    username: str
+    display_name: str
+    avatar_url: str | None = None
+```
+
+Connectors that can resolve people set `provides_members=True`. `search_users` backs member search
+during team setup (M9), `get_user` resolves a single member by stable ID, and `list_group_members`
+enumerates the members of a provider group so a whole team can be added at once. The stable
+`provider_user_id` is the key later passed to `discover_repositories_by_activity` (§6.3).
+
+All member and repository discovery methods (§6.3 and §6.7) are **server-side** — the source system
+performs the search or enumeration — and are **paginated or limited** via the `limit` argument. They
+must respect the connector token's permissions: entities the token cannot access are omitted and
+handled gracefully, never treated as nonexistent or surfaced as errors. These methods must never
+require downloading the whole instance to answer a query. They form the shared discovery contract
+that both the GitLab connector and a future GitHub connector implement identically, keeping team
+setup provider-agnostic.
 
 ## 7. Authentication
 

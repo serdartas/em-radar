@@ -1,12 +1,22 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
+import { MemoryRouter } from "react-router-dom"
 
 import { SettingsPrivacyPage } from "@/pages/SettingsPrivacyPage"
+
+const mockNavigate = vi.fn()
+
+vi.mock("react-router-dom", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("react-router-dom")>()
+  return { ...actual, useNavigate: () => mockNavigate }
+})
 
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
+  mockNavigate.mockClear()
+  localStorage.clear()
 })
 
 function renderPage() {
@@ -14,33 +24,50 @@ function renderPage() {
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
   })
   return render(
-    <QueryClientProvider client={queryClient}>
-      <SettingsPrivacyPage />
-    </QueryClientProvider>,
+    <MemoryRouter>
+      <QueryClientProvider client={queryClient}>
+        <SettingsPrivacyPage />
+      </QueryClientProvider>
+    </MemoryRouter>,
   )
 }
 
 function mockFetch(
   connectionsResponse: unknown = [],
   deleteStatus = 204,
-  settingsResponse: { telemetry_enabled: boolean } = { telemetry_enabled: false },
+  settingsResponse: { telemetry_enabled: boolean; date_format?: string } = {
+    telemetry_enabled: false,
+    date_format: "dd/mm/yyyy",
+  },
 ) {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input)
     const method = (init?.method ?? "GET").toUpperCase()
 
     if (method === "GET" && url.includes("/api/settings")) {
-      return new Response(JSON.stringify(settingsResponse), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      })
+      return new Response(
+        JSON.stringify({ date_format: "dd/mm/yyyy", ...settingsResponse }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      )
     }
     if (method === "PATCH" && url.includes("/api/settings")) {
-      const body = JSON.parse(init?.body as string) as { telemetry_enabled: boolean }
-      return new Response(JSON.stringify({ telemetry_enabled: body.telemetry_enabled }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      })
+      const body = JSON.parse(init?.body as string) as {
+        telemetry_enabled?: boolean
+        date_format?: string
+      }
+      return new Response(
+        JSON.stringify({
+          telemetry_enabled: body.telemetry_enabled ?? settingsResponse.telemetry_enabled,
+          date_format: body.date_format ?? settingsResponse.date_format ?? "dd/mm/yyyy",
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      )
     }
     if (method === "GET" && url.includes("/connections")) {
       return new Response(JSON.stringify(connectionsResponse), {
@@ -134,10 +161,10 @@ describe("SettingsPrivacyPage", () => {
       const url = String(input)
       const method = (init?.method ?? "GET").toUpperCase()
       if (method === "GET" && url.includes("/api/settings")) {
-        return new Response(JSON.stringify({ telemetry_enabled: false }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        })
+        return new Response(
+          JSON.stringify({ telemetry_enabled: false, date_format: "dd/mm/yyyy" }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        )
       }
       if (method === "GET" && url.includes("/connections")) {
         return new Response(JSON.stringify([]), {
@@ -220,6 +247,27 @@ describe("SettingsPrivacyPage", () => {
     expect(screen.getByRole("switch", { name: "Enable anonymous telemetry" })).toBeDisabled()
   })
 
+  it("renders a Re-run setup button", () => {
+    mockFetch()
+    renderPage()
+
+    expect(screen.getByRole("button", { name: /re-run setup/i })).toBeInTheDocument()
+  })
+
+  it("clicking Re-run setup clears wizard progress and navigates to /setup", () => {
+    localStorage.setItem(
+      "em-radar.wizard-progress",
+      JSON.stringify({ step: "sources", currentTeamId: null, completed: true, furthestStep: "sources" }),
+    )
+    mockFetch()
+    renderPage()
+
+    fireEvent.click(screen.getByRole("button", { name: /re-run setup/i }))
+
+    expect(localStorage.getItem("em-radar.wizard-progress")).toBeNull()
+    expect(mockNavigate).toHaveBeenCalledWith("/setup")
+  })
+
   it("shows a Callout alert when the delete report history mutation fails", async () => {
     mockFetch([], 500)
     renderPage()
@@ -232,12 +280,40 @@ describe("SettingsPrivacyPage", () => {
     expect(alert.textContent).toMatch(/could not delete report history/i)
   })
 
+  it("renders a date format selector with the default dd/mm/yyyy selected", async () => {
+    mockFetch()
+    renderPage()
+
+    const select = await screen.findByLabelText("Date display format")
+    expect(select).toBeInTheDocument()
+    expect((select as HTMLSelectElement).value).toBe("dd/mm/yyyy")
+  })
+
+  it("PATCHes date_format when the selector changes", async () => {
+    const fetchSpy = mockFetch()
+    renderPage()
+
+    const select = await screen.findByLabelText("Date display format")
+    fireEvent.change(select, { target: { value: "mm/dd/yyyy" } })
+
+    await waitFor(() => {
+      const patchCalls = fetchSpy.mock.calls.filter(
+        ([, init]) => (init?.method ?? "GET").toUpperCase() === "PATCH",
+      )
+      expect(patchCalls.length).toBeGreaterThan(0)
+      const body = JSON.parse(patchCalls[0][1]?.body as string) as { date_format: string }
+      expect(body.date_format).toBe("mm/dd/yyyy")
+    })
+  })
+
   it("toggle is disabled and an error message is shown when settings query fails", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = String(input)
       const method = (init?.method ?? "GET").toUpperCase()
       if (method === "GET" && url.includes("/api/settings")) {
-        return new Response(JSON.stringify({ detail: "Internal Server Error" }), { status: 500 })
+        return new Response(JSON.stringify({ detail: "Internal Server Error" }), {
+          status: 500,
+        })
       }
       if (method === "GET" && url.includes("/connections")) {
         return new Response(JSON.stringify([]), {

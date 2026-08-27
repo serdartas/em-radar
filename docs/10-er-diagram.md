@@ -56,6 +56,7 @@ flowchart LR
     end
     TEAMPROFILE -. board scope 0..1 .-> SCOPEDEFINITION
     TEAMPROFILE -. uses .-> SOURCECONNECTION
+    TEAMPROFILE -. gitlab members/repos .-> SOURCECONNECTION
     WORKITEM -. evaluated by .-> REPORT
     MERGEREQUEST -. evaluated by .-> REPORT
 ```
@@ -326,8 +327,34 @@ erDiagram
         text raw_yaml "round-trip source"
         datetime imported_at
     }
+    TEAM_GITLAB_MEMBER {
+        uuid id PK
+        uuid team_profile_id FK
+        uuid connection_id FK
+        string gitlab_user_id "stable"
+        string username
+        string display_name
+        enum availability "verified|unverified|unavailable"
+        datetime created_at
+        datetime updated_at
+    }
+    TEAM_GITLAB_REPOSITORY {
+        uuid id PK
+        uuid team_profile_id FK
+        uuid connection_id FK
+        string gitlab_project_id "stable"
+        string name
+        string path_with_namespace
+        enum availability "verified|unverified|unavailable"
+        datetime created_at
+        datetime updated_at
+    }
 
     TEAMPROFILE }o--o{ SOURCECONNECTION : "uses (connection_ids)"
+    TEAMPROFILE ||--o{ TEAM_GITLAB_MEMBER : "gitlab members"
+    TEAMPROFILE ||--o{ TEAM_GITLAB_REPOSITORY : "owned repositories"
+    TEAM_GITLAB_MEMBER }o--|| SOURCECONNECTION : "anchored to (instance)"
+    TEAM_GITLAB_REPOSITORY }o--|| SOURCECONNECTION : "anchored to (instance)"
     SOURCECONNECTION ||--o{ SCOPEDEFINITION : "provides access for"
     TEAMPROFILE }o--o| SCOPEDEFINITION : "project/board scope (0..1)"
     TEAMPROFILE }o--o{ SIGNALCONFIGGROUP : "attaches (signal_config_group_ids)"
@@ -363,6 +390,13 @@ erDiagram
   board, or repository.
 - A `TeamProfile` may be **saved with no sources**; a **report run requires at least one** of its
   task-board scope or `code_connection_id`. Signals whose source is absent are skipped with a note.
+- `TEAM_GITLAB_MEMBER` and `TEAM_GITLAB_REPOSITORY` (milestone M9) are **team-scoped** selections
+  keyed by **stable GitLab ids** (`gitlab_user_id` / `gitlab_project_id`), not by mutable username or
+  path. Rows are **preserved and marked `availability = unavailable`** when the anchoring connector is
+  invalid or the id can no longer be resolved, rather than deleted, so a team's scope survives
+  transient connection failures. `TeamProfile.code_connection_id` remains the instance anchor: these
+  rows carry the same `connection_id` and are meaningless without it. Team GitLab members supersede
+  the vestigial `TeamProfile.member_user_keys` list, which this feature retires/repurposes.
 - `Dashboard` is **not** an entity — it is derived by reading the latest `Report` per
   `TeamProfile` ([09-functional-flows §6](./09-functional-flows.md#6-flow-d--initial-sync--dashboard)).
 

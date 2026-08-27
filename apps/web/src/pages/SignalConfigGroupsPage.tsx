@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input"
 import { InlineCreateRow } from "@/components/ui/inline-create-row"
 import { Label } from "@/components/ui/label"
 import { Select } from "@/components/ui/select"
-import { apiErrorMessage } from "@/lib/api"
+import { ApiError, apiErrorMessage } from "@/lib/api"
 import {
   createSignalConfigGroup,
   deleteSignalConfigGroup,
@@ -112,19 +112,31 @@ function GroupCard({
   const updateMutation = useMutation({
     mutationFn: (signal_ids: string[]) => updateSignalConfigGroup(group.id, { signal_ids }),
     onSuccess: invalidate,
-    onError: () => setUpdateError("Could not update signals in this group. Please try again."),
+    onError: (error) =>
+      setUpdateError(
+        apiErrorMessage(error, "Could not update signals in this group. Please try again."),
+      ),
   })
 
   const renameMutation = useMutation({
     mutationFn: (newName: string) => updateSignalConfigGroup(group.id, { name: newName }),
     onSuccess: invalidate,
-    onError: () => setRenameError("Could not rename the group. Please try again."),
+    onError: (error) =>
+      setRenameError(apiErrorMessage(error, "Could not rename the group. Please try again.")),
   })
 
   const deleteMutation = useMutation({
     mutationFn: () => deleteSignalConfigGroup(group.id),
     onSuccess: invalidate,
-    onError: () => setDeleteError("Could not delete the group. Please try again."),
+    onError: (error) => {
+      const base = apiErrorMessage(error, "Could not delete the group. Please try again.")
+      const isRefConflict = error instanceof ApiError && error.status === 409
+      setDeleteError(
+        isRefConflict
+          ? `${base}. Detach this group from all teams before deleting it.`
+          : base,
+      )
+    },
   })
 
   const definitionsById = new Map(definitions.map((definition) => [definition.id, definition]))

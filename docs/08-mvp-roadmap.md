@@ -33,6 +33,7 @@ Reference: [requirements §10 MVP Acceptance Checklist](./02-requirements.md#10-
 | M6 | Report runner + Markdown export | Sprint and date-range reports, exportable. | Generated report copies cleanly into a doc. |
 | M7 | Privacy and polish | REQ-NF security/privacy hardening, docs, onboarding. | Fresh-machine setup in under 15 minutes following the README. |
 | v0.1.0 | Release | All [§10 acceptance checklist](./02-requirements.md#10-mvp-acceptance-checklist) items pass. | Public-ready repo + release. |
+| M9 | GitLab team members & repository scope | Teams own their GitLab members and repositories; GitLab reports scope to team-owned repos and team-authored MRs. | A team's GitLab report includes only its owned repositories, with server-side searchable member/repo selection and activity-ranked suggestions. |
 
 ## 4. Milestone Details
 
@@ -358,3 +359,48 @@ lands, so the numbered spec documents continue to describe current, committed be
   accessibility.
 - **M8.6 — UAT: Documentation & tests.** Spec/doc sync for existing behaviour and test-coverage
   fills.
+- **M8.7 — UAT round 2: setup, signals & reports.** Setup/connection clarity, field-mapping gating,
+  a date-format preference, and report-runner fixes for date-range/sprint selection and unused-source
+  handling.
+
+## M9 — GitLab team members & repository scope
+
+This program builds on the M8 hardening: each team defines, **at team level**, which GitLab members
+belong to it and which GitLab repositories it owns. Membership and repositories are stored against
+stable GitLab ids in dedicated team-scoped tables, with `code_connection_id` retained as the instance
+anchor. GitLab reports then scope to team-owned repositories (MVP) and, as a follow-up, to
+team-authored merge requests. GitLab stays a discovery source: all search/selection is server-side,
+paginated, and permission-aware, and confirmed selections are explicit and stable. Repository
+suggestions are ranked from members' recent activity (90 days, widening to 180 days). GitLab team
+config is hidden when no connector is present and optional when one is; connecting GitLab raises one
+post-connection notification plus a per-team status. The abstraction is provider-agnostic so a future
+GitHub connector reuses it. M9 delivers the MVP (§25 of the feature brief) plus all follow-ups (§26).
+
+The requirements, feature brief, and ticket breakdown live in
+[`docs/backlog/M9-gitlab-team-scope/`](./backlog/M9-gitlab-team-scope/). Tickets are implemented in
+dependency order.
+
+**Foundation — connector discovery & data model**
+- **M9-01** — GitLab connector: user search & lookup (MemberProvider).
+- **M9-02** — GitLab connector: project search & lookup.
+- **M9-03** — GitLab connector: repository discovery by member activity.
+- **M9-04** — Data model: team GitLab members & repositories tables + migration.
+- **M9-05** — Teams API: members/repos CRUD + connector validation + config status.
+
+**Report scope**
+- **M9-06** — Report runner: scope MRs to team-owned repositories + scope label.
+
+**Frontend (MVP)**
+- **M9-07** — Team creation: GitLab gating + optional GitLab steps.
+- **M9-08** — Frontend: GitLab member search & selection.
+- **M9-09** — Frontend: repository suggestions, confirmation, additional-repo search.
+- **M9-10** — Post-connection notification + Teams-page status + per-team warning.
+
+**Follow-up enhancements (§26)**
+- **M9-11** — Team-authored MR scope: per-signal scope selection.
+- **M9-12** — Adaptive 90/180-day repository discovery window.
+- **M9-13** — Bulk member paste & resolve.
+- **M9-14** — GitLab group member import.
+- **M9-15** — Member suggestions from Jira activity + confidence scoring.
+- **M9-16** — Config health: stale users & archived/moved repos + warnings.
+- **M9-17** — Provider-agnostic code-scope abstraction (GitHub-ready).

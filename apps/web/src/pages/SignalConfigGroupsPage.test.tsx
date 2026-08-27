@@ -398,7 +398,7 @@ describe("SignalConfigGroupsPage — AUDIT-9: Callout errors", () => {
 
     const alert = await screen.findByRole("alert")
     expect(alert).toBeInTheDocument()
-    expect(alert.textContent).toMatch(/could not update signals/i)
+    expect(alert.textContent).toMatch(/server error/i)
   })
 
   it("shows a Callout alert when the delete-group mutation fails", async () => {
@@ -415,7 +415,9 @@ describe("SignalConfigGroupsPage — AUDIT-9: Callout errors", () => {
 
     const alert = await screen.findByRole("alert")
     expect(alert).toBeInTheDocument()
-    expect(alert.textContent).toMatch(/could not delete/i)
+    expect(alert.textContent).toMatch(/server error/i)
+    // Detach guidance must NOT appear for non-409 errors
+    expect(alert.textContent).not.toMatch(/detach/i)
   })
 
   it("shows a Callout alert when the rename mutation fails", async () => {
@@ -433,6 +435,50 @@ describe("SignalConfigGroupsPage — AUDIT-9: Callout errors", () => {
 
     const alert = await screen.findByRole("alert")
     expect(alert).toBeInTheDocument()
-    expect(alert.textContent).toMatch(/could not rename/i)
+    expect(alert.textContent).toMatch(/server error/i)
+  })
+
+  it("shows the backend detail and detach guidance when delete returns 409", async () => {
+    const groupWith409 = {
+      id: "group-1",
+      name: "Backend signals",
+      description: null,
+      signal_ids: [],
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    }
+
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = typeof input === "string" ? input : input.toString()
+      const method = init?.method ?? "GET"
+      if (url.endsWith("/api/signal-definitions")) {
+        return Promise.resolve(jsonResponse(definitions))
+      }
+      if (url.endsWith("/api/signal-config-groups") && method === "GET") {
+        return Promise.resolve(jsonResponse([groupWith409]))
+      }
+      if (url.includes("/api/signal-config-groups/") && method === "DELETE") {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({ detail: "signal config group is referenced by a team" }),
+            { status: 409, headers: { "Content-Type": "application/json" } },
+          ),
+        )
+      }
+      throw new Error(`unexpected fetch: ${method} ${url}`)
+    })
+
+    renderPage()
+
+    const deleteBtn = await screen.findByRole("button", { name: "Delete group" })
+    fireEvent.click(deleteBtn)
+
+    const alert = await screen.findByRole("alert")
+    // Backend detail is surfaced verbatim
+    expect(alert.textContent).toMatch(/signal config group is referenced by a team/i)
+    // Detach guidance is appended with a separator (no run-on sentence)
+    expect(alert.textContent).toMatch(
+      /signal config group is referenced by a team\. Detach this group from all teams/i,
+    )
   })
 })

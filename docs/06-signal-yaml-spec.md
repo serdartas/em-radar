@@ -41,7 +41,10 @@ connectors provide access, teams own the board scope, and a pack is just the rul
   the **code source**. Each entity type is supplied by one of the two team sources
   ([data model §5.12](./05-data-model.md#512-teamprofile)). A signal selects neither a connection nor
   a project, board, or repository; the team supplies compatible source data at report time.
-  Cross-domain signals are deferred until after MVP.
+  A `merge_request` signal may additionally name *which* team-resolved scope it evaluates against —
+  the team's owned repositories or work authored by the team's members (see `scope` in §9.1) — but it
+  still names no concrete repositories, users, connectors, or teams; those remain resolved from the
+  team. Cross-domain signals are deferred until after MVP.
 - **Condition.** A field/operator/value predicate validated against capability schemas for the
   signal's declared entity type. Fields are **canonical and connector-independent**: a condition like
   `status_category is In Progress` or `age_in_current_status > 7 days` means the same thing whatever
@@ -164,6 +167,15 @@ A signal declares exactly one `entity_type` in MVP (`issue` for work tracking, `
 for code repository, or `sprint` for sprint-scope signals). When a group is attached to a team,
 only signals whose entity type the team's attached sources can supply are evaluated.
 
+**Naming a team-resolved scope is not the same as carrying a scope.** A `merge_request` signal may
+declare a `scope` (§9.1) that selects *which* of the team's two GitLab scopes it evaluates against —
+team-owned repositories or work authored by team members. This is a symbolic choice between two
+team-resolved scopes, not a concrete selection: the actual repositories and members live on the
+**team** (`team.gitlab_projects`, `team.gitlab_members`) and are resolved at report time, exactly as
+above. A pack therefore still carries no concrete repositories, users, connectors, or teams, and
+remains fully portable — the `scope` value travels with the signal because it is part of the rule's
+meaning, not company-specific selection.
+
 ## 7. Signal Config Group Mapping
 
 Import and export map a pack to one or more Signal Config Groups:
@@ -227,6 +239,7 @@ to which a group is attached.
 | `name` | string | yes | Human-readable name, unique in the local workspace. |
 | `description` | string | no | Shown in the builder and reports. |
 | `entity_type` | string | yes | Exactly one signal entity type in MVP: `issue` (work tracking), `merge_request` (code repository), or `sprint` (sprint-scope signals). |
+| `scope` | enum | no | **`merge_request` signals only.** Selects which team-resolved GitLab scope the signal evaluates against: `team_repositories` (merge requests in the team's owned repositories — `MR.project.gitlab_project_id IN team.gitlab_projects`) or `authored_by_members` (merge requests authored by the team's members — `MR.author.gitlab_user_id IN team.gitlab_members`). Defaults to `team_repositories`. The signal names only *which* team-resolved scope it uses; the concrete repositories and members remain configured on the team and resolved at report time (§6). Ignored for `issue` and `sprint` entity types. |
 | `rules` | list | yes | Flat list of rule conditions. See §10. |
 | `report_settings` | object | yes | Severity, category, and optional message template. |
 | `origin` | enum | yes | `system_template`, `user_created`, or `imported`. |
@@ -358,18 +371,21 @@ way.
 
 ### 12.9 `mergerequest-waiting-too-long`
 - **Default severity:** `warning`
+- **Default scope:** `team_repositories` (§9.1)
 - **Template defaults:**
   - `days_threshold` (integer, default `3`)
 - **Evidence:** `{ age_days, threshold, last_review_at }`
 
 ### 12.10 `mergerequest-without-linked-workitem`
 - **Default severity:** `warning`
+- **Default scope:** `team_repositories` (§9.1)
 - **Template defaults:**
   - `workitem_key_pattern` (string, default `"[A-Z]+-\\d+"`)
 - **Evidence:** `{ checked_fields: [title, description, source_branch] }`
 
 ### 12.11 `large-mergerequest-risk`
 - **Default severity:** `warning`
+- **Default scope:** `team_repositories` (§9.1)
 - **Template defaults:**
   - `max_files` (integer, default `20`)
   - `max_changes` (integer, default `500`)
@@ -377,12 +393,14 @@ way.
 
 ### 12.12 `failing-pipeline-too-long`
 - **Default severity:** `warning`
+- **Default scope:** `team_repositories` (§9.1)
 - **Template defaults:**
   - `days_threshold` (integer, default `1`)
 - **Evidence:** `{ pipeline_status, hours_failing }`
 
 ### 12.13 `merged-without-enough-approval`
 - **Default severity:** `critical`
+- **Default scope:** `team_repositories` (§9.1)
 - **Template defaults:**
   - `min_approvals` (integer, default `1`)
 - **Evidence:** `{ approval_count, threshold }`

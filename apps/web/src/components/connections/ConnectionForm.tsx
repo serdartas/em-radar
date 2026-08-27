@@ -2,7 +2,6 @@
 
 import { type ReactNode, useEffect, useRef, useState } from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
-import { Link } from "react-router-dom"
 
 import { SchemaForm } from "@/components/SchemaForm"
 import { TestResult } from "@/components/connections/TestResult"
@@ -22,6 +21,7 @@ import {
   createConnection,
   type SourceConnection,
   testConnectionDraft,
+  testExistingConnection,
   updateConnection,
 } from "@/lib/connections"
 import { isSecret, type JsonSchema, resolveProperty, schemaType } from "@/lib/jsonSchema"
@@ -59,6 +59,18 @@ function writableValues(
     next[key] = value
   }
   return next
+}
+
+/**
+ * Prepends https:// to a base_url entry when no scheme is present.
+ * Allows users to paste just the domain (e.g. acme.atlassian.net) without a
+ * validation error; the full URL is only needed when the value is sent to the API.
+ */
+function normalizeBaseUrl(config: Record<string, unknown>): Record<string, unknown> {
+  if (typeof config.base_url !== "string") return config
+  const url = config.base_url.trim()
+  if (!url || /^https?:\/\//i.test(url)) return { ...config, base_url: url }
+  return { ...config, base_url: `https://${url}` }
 }
 
 /**
@@ -124,7 +136,14 @@ export function ConnectionForm({
     return addConnector ? defaultValues(addConnector.config_schema) : {}
   })
 
-  const testMutation = useMutation({ mutationFn: testConnectionDraft })
+  // In edit mode the form blanks secrets, so send the current form config to the
+  // saved-connection endpoint, which merges the pending values with the stored credential
+  // (blank secrets fall back to the server-side token) rather than testing only the
+  // persisted config.
+  const testMutation = useMutation({
+    mutationFn: (draft: ConnectionDraft) =>
+      editing?.id ? testExistingConnection(editing.id, draft.config) : testConnectionDraft(draft),
+  })
   const saveMutation = useMutation({
     mutationFn: (draft: ConnectionDraft) =>
       editing ? updateConnection(editing.id, draft) : createConnection(draft),
@@ -183,6 +202,12 @@ export function ConnectionForm({
   }
 
   function changeField(key: string, value: unknown) {
+    // Editing any connection field invalidates a prior test result so a stale success can no
+    // longer unlock field mapping (or hide a now-untested config). Field-mapping edits happen
+    // after the gate opens and must not re-lock it, so they are exempt.
+    if (key !== "field_mapping" && values[key] !== value) {
+      testMutation.reset()
+    }
     setValues((current) => ({ ...current, [key]: value }))
   }
 
@@ -190,10 +215,11 @@ export function ConnectionForm({
     if (!selectedConnector || connectionName.trim() === "") {
       return
     }
+    const rawConfig = editing ? writableValues(selectedConnector.config_schema, values) : values
     saveMutation.mutate({
       name: connectionName.trim(),
       connector_name: connectorName,
-      config: editing ? writableValues(selectedConnector.config_schema, values) : values,
+      config: normalizeBaseUrl(rawConfig),
     })
   }
 
@@ -266,10 +292,16 @@ export function ConnectionForm({
             const { acHeadingDefault, spDefault } = jiraFieldMappingDefaults(
               selectedConnector.config_schema,
             )
+            // Field mapping requires a saved connection ID and a passing test so that
+            // field discovery (listJiraFields) has a real connection to query.
+            // testMutation.isSuccess is true even for ok:false responses (HTTP 200), so
+            // we check the payload directly.
+            const fieldMappingEnabled = !!editing?.id && testMutation.data?.ok === true
             return (
               <JiraFieldMappingSection
                 acHeadingDefault={acHeadingDefault}
                 connectionId={editing?.id}
+                disabled={!fieldMappingEnabled}
                 fieldMappingValues={toFieldMappingValues(values.field_mapping)}
                 onFieldMappingChange={(next) => changeField("field_mapping", next)}
                 spDefault={spDefault}
@@ -282,13 +314,19 @@ export function ConnectionForm({
           <div className="flex flex-wrap gap-3">
             <Button
               disabled={!selectedConnector || testMutation.isPending}
-              onClick={() =>
+              onClick={() => {
+                // Mirror submit: in edit mode drop blank secrets so the server merges the
+                // stored token; new/edited values are sent and tested as they will be saved.
+                const rawConfig =
+                  editing && selectedConnector
+                    ? writableValues(selectedConnector.config_schema, values)
+                    : values
                 testMutation.mutate({
                   name: connectionName,
                   connector_name: connectorName,
-                  config: values,
+                  config: normalizeBaseUrl(rawConfig),
                 })
-              }
+              }}
               type="button"
               variant="outline"
             >
@@ -382,9 +420,9 @@ const JIRA_FIELD_HELP: Record<string, ReactNode> = {
       Use a read-only API token for an account that can browse the projects and boards you report
       on. Jira Cloud uses your email plus an API token; Server/Data Center uses a Personal Access
       Token.{" "}
-      <Link className="font-medium underline" to="/help/jira">
+      <a className="font-medium underline" href="/help/jira" rel="noopener noreferrer" target="_blank">
         How to generate a Jira token
-      </Link>
+      </a>
       .
     </p>
   ),
@@ -419,9 +457,9 @@ const GITLAB_FIELD_HELP: Record<string, ReactNode> = {
       <code className="rounded bg-blue-100 px-1">read_api</code> scope - that is the only scope
       EM Radar needs. Create one under Preferences &rarr; Access Tokens for an account that can see
       the projects you report on.{" "}
-      <Link className="font-medium underline" to="/help/gitlab">
+      <a className="font-medium underline" href="/help/gitlab" rel="noopener noreferrer" target="_blank">
         How to generate a GitLab token
-      </Link>
+      </a>
       .
     </p>
   ),

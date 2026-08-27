@@ -11,12 +11,12 @@ import { Select } from "@/components/ui/select"
 import { apiErrorMessage } from "@/lib/api"
 import {
   enqueueTeamReport,
-  formatTimestamp,
   getJob,
   getTeamSprints,
   listJobs,
   parseApiTimestamp,
   type ReportJob,
+  useFormatTimestamp,
 } from "@/lib/reports"
 import { listTeams, teamHasNoSources } from "@/lib/teams"
 
@@ -25,7 +25,8 @@ type WindowMode = "date_range" | "sprint"
 interface TeamRunInput {
   teamIds: string[]
   window?: { start: string; end: string }
-  sprintExternalId?: string
+  startSprintExternalId?: string
+  endSprintExternalId?: string
 }
 
 const JOB_POLL_MS = 3000
@@ -52,12 +53,15 @@ function isTerminal(status: ReportJob["status"]): boolean {
 export function ReportRunnerPage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
+  const formatTs = useFormatTimestamp()
   const teamsQuery = useQuery({ queryKey: ["teams"], queryFn: listTeams })
   const [selectedTeamIds, setSelectedTeamIds] = useState<string[]>([])
   const [windowMode, setWindowMode] = useState<WindowMode>("sprint")
+  const [userChoseWindowMode, setUserChoseWindowMode] = useState(false)
   const [startDate, setStartDate] = useState("")
   const [endDate, setEndDate] = useState("")
-  const [selectedSprintExternalId, setSelectedSprintExternalId] = useState("")
+  const [selectedStartSprintExternalId, setSelectedStartSprintExternalId] = useState("")
+  const [selectedEndSprintExternalId, setSelectedEndSprintExternalId] = useState("")
   const [dateError, setDateError] = useState<string | null>(null)
   const [enqueueError, setEnqueueError] = useState<string | null>(null)
   // IDs of jobs we enqueued in this session; cleared once they reach terminal state.
@@ -65,10 +69,35 @@ export function ReportRunnerPage() {
 
   const teams = teamsQuery.data ?? []
 
+  // Sprint mode is only valid when every selected team uses scrum. Kanban teams (and multi-team
+  // selections that include at least one kanban team) fall back to date-range mode.
+  const sprintAllowed = useMemo(() => {
+    const loadedTeams = teamsQuery.data ?? []
+    return (
+      selectedTeamIds.length > 0 &&
+      selectedTeamIds.every((id) => loadedTeams.find((t) => t.id === id)?.working_mode === "scrum")
+    )
+  }, [selectedTeamIds, teamsQuery.data])
+
+  // Keep window mode consistent with sprint eligibility. When sprint becomes unavailable,
+  // force date-range and clear the explicit-choice flag so the next eligible selection
+  // re-defaults to sprint. When sprint becomes newly eligible and the user has not
+  // explicitly chosen a mode in this eligibility window, default to sprint.
+  useEffect(() => {
+    if (!sprintAllowed) {
+      setWindowMode("date_range")
+      setUserChoseWindowMode(false)
+    } else if (!userChoseWindowMode) {
+      setWindowMode("sprint")
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sprintAllowed])
+
   // Clear any previously selected sprint whenever the team selection changes so stale sprint IDs
   // are never carried forward to a different team or a multi-team batch run.
   useEffect(() => {
-    setSelectedSprintExternalId("")
+    setSelectedStartSprintExternalId("")
+    setSelectedEndSprintExternalId("")
   }, [selectedTeamIds])
 
   // Fetch sprints for the picker when exactly one team is selected in sprint mode.
@@ -138,9 +167,9 @@ export function ReportRunnerPage() {
   }, [pendingJobIds, pendingJobQueries, enqueueError, navigate, queryClient])
 
   const teamRun = useMutation({
-    mutationFn: async ({ teamIds, window, sprintExternalId }: TeamRunInput): Promise<ReportJob[]> => {
+    mutationFn: async ({ teamIds, window, startSprintExternalId, endSprintExternalId }: TeamRunInput): Promise<ReportJob[]> => {
       const results = await Promise.allSettled(
-        teamIds.map((id) => enqueueTeamReport(id, window, sprintExternalId)),
+        teamIds.map((id) => enqueueTeamReport(id, window, startSprintExternalId, endSprintExternalId)),
       )
       const accepted: ReportJob[] = []
       const errors: string[] = []
@@ -170,6 +199,11 @@ export function ReportRunnerPage() {
 
   const running = teamRun.isPending
 
+  function handleWindowModeChange(mode: WindowMode) {
+    setWindowMode(mode)
+    setUserChoseWindowMode(true)
+  }
+
   function toggleTeam(teamId: string) {
     setSelectedTeamIds((current) =>
       current.includes(teamId)
@@ -182,12 +216,18 @@ export function ReportRunnerPage() {
     setDateError(null)
     setEnqueueError(null)
     if (windowMode === "sprint") {
+      // Only apply explicit sprint selection for single-team runs; multi-team runs use each
+      // team's default window because the selected sprint may not exist on every board.
+      const startExt =
+        selectedTeamIds.length === 1 ? selectedStartSprintExternalId || undefined : undefined
+      // When a start sprint is chosen, end defaults to the same sprint (single-sprint range).
+      const endExt = startExt
+        ? selectedEndSprintExternalId || startExt
+        : undefined
       teamRun.mutate({
         teamIds: selectedTeamIds,
-        // Only apply explicit sprint selection for single-team runs; multi-team runs use each
-        // team's default window because the selected sprint may not exist on every board.
-        sprintExternalId:
-          selectedTeamIds.length === 1 ? selectedSprintExternalId || undefined : undefined,
+        startSprintExternalId: startExt,
+        endSprintExternalId: endExt,
       })
       return
     }
@@ -261,30 +301,54 @@ export function ReportRunnerPage() {
               <Select
                 className="sm:max-w-xs"
                 id="window-mode"
-                onChange={(event) => setWindowMode(event.target.value as WindowMode)}
+                onChange={(event) => handleWindowModeChange(event.target.value as WindowMode)}
                 value={windowMode}
               >
-                <option value="sprint">Active sprint</option>
+                {sprintAllowed && <option value="sprint">Active sprint</option>}
                 <option value="date_range">Date range</option>
               </Select>
             </div>
             {windowMode === "sprint" ? (
               selectedTeamIds.length === 1 ? (
-                <div className="space-y-1">
-                  <Label htmlFor="sprint-pick">Sprint</Label>
-                  <Select
-                    className="sm:max-w-xs"
-                    id="sprint-pick"
-                    onChange={(event) => setSelectedSprintExternalId(event.target.value)}
-                    value={selectedSprintExternalId}
-                  >
-                    <option value="">Active sprint (default)</option>
-                    {(sprintsQuery.data ?? []).map((sprint) => (
-                      <option key={sprint.external_id} value={sprint.external_id}>
-                        {sprint.name}
-                      </option>
-                    ))}
-                  </Select>
+                <div className="space-y-3">
+                  <div className="space-y-1">
+                    <Label htmlFor="sprint-start-pick">Start sprint</Label>
+                    <Select
+                      className="sm:max-w-xs"
+                      id="sprint-start-pick"
+                      onChange={(event) => {
+                        const val = event.target.value
+                        setSelectedStartSprintExternalId(val)
+                        // Reset end to match start so default is a single-sprint selection.
+                        setSelectedEndSprintExternalId(val)
+                      }}
+                      value={selectedStartSprintExternalId}
+                    >
+                      <option value="">Active sprint (default)</option>
+                      {(sprintsQuery.data ?? []).map((sprint) => (
+                        <option key={sprint.external_id} value={sprint.external_id}>
+                          {sprint.name}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
+                  {selectedStartSprintExternalId && (
+                    <div className="space-y-1">
+                      <Label htmlFor="sprint-end-pick">End sprint</Label>
+                      <Select
+                        className="sm:max-w-xs"
+                        id="sprint-end-pick"
+                        onChange={(event) => setSelectedEndSprintExternalId(event.target.value)}
+                        value={selectedEndSprintExternalId}
+                      >
+                        {(sprintsQuery.data ?? []).map((sprint) => (
+                          <option key={sprint.external_id} value={sprint.external_id}>
+                            {sprint.name}
+                          </option>
+                        ))}
+                      </Select>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <p className="text-xs text-slate-500">
@@ -354,12 +418,12 @@ export function ReportRunnerPage() {
                     </span>
                     {job.started_at && (
                       <span className="text-slate-500">
-                        Started: {formatTimestamp(job.started_at)}
+                        Started: {formatTs(job.started_at)}
                       </span>
                     )}
                     {job.finished_at && (
                       <span className="text-slate-500">
-                        Finished: {formatTimestamp(job.finished_at)}
+                        Finished: {formatTs(job.finished_at)}
                       </span>
                     )}
                     {jobRuntime(job) && (

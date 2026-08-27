@@ -55,6 +55,10 @@ erDiagram
     TEAMPROFILE ||--o{ USER : "includes"
     TEAMPROFILE }o--o| BOARD : "task-board scope (0..1)"
     TEAMPROFILE }o--o{ SIGNALCONFIGGROUP : "attaches"
+    TEAMPROFILE ||--o{ TEAMGITLABMEMBER : "has member"
+    TEAMPROFILE ||--o{ TEAMGITLABREPOSITORY : "owns repo"
+    SOURCECONNECTION ||--o{ TEAMGITLABMEMBER : "anchors"
+    SOURCECONNECTION ||--o{ TEAMGITLABREPOSITORY : "anchors"
     SIGNALCONFIGGROUP }o--o{ SIGNALDEFINITION : "contains"
 
     EVALUATIONWINDOW ||--|| REPORT : "produces"
@@ -288,6 +292,11 @@ The `repository`, `project`, `saved_filter`, and `custom` scope types are reserv
 scoping in a later phase. Signals never reference scopes — the team supplies source data at report
 time.
 
+Milestone M9 introduces a team-scoped realization of finer-grained repository scoping via
+`TeamGitLabRepository` (§5.12E): an explicit, team-owned set of repositories anchored to the team's
+code connection. This is narrower than the general `repository` `ScopeDefinition` type, which remains
+deferred; `TeamProfile.code_connection_id` stays the retained whole-connection instance anchor.
+
 | Field | Type | Nullable | Description |
 |---|---|---|---|
 | `id` | UUID | no | |
@@ -359,6 +368,55 @@ signals, and attaches groups to teams (`TeamProfile.signal_config_group_ids`). E
 propagates to every team attached to it — a group is shared state, not a per-team copy. A group is
 also the unit of YAML import/export (a "signal pack"); see
 [06-signal-yaml-spec](./06-signal-yaml-spec.md).
+
+### 5.12D TeamGitLabMember
+
+A team-scoped GitLab member: an explicitly declared person on a team, anchored to the GitLab
+instance the team draws code from. Introduced in milestone M9.
+
+| Field | Type | Nullable | Description |
+|---|---|---|---|
+| `id` | UUID | no | |
+| `team_profile_id` | UUID | no | FK to `TeamProfile`. |
+| `connection_id` | UUID | no | FK to `SourceConnection` — the GitLab instance this member is anchored to. |
+| `gitlab_user_id` | string | no | Stable GitLab user id. The **primary** connector reference for this member. |
+| `username` | string | no | GitLab handle. May change over time. |
+| `display_name` | string | no | Human-readable name. |
+| `availability` | enum | no | `verified`, `unverified`, or `unavailable` (see §22 connector-invalid preservation). |
+| `created_at` | timestamp | no | |
+| `updated_at` | timestamp | no | |
+
+Invariants:
+- `gitlab_user_id` is the primary reference; `username` may change and must never be used as the key.
+- Rows are **preserved, not deleted** if the anchoring `connection_id` is missing or invalid; they are
+  marked `unavailable`/`unverified` instead.
+- Membership is **explicit**: a member exists only because it was declared for the team, never
+  auto-derived from repository activity.
+
+### 5.12E TeamGitLabRepository
+
+A team-owned GitLab repository: an explicitly declared repository the team owns, anchored to the
+GitLab instance the team draws code from. Introduced in milestone M9.
+
+| Field | Type | Nullable | Description |
+|---|---|---|---|
+| `id` | UUID | no | |
+| `team_profile_id` | UUID | no | FK to `TeamProfile`. |
+| `connection_id` | UUID | no | FK to `SourceConnection` — the GitLab instance this repository is anchored to. |
+| `gitlab_project_id` | string | no | Stable GitLab project id. The **primary** connector reference for this repository. |
+| `name` | string | no | Repository name. |
+| `path_with_namespace` | string | no | Full group/namespace path (e.g. `engineering/em-radar`). May change over time. |
+| `availability` | enum | no | `verified`, `unverified`, or `unavailable` (see §22 connector-invalid preservation). |
+| `created_at` | timestamp | no | |
+| `updated_at` | timestamp | no | |
+
+Invariants:
+- `gitlab_project_id` is the primary reference; `path_with_namespace` may change and must never be
+  used as the key.
+- Rows are **preserved, not deleted** if the anchoring `connection_id` is missing or invalid; they are
+  marked `unavailable`/`unverified` instead.
+- Ownership is **explicit**: a repository exists only because it was declared for the team, never
+  auto-derived from contribution history.
 
 ### 5.12 TeamProfile
 
@@ -474,7 +532,7 @@ The output of evaluating signals against an EvaluationWindow.
 
 - **Within a source:** `(source, external_id)` is the natural key. Internal UUIDs are assigned on first fetch and never reused.
 - **Across sources (MR ↔ WorkItem):** matched by extracting work-item keys from MR title, description, and source branch using the configured key pattern (default `[A-Z]+-\d+`). Multiple keys may match; all are stored in `linked_workitem_keys`. Resolved IDs are stored in `linked_workitem_ids` when a matching WorkItem exists.
-- **Across sources (User ↔ User):** intentionally not auto-resolved in MVP. A team profile may carry a list of `source:external_id` strings to declare "these are the same person", but the signal engine does not infer this.
+- **Across sources (User ↔ User):** intentionally not auto-resolved in MVP. A team profile may carry a list of `source:external_id` strings to declare "these are the same person", but the signal engine does not infer this. Milestone M9 adds a team-scoped realization of this via `TeamGitLabMember` (§5.12D): explicit, team-declared GitLab members anchored (by stable `gitlab_user_id`) to the team's code connection. This is a team-scoped form of identity declaration, not resolution — the broader cross-source Person ↔ identity resolution remains deferred, and the signal engine still infers nothing.
 
 ## 8. Field Mapping (Source → Canonical)
 

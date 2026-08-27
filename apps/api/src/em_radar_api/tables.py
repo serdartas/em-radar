@@ -180,3 +180,4 @@ class AppSettingsTable(SQLModel, table=True):
 
     id: int = Field(default=1, primary_key=True)
     telemetry_enabled: bool = Field(default=False)
+    date_format: str = Field(default="dd/mm/yyyy")

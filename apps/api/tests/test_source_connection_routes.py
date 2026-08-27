@@ -272,6 +272,18 @@ class JiraTransientErrorConnector(JiraTestConnector):
         raise ConnectorTransientError("Failed to reach Jira")
 
 
+class JiraEchoConfigConnector(JiraTestConnector):
+    """Reports the config it was built with so tests can assert what actually reached it."""
+
+    async def test_connection(self) -> ConnectionTestResult:
+        return ConnectionTestResult(
+            ok=True,
+            detail=f"base_url={self.config.get('base_url')} token={self.config.get('token')}",
+            user_display_name="Ada Lovelace",
+            permissions=["read"],
+        )
+
+
 def _create_jira_connection(api_client: TestClient, name: str = "Jira") -> str:
     return api_client.post(
         "/api/connections",
@@ -427,6 +439,48 @@ def test_source_connection_routes_crud_test_and_preserve_omitted_config(
 
     assert api_client.delete(f"/api/connections/{created['id']}").status_code == 204
     assert api_client.get("/api/connections").json() == []
+
+
+def test_existing_connection_test_applies_pending_overrides(
+    api_client: TestClient, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "em_radar_api.connector_registry._connector_types",
+        lambda: [JiraEchoConfigConnector],
+    )
+    connection_id = _create_jira_connection(api_client)
+
+    # Overriding base_url while omitting the token: the edited URL reaches the connector and
+    # the stored token is merged in (fallback), so the test still succeeds.
+    response = api_client.post(
+        f"/api/connections/{connection_id}/test",
+        json={"config": {"base_url": "https://edited.invalid"}},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["detail"] == "base_url=https://edited.invalid token=demo-token-123456789"
+
+
+def test_existing_connection_test_uses_replacement_token_when_supplied(
+    api_client: TestClient, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "em_radar_api.connector_registry._connector_types",
+        lambda: [JiraTestConnector],
+    )
+    connection_id = _create_jira_connection(api_client)
+
+    # A supplied replacement token is what gets validated/tested — a bad one fails rather than
+    # silently passing on the stored credential.
+    response = api_client.post(
+        f"/api/connections/{connection_id}/test",
+        json={"config": {"base_url": "https://demo.invalid", "token": "short"}},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is False
+    assert body["code"] == "config"
 
 
 def test_source_connection_draft_test_returns_token_free_failure(api_client: TestClient) -> None:

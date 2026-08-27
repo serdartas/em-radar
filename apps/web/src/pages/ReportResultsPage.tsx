@@ -11,8 +11,8 @@ import { SkippedSignals } from "@/components/reports/SkippedSignals"
 import {
   extractPartialDataNotes,
   extractSnapshotSignals,
-  formatTimestamp,
   getReport,
+  useFormatTimestamp,
 } from "@/lib/reports"
 import { listSignalDefinitions } from "@/lib/signalDefinitions"
 
@@ -20,6 +20,7 @@ const REPORT_POLL_MS = 3000
 
 export function ReportResultsPage() {
   const { reportId } = useParams<{ reportId: string }>()
+  const formatTs = useFormatTimestamp()
   const query = useQuery({
     queryKey: ["reports", reportId],
     queryFn: () => getReport(reportId as string),
@@ -75,8 +76,8 @@ export function ReportResultsPage() {
             </h1>
             {report.team_name && <p className="text-sm text-slate-600">{report.team_name}</p>}
             <p className="text-xs text-slate-500">
-              Run {formatTimestamp(report.started_at)}
-              {report.finished_at && <> · finished {formatTimestamp(report.finished_at)}</>}
+              Run {formatTs(report.started_at)}
+              {report.finished_at && <> · finished {formatTs(report.finished_at)}</>}
             </p>
             <p className="text-xs text-slate-400">
               Results reflect signal configuration at run time. Edits to signals affect only future

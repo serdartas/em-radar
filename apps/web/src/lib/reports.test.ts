@@ -2,27 +2,62 @@ import { describe, expect, it } from "vitest"
 
 import { extractPartialDataNotes, extractSnapshotSignals, formatTimestamp } from "@/lib/reports"
 
+const _DATE_ONLY_OPTIONS: Intl.DateTimeFormatOptions = {
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric",
+}
+
+function expected(ts: string, locale: string): string {
+  const parsed = new Date(ts)
+  const datePart = new Intl.DateTimeFormat(locale, _DATE_ONLY_OPTIONS).format(parsed)
+  const timePart = parsed.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+  return `${datePart}, ${timePart}`
+}
+
+function expectedIso(ts: string): string {
+  const parsed = new Date(ts)
+  const datePart = new Intl.DateTimeFormat("sv-SE", _DATE_ONLY_OPTIONS).format(parsed)
+  const timePart = parsed.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+  return `${datePart}, ${timePart}`
+}
+
 describe("formatTimestamp", () => {
-  it("interprets an offset-less API timestamp as UTC", () => {
-    expect(formatTimestamp("2026-08-13T10:00:00")).toBe(
-      new Date("2026-08-13T10:00:00Z").toLocaleString(),
-    )
+  it("interprets an offset-less API timestamp as UTC and uses dd/mm/yyyy by default", () => {
+    expect(formatTimestamp("2026-08-13T10:00:00")).toBe(expected("2026-08-13T10:00:00Z", "en-GB"))
   })
 
-  it("leaves a Z-suffixed timestamp unchanged", () => {
-    expect(formatTimestamp("2026-08-13T10:00:00Z")).toBe(
-      new Date("2026-08-13T10:00:00Z").toLocaleString(),
-    )
+  it("leaves a Z-suffixed timestamp and formats as dd/mm/yyyy by default", () => {
+    expect(formatTimestamp("2026-08-13T10:00:00Z")).toBe(expected("2026-08-13T10:00:00Z", "en-GB"))
   })
 
   it("respects an explicit numeric offset without double-shifting", () => {
     expect(formatTimestamp("2026-08-13T10:00:00+02:00")).toBe(
-      new Date("2026-08-13T10:00:00+02:00").toLocaleString(),
+      expected("2026-08-13T10:00:00+02:00", "en-GB"),
     )
   })
 
   it("returns the raw string when unparseable", () => {
     expect(formatTimestamp("not a date")).toBe("not a date")
+  })
+
+  it("formats as mm/dd/yyyy when preference is mm/dd/yyyy", () => {
+    expect(formatTimestamp("2026-08-13T10:00:00Z", "mm/dd/yyyy")).toBe(
+      expected("2026-08-13T10:00:00Z", "en-US"),
+    )
+  })
+
+  it("formats date part as yyyy-mm-dd (local time) when preference is yyyy-mm-dd", () => {
+    expect(formatTimestamp("2026-08-13T10:00:00Z", "yyyy-mm-dd")).toBe(
+      expectedIso("2026-08-13T10:00:00Z"),
+    )
+  })
+
+  it("dd/mm/yyyy and mm/dd/yyyy produce different outputs for ambiguous dates", () => {
+    const ts = "2026-03-07T00:00:00Z"
+    const ddmm = formatTimestamp(ts, "dd/mm/yyyy")
+    const mmdd = formatTimestamp(ts, "mm/dd/yyyy")
+    expect(ddmm).not.toBe(mmdd)
   })
 })
 
