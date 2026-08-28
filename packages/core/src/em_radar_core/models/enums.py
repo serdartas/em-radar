@@ -111,3 +111,8 @@ class ScopeVerificationStatus(StrEnum):
     VERIFIED = "verified"
     UNVERIFIED = "unverified"
     UNAVAILABLE = "unavailable"
+
+
+class MergeRequestSignalScope(StrEnum):
+    TEAM_REPOSITORIES = "team_repositories"
+    AUTHORED_BY_MEMBERS = "authored_by_members"

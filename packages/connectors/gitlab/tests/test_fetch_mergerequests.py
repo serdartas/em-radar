@@ -2332,4 +2332,48 @@ def test_fetch_mergerequests_repository_id_matches_list_repositories(
         assert len(mrs) == 1
         assert mrs[0].repository_id == repositories[0].id
 
+
+# ---------------------------------------------------------------------------
+# M9-11: canonical_user_id — must match the author_id a fetched MR carries
+# ---------------------------------------------------------------------------
+
+
+def test_canonical_user_id_matches_mr_author_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    """canonical_user_id(provider_user_id) returns the same UUID as MergeRequest.author_id.
+
+    Both derive from ``_stable_id("user", "{instance_prefix}/{provider_user_id}")``, so they
+    must be equal.  This test verifies the invariant by fetching a real MR (mocked HTTP) and
+    comparing its author_id to what canonical_user_id returns for the same raw GitLab user id.
+    """
+
+    async def run() -> None:
+        gl_author_id = 42
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            path = request.url.path.rstrip("/")
+            if _is_mr_detail_path(path):
+                return httpx.Response(200, json=_mr_detail_response())
+            if path.endswith("/approvals"):
+                return httpx.Response(200, json=_approvals_response([]))
+            # MR list
+            return httpx.Response(
+                200,
+                headers={"X-Next-Page": ""},
+                json=[_mr_payload(iid=1, author_id=gl_author_id)],
+            )
+
+        connector = _make_connector(monkeypatch, handler)
+        mrs = await _collect(
+            connector.fetch_mergerequests(
+                MergeRequestScope(repository_external_ids=["group/project"]),
+                _date_window(),
+            )
+        )
+        await connector.close()
+
+        assert len(mrs) == 1
+        fetched_author_id = mrs[0].author_id
+        canonical = connector.canonical_user_id(str(gl_author_id))
+        assert canonical == fetched_author_id
+
     asyncio.run(run())

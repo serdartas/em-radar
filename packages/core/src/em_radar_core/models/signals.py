@@ -8,6 +8,8 @@ from pydantic import JsonValue
 from sqlalchemy import JSON
 from sqlmodel import Field, SQLModel
 
+from em_radar_core.models.enums import MergeRequestSignalScope
+
 
 class SignalOrigin(StrEnum):
     SYSTEM_TEMPLATE = "system_template"
@@ -25,6 +27,7 @@ class ReportSettings(SQLModel):
     severity: str
     category: str
     message_template: str | None = None
+    mr_scope: MergeRequestSignalScope | None = None
 
 
 class SignalDefinition(SQLModel):

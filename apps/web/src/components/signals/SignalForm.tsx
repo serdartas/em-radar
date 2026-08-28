@@ -26,6 +26,14 @@ const ENTITY_TYPE_LABELS: Record<string, string> = {
   sprint: "Sprints (Jira)",
 }
 
+// MR scope options shown only for merge_request signals.
+const MR_SCOPE_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: "team_repositories", label: "Team-owned repositories" },
+  { value: "authored_by_members", label: "Authored by team members" },
+]
+
+const DEFAULT_MR_SCOPE = "team_repositories"
+
 // Full set of known categories. A free-text value outside this list is still
 // rendered as a selectable option so an existing signal's category is never lost.
 const CATEGORIES = ["flow", "hygiene", "quality", "sprint", "planning", "delivery"]
@@ -87,6 +95,9 @@ export function SignalForm({
   )
   const [category, setCategory] = useState(initialValue?.report_settings.category ?? CATEGORIES[0])
   const [message, setMessage] = useState(initialValue?.report_settings.message_template ?? "")
+  const [mrScope, setMrScope] = useState<string>(
+    initialValue?.report_settings.mr_scope ?? DEFAULT_MR_SCOPE,
+  )
 
   // Built-in fields sorted by label, with "Custom field" appended at the end.
   // The "Custom field" entry is only added for the issue entity type because Jira custom
@@ -200,6 +211,7 @@ export function SignalForm({
         severity,
         category,
         message_template: message.trim() || null,
+        ...(entityType === "merge_request" ? { mr_scope: mrScope } : {}),
       },
       origin: initialValue?.origin ?? "user_created",
       template_key: initialValue?.template_key ?? null,
@@ -389,6 +401,23 @@ export function SignalForm({
                 )
               })}
             </ul>
+          </div>
+        )}
+
+        {entityType === "merge_request" && (
+          <div className="space-y-1.5">
+            <Label htmlFor="signal-mr-scope">Signal scope</Label>
+            <Select
+              id="signal-mr-scope"
+              onChange={(event) => setMrScope(event.target.value)}
+              value={mrScope}
+            >
+              {MR_SCOPE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </Select>
           </div>
         )}
 

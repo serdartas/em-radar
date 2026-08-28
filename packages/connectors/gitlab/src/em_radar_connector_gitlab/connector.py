@@ -770,6 +770,15 @@ class GitLabConnector:
                 raise ConnectorDataError("GitLab reviewers pagination did not advance")
             page = next_page
 
+    def canonical_user_id(self, provider_user_id: str) -> UUID:
+        """Return the stable canonical UUID for a GitLab user, matching MergeRequest.author_id.
+
+        Uses the same derivation as ``_mergerequest_from_payload``:
+        ``uuid5(NAMESPACE, "user:{instance_prefix}/{provider_user_id}")``, so the returned
+        UUID is directly comparable to the ``author_id`` on any MR fetched by this connector.
+        """
+        return _stable_id("user", f"{self._instance_prefix}/{provider_user_id}")
+
     async def close(self) -> None:
         await self._client.aclose()
 

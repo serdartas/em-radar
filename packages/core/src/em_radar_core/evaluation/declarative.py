@@ -12,6 +12,7 @@ from em_radar_core.models import (
     EntityType,
     EvaluationContext,
     MergeRequest,
+    MergeRequestSignalScope,
     Severity,
     SignalDefinition,
     SignalFinding,
@@ -253,12 +254,29 @@ def _evaluate_mr_signal(
     data: SignalData,
     ctx: EvaluationContext,
     severity: Severity,
-    scopes: list[ScopeDescriptor],
+    _scopes: list[ScopeDescriptor],
 ) -> list[SignalFinding]:
-    """Evaluate a merge_request entity signal over all MergeRequest entities in the data."""
-    scope_name = scopes[0].name if scopes else None
+    """Evaluate a merge_request entity signal over MergeRequest entities filtered by scope.
+
+    The signal's ``report_settings.mr_scope`` determines which MRs are evaluated:
+    - ``TEAM_REPOSITORIES`` (default): all MRs in ``data.mergerequests`` (already repo-scoped
+      by the runner from M9-06).
+    - ``AUTHORED_BY_MEMBERS``: only MRs whose ``author_id`` is in
+      ``data.team_member_author_ids``.
+    The ``scope_name`` on each finding reflects the signal's own scope, not the connector
+    scope descriptor, so reports display the actual scope used per signal (§19).
+    """
+    mr_scope = definition.report_settings.mr_scope or MergeRequestSignalScope.TEAM_REPOSITORIES
+    if mr_scope is MergeRequestSignalScope.AUTHORED_BY_MEMBERS:
+        scope_name = "MRs authored by team members"
+        mrs: list[MergeRequest] = [
+            mr for mr in data.mergerequests if mr.author_id in data.team_member_author_ids
+        ]
+    else:
+        scope_name = "MRs in team-owned repositories"
+        mrs = list(data.mergerequests)
     findings: list[SignalFinding] = []
-    for mr in data.mergerequests:
+    for mr in mrs:
         result = _evaluate_mr_group(definition.expression, mr, data, ctx)
         if not result.matched:
             continue
