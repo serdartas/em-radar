@@ -30,7 +30,6 @@ def test_team_profile_crud_supports_multiple_working_modes(
             "connection_ids": [str(connection.id)],
             "working_mode": "scrum",
             "sprint_length_days": 14,
-            "member_user_keys": ["jira:alice"],
         },
     )
     assert scrum_response.status_code == 201

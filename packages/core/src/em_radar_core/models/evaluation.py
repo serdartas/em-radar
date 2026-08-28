@@ -28,7 +28,6 @@ class TeamProfile(SQLModel):
     code_connection_id: UUID | None = None
     working_mode: WorkingMode = WorkingMode.SCRUM
     sprint_length_days: int | None = None
-    member_user_keys: list[str] = Field(default_factory=list, sa_type=JSON)
     created_at: datetime
     updated_at: datetime
 

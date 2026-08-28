@@ -24,6 +24,8 @@ from em_radar_core.models import (
     Review,
     SignalFinding,
     Sprint,
+    TeamGitLabMember,
+    TeamGitLabRepository,
     TeamProfile,
     Transition,
     User,
@@ -173,6 +175,26 @@ class ReportJobTable(SQLModel, table=True):
         sa_column=Column(sa.Uuid(), ForeignKey("report.id", ondelete="SET NULL"), nullable=True),
     )
     error: str | None = None
+
+
+class TeamGitLabMemberTable(TeamGitLabMember, table=True):
+    __tablename__ = "team_gitlab_member"
+    __table_args__ = (UniqueConstraint("team_profile_id", "gitlab_user_id"),)
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    team_profile_id: UUID = Field(foreign_key="team_profile.id")
+    connection_id: UUID = Field(foreign_key="source_connection.id")
+    is_available: bool = Field(default=True, sa_column_kwargs={"server_default": sa.true()})
+
+
+class TeamGitLabRepositoryTable(TeamGitLabRepository, table=True):
+    __tablename__ = "team_gitlab_repository"
+    __table_args__ = (UniqueConstraint("team_profile_id", "gitlab_project_id"),)
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    team_profile_id: UUID = Field(foreign_key="team_profile.id")
+    connection_id: UUID = Field(foreign_key="source_connection.id")
+    is_available: bool = Field(default=True, sa_column_kwargs={"server_default": sa.true()})
 
 
 class AppSettingsTable(SQLModel, table=True):

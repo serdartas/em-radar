@@ -143,11 +143,7 @@ def test_evaluation_context_now_is_required() -> None:
 
 
 def test_json_fields_use_json_storage_type() -> None:
-    for field_name in (
-        "connection_ids",
-        "member_user_keys",
-    ):
-        assert TeamProfile.model_fields[field_name].metadata[0].sa_type is JSON
+    assert TeamProfile.model_fields["connection_ids"].metadata[0].sa_type is JSON
     assert SignalFinding.model_fields["evidence"].metadata[0].sa_type is JSON
     assert Report.model_fields["signal_pack_snapshot"].metadata[0].sa_type is JSON
     assert Report.model_fields["findings_count_by_severity"].metadata[0].sa_type is JSON

@@ -33,6 +33,7 @@ from em_radar_core.models.signals import (
     SignalOrigin,
     SignalTargetScope,
 )
+from em_radar_core.models.team import TeamGitLabMember, TeamGitLabRepository
 
 __all__ = [
     "Board",
@@ -63,6 +64,8 @@ __all__ = [
     "Sprint",
     "SprintState",
     "StatusCategory",
+    "TeamGitLabMember",
+    "TeamGitLabRepository",
     "Transition",
     "TeamProfile",
     "UUIDListJSON",
