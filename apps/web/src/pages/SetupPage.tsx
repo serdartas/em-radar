@@ -9,6 +9,7 @@ import { WizardStepFooter } from "@/components/setup/WizardStepFooter"
 import { CodeSourcePicker } from "@/components/teams/CodeSourcePicker"
 import { SignalGroupAttachList } from "@/components/teams/SignalGroupAttachList"
 import { TaskBoardPicker } from "@/components/teams/TaskBoardPicker"
+import { TeamGitLabConfig } from "@/components/teams/TeamGitLabConfig"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -513,6 +514,9 @@ function SourcesStep({
           <TaskBoardPicker boardScopes={boardScopes} jiraConnections={jiraConnections} team={team} />
 
           <CodeSourcePicker codeConnections={codeConnections} team={team} />
+
+          {/* Self-gates: renders the optional GitLab sections only for a GitLab code source. */}
+          <TeamGitLabConfig codeConnections={codeConnections} team={team} />
 
           <SignalGroupAttachList groups={groups} team={team} />
         </CardContent>

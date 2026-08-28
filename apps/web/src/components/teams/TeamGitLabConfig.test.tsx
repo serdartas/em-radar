@@ -89,6 +89,26 @@ const ticketingConnector = {
   },
 }
 
+// A non-GitLab but MR-capable connector (e.g. the demo connector).
+const demoConnector = {
+  ...mrConnector,
+  name: "demo",
+  display_name: "Demo",
+}
+
+const demoConnection = {
+  id: "conn-demo",
+  name: "Demo data",
+  connector_name: "demo",
+  config: {},
+  created_at: "2026-01-01T00:00:00Z",
+}
+
+const teamWithDemoConnection = {
+  ...baseTeam,
+  code_connection_id: "conn-demo",
+}
+
 const groups = [
   {
     id: "group-1",
@@ -247,6 +267,24 @@ describe("M9-07: GitLab connector present", () => {
     // Both optional sections must be present.
     expect(await screen.findByRole("heading", { name: "GitLab members" })).toBeInTheDocument()
     expect(screen.getByRole("heading", { name: "GitLab repositories" })).toBeInTheDocument()
+  })
+
+  it("does NOT show GitLab sections when the code source is a non-GitLab MR-capable connector", async () => {
+    // The demo connector advertises provides_mergerequests, so it is in codeConnections, but the
+    // GitLab-specific sections must not render for a non-GitLab source.
+    mockApi({
+      team: teamWithDemoConnection,
+      connectors: [demoConnector],
+      connections: [jiraConnection, demoConnection],
+    })
+    renderPage()
+
+    await screen.findByText("Platform")
+    fireEvent.click(screen.getByRole("button", { name: "Edit Platform" }))
+
+    await screen.findByRole("button", { name: "Done editing Platform" })
+    expect(screen.queryByRole("heading", { name: "GitLab members" })).toBeNull()
+    expect(screen.queryByRole("heading", { name: "GitLab repositories" })).toBeNull()
   })
 
   it("does NOT show GitLab configuration when connector exists but team has no code_connection_id", async () => {

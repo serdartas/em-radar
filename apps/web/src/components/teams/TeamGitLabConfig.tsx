@@ -23,7 +23,13 @@ export interface TeamGitLabConfigProps {
  *          passing { team, codeConnection }.
  */
 export function TeamGitLabConfig({ codeConnections, team }: TeamGitLabConfigProps) {
-  const codeConnection = codeConnections.find((c) => c.id === team.code_connection_id) ?? null
+  // Only a GitLab connection gets these sections: the member/repository endpoints and pickers
+  // are GitLab-specific, so a non-GitLab MR-capable source (e.g. demo, or a future GitHub
+  // connector) must not render them. A provider-agnostic version is M9-17.
+  const codeConnection =
+    codeConnections.find(
+      (c) => c.id === team.code_connection_id && c.connector_name === "gitlab",
+    ) ?? null
 
   if (!codeConnection) {
     return null
