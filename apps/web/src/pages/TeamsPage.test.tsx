@@ -749,3 +749,178 @@ describe("TeamsPage — task-board source picker", () => {
     })
   })
 })
+
+// ---------------------------------------------------------------------------
+// M9-10: Teams-page per-team GitLab config status (§17)
+// ---------------------------------------------------------------------------
+
+describe("TeamsPage — M9-10 per-team GitLab config status (§17)", () => {
+  function mockApiWithGitLabAndTeams(teamsList: unknown[]) {
+    return vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = typeof input === "string" ? input : input.toString()
+      const method = init?.method ?? "GET"
+      if (url.endsWith("/api/teams") && method === "GET") return Promise.resolve(jsonResponse(teamsList))
+      if (url.endsWith("/api/scopes") && method === "GET") return Promise.resolve(jsonResponse([]))
+      if (url.endsWith("/api/signal-config-groups")) return Promise.resolve(jsonResponse(groups))
+      if (url.endsWith("/api/connectors")) return Promise.resolve(jsonResponse([mrConnector]))
+      if (url.endsWith("/api/connections") && method === "GET")
+        return Promise.resolve(jsonResponse([gitlabConnection]))
+      if (url.includes("/api/teams/") && method === "PATCH") {
+        const body = JSON.parse(String(init?.body))
+        return Promise.resolve(jsonResponse({ ...team, ...body }))
+      }
+      throw new Error(`unexpected fetch: ${method} ${url}`)
+    })
+  }
+
+  it("shows 'GitLab configured' badge for a configured team when GitLab connector exists", async () => {
+    const configuredTeam = {
+      ...team,
+      id: "t-conf",
+      name: "Configured Team",
+      code_connection_id: "conn-gitlab",
+      gitlab_config_status: "configured",
+    }
+    mockApiWithGitLabAndTeams([configuredTeam])
+    renderPage()
+
+    await screen.findByText("Configured Team")
+    expect(screen.getByText("GitLab configured")).toBeInTheDocument()
+  })
+
+  it("shows 'GitLab setup required' badge for a setup_required team when GitLab connector exists", async () => {
+    const unconfiguredTeam = {
+      ...team,
+      id: "t-req",
+      name: "Needs Setup",
+      code_connection_id: "conn-gitlab",
+      gitlab_config_status: "setup_required",
+    }
+    mockApiWithGitLabAndTeams([unconfiguredTeam])
+    renderPage()
+
+    await screen.findByText("Needs Setup")
+    expect(screen.getByText("GitLab setup required")).toBeInTheDocument()
+  })
+
+  it("shows 'GitLab setup required' for a not_applicable team once a GitLab connector exists", async () => {
+    // A team with no code source yet still needs setup now that GitLab is connected, so it must
+    // be surfaced as setup-required (matching the post-connection notification count).
+    const naTeam = {
+      ...team,
+      id: "t-na",
+      name: "No Status",
+      code_connection_id: null,
+      gitlab_config_status: "not_applicable",
+    }
+    mockApiWithGitLabAndTeams([naTeam])
+    renderPage()
+
+    await screen.findByText("No Status")
+    expect(screen.getByText("GitLab setup required")).toBeInTheDocument()
+    expect(screen.queryByText("GitLab configured")).not.toBeInTheDocument()
+  })
+
+  it("shows no GitLab status badge when no GitLab connector exists (no codeConnections)", async () => {
+    // Override mock to return only jira connector and no gitlab connections
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = typeof input === "string" ? input : input.toString()
+      const method = init?.method ?? "GET"
+      if (url.endsWith("/api/teams") && method === "GET")
+        return Promise.resolve(jsonResponse([{ ...team, gitlab_config_status: "setup_required" }]))
+      if (url.endsWith("/api/scopes")) return Promise.resolve(jsonResponse([]))
+      if (url.endsWith("/api/signal-config-groups")) return Promise.resolve(jsonResponse(groups))
+      if (url.endsWith("/api/connectors"))
+        return Promise.resolve(jsonResponse([ticketingConnector]))
+      if (url.endsWith("/api/connections") && method === "GET")
+        return Promise.resolve(jsonResponse(connections)) // only jira connection
+      if (url.includes("/api/teams/") && method === "PATCH") {
+        return Promise.resolve(jsonResponse(team))
+      }
+      throw new Error(`unexpected fetch: ${method} ${url}`)
+    })
+    renderPage()
+
+    await screen.findByText("Platform")
+    expect(screen.queryByText("GitLab configured")).not.toBeInTheDocument()
+    expect(screen.queryByText("GitLab setup required")).not.toBeInTheDocument()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// M9-10: Per-team Callout warning for setup_required teams (§17)
+// ---------------------------------------------------------------------------
+
+describe("TeamsPage — M9-10 per-team Callout warning for setup_required (§17)", () => {
+  it("renders a non-blocking warning Callout with 'Configure GitLab' for setup_required teams", async () => {
+    const setupRequiredTeam = {
+      ...team,
+      id: "t-setup",
+      name: "Needs Config",
+      code_connection_id: "conn-gitlab",
+      gitlab_config_status: "setup_required",
+    }
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = typeof input === "string" ? input : input.toString()
+      const method = init?.method ?? "GET"
+      if (url.endsWith("/api/teams") && method === "GET")
+        return Promise.resolve(jsonResponse([setupRequiredTeam]))
+      if (url.endsWith("/api/scopes")) return Promise.resolve(jsonResponse([]))
+      if (url.endsWith("/api/signal-config-groups")) return Promise.resolve(jsonResponse(groups))
+      if (url.endsWith("/api/connectors")) return Promise.resolve(jsonResponse([mrConnector]))
+      if (url.endsWith("/api/connections") && method === "GET")
+        return Promise.resolve(jsonResponse([gitlabConnection]))
+      if (url.includes("/api/teams/") && method === "PATCH") {
+        const body = JSON.parse(String(init?.body))
+        return Promise.resolve(jsonResponse({ ...setupRequiredTeam, ...body }))
+      }
+      throw new Error(`unexpected fetch: ${method} ${url}`)
+    })
+
+    renderPage()
+
+    // Team name appears in summary mode
+    await screen.findByText("Needs Config")
+
+    // Warning Callout is present in summary mode (non-blocking)
+    const configureButton = screen.getByRole("button", { name: "Configure GitLab" })
+    expect(configureButton).toBeInTheDocument()
+
+    // The Edit and Delete buttons are also still accessible (non-blocking)
+    expect(screen.getByRole("button", { name: "Edit Needs Config" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Delete Needs Config" })).toBeInTheDocument()
+
+    // Clicking "Configure GitLab" opens the edit panel (calls onStartEdit)
+    fireEvent.click(configureButton)
+    expect(await screen.findByRole("button", { name: "Done editing Needs Config" })).toBeInTheDocument()
+    // The Callout warning disappears once in edit mode
+    expect(screen.queryByRole("button", { name: "Configure GitLab" })).not.toBeInTheDocument()
+  })
+
+  it("does NOT render the Callout warning for configured teams", async () => {
+    const configuredTeam = {
+      ...team,
+      id: "t-ok",
+      name: "All Good",
+      code_connection_id: "conn-gitlab",
+      gitlab_config_status: "configured",
+    }
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = typeof input === "string" ? input : input.toString()
+      const method = init?.method ?? "GET"
+      if (url.endsWith("/api/teams") && method === "GET")
+        return Promise.resolve(jsonResponse([configuredTeam]))
+      if (url.endsWith("/api/scopes")) return Promise.resolve(jsonResponse([]))
+      if (url.endsWith("/api/signal-config-groups")) return Promise.resolve(jsonResponse(groups))
+      if (url.endsWith("/api/connectors")) return Promise.resolve(jsonResponse([mrConnector]))
+      if (url.endsWith("/api/connections") && method === "GET")
+        return Promise.resolve(jsonResponse([gitlabConnection]))
+      throw new Error(`unexpected fetch: ${method} ${url}`)
+    })
+
+    renderPage()
+
+    await screen.findByText("All Good")
+    expect(screen.queryByRole("button", { name: "Configure GitLab" })).not.toBeInTheDocument()
+  })
+})

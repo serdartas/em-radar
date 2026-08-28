@@ -16,6 +16,7 @@ const team = {
   working_mode: "scrum" as const,
   sprint_length_days: 14,
   member_user_keys: [],
+  gitlab_config_status: "not_applicable" as const,
   created_at: "2026-01-01T00:00:00Z",
   updated_at: "2026-01-01T00:00:00Z",
 }
