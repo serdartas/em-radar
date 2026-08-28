@@ -8,6 +8,10 @@ import { cn } from "@/lib/utils"
 interface ComboboxOption {
   value: string
   label: string
+  /** Optional avatar / thumbnail URL. When present a small decorative image is
+   *  rendered before the label in the dropdown. Existing consumers that omit
+   *  this field render exactly as before. */
+  imageUrl?: string
 }
 
 interface ComboboxProps {
@@ -39,6 +43,17 @@ interface ComboboxProps {
    * empty-options state without the user being able to type into a stale input.
    */
   disabled?: boolean
+  /**
+   * Optional callback fired whenever the internal query string changes (i.e. on
+   * every user keystroke). When provided the caller is responsible for
+   * server-side search: it should debounce the value, fetch matching options,
+   * and supply them via the `options` prop. Client-side filtering of `options`
+   * is skipped when this prop is present so server results are shown as-is.
+   *
+   * Do NOT pass this prop if you are using a static `options` list — the
+   * existing client-side filter behaviour is preserved when it is absent.
+   */
+  onQueryChange?: (query: string) => void
 }
 
 function Combobox({
@@ -49,6 +64,7 @@ function Combobox({
   id,
   inputLabel,
   maxOnFocus,
+  onQueryChange,
   onSelect,
   options,
   placeholder,
@@ -74,9 +90,13 @@ function Combobox({
   const inputDisplayValue = isEditing ? query : selectedLabel
 
   // Show options on (re)focus (limited by maxOnFocus when set); filter while typing.
+  // When onQueryChange is provided (server-side search mode) the caller already
+  // supplies filtered options so client-side filtering is skipped.
   const filtered =
     isEditing && query.trim()
-      ? options.filter((o) => o.label.toLowerCase().includes(query.toLowerCase()))
+      ? onQueryChange !== undefined
+        ? options
+        : options.filter((o) => o.label.toLowerCase().includes(query.toLowerCase()))
       : maxOnFocus !== undefined
         ? options.slice(0, maxOnFocus)
         : options
@@ -161,6 +181,7 @@ function Combobox({
           setIsEditing(true)
           setOpen(true)
           setActiveIndex(-1)
+          onQueryChange?.(e.target.value)
         }}
         onFocus={() => {
           if (disabled) return
@@ -184,7 +205,7 @@ function Combobox({
             <li
               aria-selected={option.value === value}
               className={cn(
-                "cursor-pointer px-3 py-1.5 text-sm hover:bg-primary/10",
+                "flex cursor-pointer items-center px-3 py-1.5 text-sm hover:bg-primary/10",
                 index === activeIndex && "bg-primary/10",
               )}
               id={`${optionIdPrefix}-option-${index}`}
@@ -196,6 +217,13 @@ function Combobox({
               }}
               role="option"
             >
+              {option.imageUrl && (
+                <img
+                  alt=""
+                  className="mr-2 h-5 w-5 flex-shrink-0 rounded-full object-cover"
+                  src={option.imageUrl}
+                />
+              )}
               {option.label}
             </li>
           ))}

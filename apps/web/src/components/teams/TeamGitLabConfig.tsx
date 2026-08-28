@@ -3,6 +3,8 @@
 import type { SourceConnection } from "@/lib/connections"
 import type { TeamProfile } from "@/lib/teams"
 
+import { GitLabMemberPicker } from "@/components/teams/GitLabMemberPicker"
+
 export interface TeamGitLabConfigProps {
   team: TeamProfile
   /** Full list of MR-capable connections (already filtered by teamSetup.ts). */
@@ -58,11 +60,7 @@ export function TeamGitLabConfig({ codeConnections, team }: TeamGitLabConfigProp
           Select the GitLab users who belong to this team. Used to scope merge-request activity by
           author.
         </p>
-        {/* M9-08: replace this paragraph with <TeamGitLabMembersPicker team={team} codeConnection={codeConnection} /> */}
-        <p className="text-sm text-slate-400">
-          GitLab member selection is coming soon. Save without selecting members and configure this
-          later.
-        </p>
+        <GitLabMemberPicker teamId={team.id} />
       </section>
 
       {/* GitLab repositories section — M9-09 mounts its picker here. */}
