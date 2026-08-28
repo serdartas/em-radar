@@ -20,9 +20,9 @@ from em_radar_api.source_connections import (
     SourceConnectionTable,
     SourceConnectionUpdate,
 )
-from em_radar_api.tables import TeamProfileTable
+from em_radar_api.tables import TeamGitLabMemberTable, TeamGitLabRepositoryTable, TeamProfileTable
 from em_radar_core.connectors import ConnectorBase
-from em_radar_core.models import Source
+from em_radar_core.models import ScopeVerificationStatus, Source
 
 ConnectorT = TypeVar("ConnectorT", bound=ConnectorBase)
 CREDENTIAL_FIELD_NAMES = frozenset(
@@ -167,6 +167,8 @@ def delete_source_connection(
     1. Scope definitions for this connection are deleted and removed from team scope_ids.
     2. The connection is removed from every team's ``connection_ids`` list and
        ``code_connection_id`` is cleared where it matches.
+    3. Team-scoped GitLab member/repo rows referencing this connection are preserved and
+       marked UNAVAILABLE with their connection FK cleared (§22).
 
     In all cases (with or without ``force``), cached canonical data for the connector
     source type is deleted when this is the last remaining connection of that type —
@@ -219,7 +221,26 @@ def delete_source_connection(
             if changed:
                 session.add(team)
 
-    # 3. Delete cached canonical data when this is the last connection of this source type.
+        # 3. Preserve team-scoped GitLab member/repo rows — mark them unavailable and
+        #    clear the connection FK so the FK constraint does not block deletion (§22).
+        for member in session.exec(
+            select(TeamGitLabMemberTable).where(
+                TeamGitLabMemberTable.connection_id == connection_id
+            )
+        ).all():
+            member.verification_status = ScopeVerificationStatus.UNAVAILABLE
+            member.connection_id = None
+            session.add(member)
+        for repo in session.exec(
+            select(TeamGitLabRepositoryTable).where(
+                TeamGitLabRepositoryTable.connection_id == connection_id
+            )
+        ).all():
+            repo.verification_status = ScopeVerificationStatus.UNAVAILABLE
+            repo.connection_id = None
+            session.add(repo)
+
+    # 4. Delete cached canonical data when this is the last connection of this source type.
     #    Sibling connections sharing the same connector type still need the shared cache.
     source = _CONNECTOR_TO_SOURCE.get(str(row.connector_name))
     if source is not None:

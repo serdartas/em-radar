@@ -5,10 +5,18 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import sessionmaker
 from sqlmodel import Session
 
-from em_radar_api.repositories.source_connections import create_source_connection
+from em_radar_api.repositories.source_connections import (
+    create_source_connection,
+    delete_source_connection,
+)
 from em_radar_api.source_connections import ConnectorName, SourceConnectionCreate
-from em_radar_api.tables import EvaluationWindowTable
-from em_radar_core.models import WindowType
+from em_radar_api.tables import (
+    EvaluationWindowTable,
+    TeamGitLabMemberTable,
+    TeamGitLabRepositoryTable,
+    TeamProfileTable,
+)
+from em_radar_core.models import ScopeVerificationStatus, WindowType, WorkingMode
 
 
 def test_team_profile_crud_supports_multiple_working_modes(
@@ -156,3 +164,112 @@ def test_team_profile_omits_vestigial_id_arrays(api_client: TestClient) -> None:
     assert "project_ids" not in read_body
     assert "board_ids" not in read_body
     assert "repository_ids" not in read_body
+
+
+def test_deleting_team_removes_gitlab_member_and_repo_rows(
+    api_client: TestClient, session_factory: sessionmaker[Session]
+) -> None:
+    """Deleting a team must also remove its TeamGitLabMember and TeamGitLabRepository rows."""
+    created = api_client.post("/api/teams", json={"name": "Eng"}).json()
+    team_id = UUID(created["id"])
+
+    now = datetime.now(timezone.utc)
+    with session_factory() as session:
+        member = TeamGitLabMemberTable(
+            team_profile_id=team_id,
+            connection_id=None,
+            gitlab_user_id=42,
+            username="alice",
+            created_at=now,
+            updated_at=now,
+        )
+        repo = TeamGitLabRepositoryTable(
+            team_profile_id=team_id,
+            connection_id=None,
+            gitlab_project_id=99,
+            name="my-repo",
+            path_with_namespace="group/my-repo",
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(member)
+        session.add(repo)
+        session.commit()
+        member_id = member.id
+        repo_id = repo.id
+
+    response = api_client.delete(f"/api/teams/{team_id}")
+    assert response.status_code == 204
+
+    with session_factory() as session:
+        assert session.get(TeamGitLabMemberTable, member_id) is None
+        assert session.get(TeamGitLabRepositoryTable, repo_id) is None
+
+
+def test_force_deleting_connection_preserves_gitlab_rows_as_unavailable(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """Force-deleting a connection must preserve GitLab member/repo rows marked UNAVAILABLE."""
+    with session_factory() as session:
+        connection = create_source_connection(
+            session,
+            SourceConnectionCreate(
+                name=f"GitLab {uuid4().hex[:8]}",
+                connector_name=ConnectorName.GITLAB,
+            ),
+        )
+
+    now = datetime.now(timezone.utc)
+    with session_factory() as session:
+        team_id = uuid4()
+        team = TeamProfileTable(
+            id=team_id,
+            name="Eng",
+            working_mode=WorkingMode.SCRUM,
+            connection_ids=[],
+            scope_ids=[],
+            signal_config_group_ids=[],
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(team)
+        session.flush()
+
+        member = TeamGitLabMemberTable(
+            team_profile_id=team_id,
+            connection_id=connection.id,
+            gitlab_user_id=42,
+            username="alice",
+            created_at=now,
+            updated_at=now,
+        )
+        repo = TeamGitLabRepositoryTable(
+            team_profile_id=team_id,
+            connection_id=connection.id,
+            gitlab_project_id=99,
+            name="my-repo",
+            path_with_namespace="group/my-repo",
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(member)
+        session.add(repo)
+        session.commit()
+        member_id = member.id
+        repo_id = repo.id
+
+    with session_factory() as session:
+        result = delete_source_connection(session, connection.id, force=True)
+    assert result is True
+
+    with session_factory() as session:
+        saved_member = session.get(TeamGitLabMemberTable, member_id)
+        saved_repo = session.get(TeamGitLabRepositoryTable, repo_id)
+
+    assert saved_member is not None
+    assert saved_member.verification_status is ScopeVerificationStatus.UNAVAILABLE
+    assert saved_member.connection_id is None
+
+    assert saved_repo is not None
+    assert saved_repo.verification_status is ScopeVerificationStatus.UNAVAILABLE
+    assert saved_repo.connection_id is None

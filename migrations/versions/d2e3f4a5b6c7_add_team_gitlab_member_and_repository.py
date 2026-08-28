@@ -16,21 +16,30 @@ down_revision: Union[str, Sequence[str], None] = "c1d2e3f4a5b6"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
+_VERIFICATION_STATUS_ENUM = sa.Enum(
+    "VERIFIED", "UNVERIFIED", "UNAVAILABLE", name="scopeverificationstatus"
+)
+
 
 def upgrade() -> None:
     op.create_table(
         "team_gitlab_member",
         sa.Column("id", sa.Uuid(), nullable=False),
         sa.Column("team_profile_id", sa.Uuid(), nullable=False),
-        sa.Column("connection_id", sa.Uuid(), nullable=False),
+        sa.Column("connection_id", sa.Uuid(), nullable=True),
         sa.Column("gitlab_user_id", sa.Integer(), nullable=False),
         sa.Column("username", sa.String(), nullable=False),
         sa.Column("display_name", sa.String(), nullable=True),
-        sa.Column("is_available", sa.Boolean(), nullable=False, server_default=sa.true()),
+        sa.Column(
+            "verification_status",
+            _VERIFICATION_STATUS_ENUM,
+            nullable=False,
+            server_default="VERIFIED",
+        ),
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.Column("updated_at", sa.DateTime(), nullable=False),
-        sa.ForeignKeyConstraint(["connection_id"], ["source_connection.id"]),
-        sa.ForeignKeyConstraint(["team_profile_id"], ["team_profile.id"]),
+        sa.ForeignKeyConstraint(["connection_id"], ["source_connection.id"], ondelete="SET NULL"),
+        sa.ForeignKeyConstraint(["team_profile_id"], ["team_profile.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("team_profile_id", "gitlab_user_id"),
     )
@@ -38,15 +47,20 @@ def upgrade() -> None:
         "team_gitlab_repository",
         sa.Column("id", sa.Uuid(), nullable=False),
         sa.Column("team_profile_id", sa.Uuid(), nullable=False),
-        sa.Column("connection_id", sa.Uuid(), nullable=False),
+        sa.Column("connection_id", sa.Uuid(), nullable=True),
         sa.Column("gitlab_project_id", sa.Integer(), nullable=False),
         sa.Column("name", sa.String(), nullable=False),
         sa.Column("path_with_namespace", sa.String(), nullable=False),
-        sa.Column("is_available", sa.Boolean(), nullable=False, server_default=sa.true()),
+        sa.Column(
+            "verification_status",
+            _VERIFICATION_STATUS_ENUM,
+            nullable=False,
+            server_default="VERIFIED",
+        ),
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.Column("updated_at", sa.DateTime(), nullable=False),
-        sa.ForeignKeyConstraint(["connection_id"], ["source_connection.id"]),
-        sa.ForeignKeyConstraint(["team_profile_id"], ["team_profile.id"]),
+        sa.ForeignKeyConstraint(["connection_id"], ["source_connection.id"], ondelete="SET NULL"),
+        sa.ForeignKeyConstraint(["team_profile_id"], ["team_profile.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("team_profile_id", "gitlab_project_id"),
     )

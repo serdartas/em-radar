@@ -182,9 +182,17 @@ class TeamGitLabMemberTable(TeamGitLabMember, table=True):
     __table_args__ = (UniqueConstraint("team_profile_id", "gitlab_user_id"),)
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
-    team_profile_id: UUID = Field(foreign_key="team_profile.id")
-    connection_id: UUID = Field(foreign_key="source_connection.id")
-    is_available: bool = Field(default=True, sa_column_kwargs={"server_default": sa.true()})
+    team_profile_id: UUID = Field(
+        sa_column=Column(
+            sa.Uuid(), ForeignKey("team_profile.id", ondelete="CASCADE"), nullable=False
+        )
+    )
+    connection_id: UUID | None = Field(
+        default=None,
+        sa_column=Column(
+            sa.Uuid(), ForeignKey("source_connection.id", ondelete="SET NULL"), nullable=True
+        ),
+    )
 
 
 class TeamGitLabRepositoryTable(TeamGitLabRepository, table=True):
@@ -192,9 +200,17 @@ class TeamGitLabRepositoryTable(TeamGitLabRepository, table=True):
     __table_args__ = (UniqueConstraint("team_profile_id", "gitlab_project_id"),)
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
-    team_profile_id: UUID = Field(foreign_key="team_profile.id")
-    connection_id: UUID = Field(foreign_key="source_connection.id")
-    is_available: bool = Field(default=True, sa_column_kwargs={"server_default": sa.true()})
+    team_profile_id: UUID = Field(
+        sa_column=Column(
+            sa.Uuid(), ForeignKey("team_profile.id", ondelete="CASCADE"), nullable=False
+        )
+    )
+    connection_id: UUID | None = Field(
+        default=None,
+        sa_column=Column(
+            sa.Uuid(), ForeignKey("source_connection.id", ondelete="SET NULL"), nullable=True
+        ),
+    )
 
 
 class AppSettingsTable(SQLModel, table=True):

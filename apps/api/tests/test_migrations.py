@@ -272,14 +272,15 @@ def test_team_gitlab_member_and_repository_migration(
         }
     assert "member_user_keys" not in cols
 
-    # Seed a member and a repository row referencing the team and connection.
+    # Seed a member and a repository row referencing the team and connection (verification_status
+    # defaults to VERIFIED via the server_default).
     with engine.begin() as conn:
         conn.execute(
             sa.text(
                 "INSERT INTO team_gitlab_member"
-                " (id, team_profile_id, connection_id, gitlab_user_id, username, is_available,"
-                " created_at, updated_at)"
-                " VALUES (:id, :team_id, :conn_id, 42, 'alice', 1,"
+                " (id, team_profile_id, connection_id, gitlab_user_id, username,"
+                " verification_status, created_at, updated_at)"
+                " VALUES (:id, :team_id, :conn_id, 42, 'alice', 'VERIFIED',"
                 " '2026-01-01', '2026-01-01')"
             ),
             {"id": member_id.hex, "team_id": team_id.hex, "conn_id": connection_id.hex},
@@ -288,55 +289,42 @@ def test_team_gitlab_member_and_repository_migration(
             sa.text(
                 "INSERT INTO team_gitlab_repository"
                 " (id, team_profile_id, connection_id, gitlab_project_id, name,"
-                " path_with_namespace, is_available, created_at, updated_at)"
-                " VALUES (:id, :team_id, :conn_id, 99, 'my-repo', 'group/my-repo', 1,"
+                " path_with_namespace, verification_status, created_at, updated_at)"
+                " VALUES (:id, :team_id, :conn_id, 99, 'my-repo', 'group/my-repo', 'VERIFIED',"
                 " '2026-01-01', '2026-01-01')"
             ),
             {"id": repo_id.hex, "team_id": team_id.hex, "conn_id": connection_id.hex},
         )
 
-    # §22: the FK must not cascade-delete member/repo rows when the connection is removed.
-    # With SQLite FK enforcement on, a non-cascade FK protects the referenced connection from
-    # deletion while rows exist (raises); a CASCADE regression would instead silently wipe them.
+    # §22: connection_id FK is SET NULL — deleting the source_connection must succeed and
+    # the member/repo rows must survive with connection_id cleared.
     with engine.begin() as conn:
         conn.execute(sa.text("PRAGMA foreign_keys=ON"))
-        with pytest.raises(sa.exc.IntegrityError):
-            conn.execute(
-                sa.text("DELETE FROM source_connection WHERE id = :id"),
-                {"id": connection_id.hex},
-            )
+        conn.execute(
+            sa.text("DELETE FROM source_connection WHERE id = :id"),
+            {"id": connection_id.hex},
+        )
 
-    # The rows survive the attempted connection removal.
+    # Both rows survive the connection removal.
     with engine.connect() as conn:
         assert conn.execute(sa.text("SELECT COUNT(*) FROM team_gitlab_member")).scalar_one() == 1
         assert (
             conn.execute(sa.text("SELECT COUNT(*) FROM team_gitlab_repository")).scalar_one() == 1
         )
 
-    # Simulate connection becoming unavailable: flip is_available without deleting rows.
-    with engine.begin() as conn:
-        conn.execute(
-            sa.text("UPDATE team_gitlab_member SET is_available = 0 WHERE id = :id"),
-            {"id": member_id.hex},
-        )
-        conn.execute(
-            sa.text("UPDATE team_gitlab_repository SET is_available = 0 WHERE id = :id"),
-            {"id": repo_id.hex},
-        )
-
-    # Both rows must still exist with is_available = 0.
+    # connection_id must be NULL on both rows after SET NULL deletion.
     with engine.connect() as conn:
-        m_available = conn.execute(
-            sa.text("SELECT is_available FROM team_gitlab_member WHERE id = :id"),
+        m_conn_id = conn.execute(
+            sa.text("SELECT connection_id FROM team_gitlab_member WHERE id = :id"),
             {"id": member_id.hex},
         ).scalar_one()
-        r_available = conn.execute(
-            sa.text("SELECT is_available FROM team_gitlab_repository WHERE id = :id"),
+        r_conn_id = conn.execute(
+            sa.text("SELECT connection_id FROM team_gitlab_repository WHERE id = :id"),
             {"id": repo_id.hex},
         ).scalar_one()
 
-    assert m_available == 0
-    assert r_available == 0
+    assert m_conn_id is None
+    assert r_conn_id is None
 
     # Downgrade must remove the new tables and restore member_user_keys.
     command.downgrade(config, "c1d2e3f4a5b6")
