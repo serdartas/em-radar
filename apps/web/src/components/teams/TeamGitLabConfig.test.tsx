@@ -166,6 +166,12 @@ function mockApi(options: MockOptions = {}) {
     if (url.endsWith("/api/connections") && method === "GET") {
       return Promise.resolve(jsonResponse(connectionsList))
     }
+    // M9-08: GitLabMemberPicker mounts inside the GitLab members section and
+    // immediately fetches the team's saved members. Return an empty list so
+    // existing M9-07 tests are not disturbed.
+    if (url.includes("/gitlab/members") && method === "GET") {
+      return Promise.resolve(jsonResponse([]))
+    }
     throw new Error(`unexpected fetch: ${method} ${url}`)
   })
 }
