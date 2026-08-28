@@ -561,6 +561,9 @@ class GitLabConnector:
                     "per_page": per_page,
                     "page": page,
                     "order_by": "id",
+                    # Keep discovery scoped to projects reachable through the connection;
+                    # without this GitLab.com returns unrelated public projects.
+                    "membership": True,
                 },
             )
             projects.extend(_repository_ref_from_payload(payload) for payload in payloads)

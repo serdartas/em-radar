@@ -69,6 +69,8 @@ def test_search_projects_issues_bounded_query_and_maps_results(
     assert params["order_by"] == "id"
     # search_namespaces lets a namespace / full-path query resolve, not only the bare name.
     assert params["search_namespaces"] == "true"
+    # membership keeps discovery scoped to projects reachable through the connection.
+    assert params["membership"] == "true"
 
 
 def test_search_projects_raises_on_non_advancing_pagination(
