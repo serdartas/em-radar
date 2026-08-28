@@ -42,6 +42,7 @@ from em_radar_core.models import (
     ReportStatus,
     Repository,
     Review,
+    ScopeVerificationStatus,
     Severity,
     SignalFinding,
     SignalDefinition,
@@ -99,6 +100,7 @@ from em_radar_api.tables import (
     ReportTable,
     SignalFindingTable,
     SprintTable,
+    TeamGitLabRepositoryTable,
     TeamProfileTable,
 )
 
@@ -613,19 +615,45 @@ async def _run_team_report(
     # Gate the code fetch on the selected signals actually needing it.  When the selected signal
     # group contains no merge-request signals, skip _fetch_code_data entirely so that a transient
     # connector error on the code source does not produce a spurious partial-data note.
+    #
+    # Compute the team's configured verified repository ids from saved config (§21 determinism).
+    # These are the only repositories the report may scope to; live activity is never consulted.
+    code_source_selected = (
+        has_code_source and team_row.code_connection_id is not None and bool(code_definitions)
+    )
+    configured_repo_ids: list[str] = []
+    if code_source_selected:
+        configured_repo_rows = session.exec(
+            select(TeamGitLabRepositoryTable).where(
+                TeamGitLabRepositoryTable.team_profile_id == team_row.id,
+                TeamGitLabRepositoryTable.connection_id == team_row.code_connection_id,
+                TeamGitLabRepositoryTable.verification_status == ScopeVerificationStatus.VERIFIED,
+            )
+        ).all()
+        configured_repo_ids = sorted(str(r.gitlab_project_id) for r in configured_repo_rows)
+        if not configured_repo_ids:
+            partial_data_notes.append(
+                {"source": "code", "reason": "no team-owned repositories configured"}
+            )
+
+    if code_source_selected and configured_repo_ids and team_row.code_connection_id is not None:
+        code_coro = _fetch_code_data(
+            session, team_row.code_connection_id, mr_window, configured_repo_ids
+        )
+    elif code_source_selected:
+        # Code signals selected but no repositories configured: return an empty result (not None)
+        # so the report succeeds with zero code findings rather than being marked failed (§17).
+        code_coro = _resolved(_CodeFetchResult(repositories=[], mergerequests=[], reviews=[]))
+    else:
+        code_coro = _resolved(None)
+
     wi_result, code_result = await asyncio.gather(
         (
             _fetch_workitems_and_transitions(board_meta, window, custom_field_ids)
             if board_meta is not None
             else _resolved(([], []))
         ),
-        (
-            _fetch_code_data(session, team_row.code_connection_id, mr_window)
-            if has_code_source
-            and team_row.code_connection_id is not None
-            and bool(code_definitions)
-            else _resolved(None)
-        ),
+        code_coro,
         return_exceptions=True,
     )
 
@@ -844,7 +872,7 @@ async def _run_team_report(
                     connector_id=str(team_row.code_connection_id),
                     scope_id=str(team_row.code_connection_id),
                     scope_type="repository",
-                    name="code",
+                    name="MRs in team-owned repositories",
                     capabilities=("reviews", "pipelines"),
                     connector_capabilities=get_connector_capabilities(
                         str(code_connection.connector_name) if code_connection else None
@@ -1018,8 +1046,13 @@ async def _fetch_code_data(
     session: Session,
     code_connection_id: UUID,
     window: EvaluationWindow,
+    configured_repo_ids: list[str],
 ) -> _CodeFetchResult:
-    """Fetch repositories, merge requests, and (if available) reviews from the code connection."""
+    """Fetch repositories, merge requests, and (if available) reviews from the code connection.
+
+    Only the team's configured verified repositories (``configured_repo_ids``) are fetched;
+    scope comes from saved config, never from live activity (§21 determinism).
+    """
     code_connection = get_source_connection(session, code_connection_id)
     if code_connection is None:
         raise HTTPException(status_code=404, detail="code connection not found")
@@ -1041,7 +1074,15 @@ async def _fetch_code_data(
         return _CodeFetchResult(repositories=[], mergerequests=[], reviews=[])
 
     try:
-        repositories = await code_connector.list_repositories()
+        # Resolve the configured project ids to connector Repository objects first, then scope the
+        # MR fetch to their connector-native external ids. Using the connector's own external_id
+        # (not the bare numeric id) keeps the fetched MRs' repository_id consistent with the
+        # persisted Repository rows, so the MR -> Repository FK resolves on persistence.
+        configured_set = set(configured_repo_ids)
+        all_repositories = await code_connector.list_repositories()
+        repositories = [
+            repo for repo in all_repositories if repo.external_id.split("/")[-1] in configured_set
+        ]
         mr_scope = MergeRequestScope(
             repository_external_ids=[repo.external_id for repo in repositories]
         )

@@ -11,11 +11,14 @@ Tests cover:
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from typing import ClassVar
 from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.orm import sessionmaker
+from sqlmodel import Session
 
 from em_radar_core.connectors import (
     Capabilities,
@@ -30,9 +33,11 @@ from em_radar_core.models import (
     EvaluationWindow,
     MergeRequest,
     Repository,
+    ScopeVerificationStatus,
     Source,
 )
 
+from em_radar_api.tables import TeamGitLabRepositoryTable
 from test_source_connection_routes import (
     JiraTestConnector,
     _create_board_scope,
@@ -42,6 +47,30 @@ from test_source_connection_routes import (
 )
 
 _REPO_ID = UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+
+
+def _seed_gitlab_repo(
+    session_factory: sessionmaker[Session],
+    team_id: str,
+    connection_id: str,
+    gitlab_project_id: int = 1,
+) -> None:
+    """Insert a verified TeamGitLabRepositoryTable row so report scoping includes it."""
+    now = datetime.now(UTC)
+    with session_factory() as session:
+        session.add(
+            TeamGitLabRepositoryTable(
+                team_profile_id=UUID(team_id),
+                connection_id=UUID(connection_id),
+                gitlab_project_id=gitlab_project_id,
+                name="test-repo",
+                path_with_namespace="group/test-repo",
+                verification_status=ScopeVerificationStatus.VERIFIED,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        session.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -157,7 +186,7 @@ def _create_group(api_client: TestClient, name: str, signal_ids: list[str]) -> s
 
 
 def test_transient_code_source_error_produces_partial_data_note(
-    api_client: TestClient, monkeypatch: pytest.MonkeyPatch
+    api_client: TestClient, session_factory: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """ConnectorTransientError on code fetch → succeeded report with a code partial-data note.
 
@@ -184,6 +213,7 @@ def test_transient_code_source_error_produces_partial_data_note(
             "sprint_length_days": 14,
         },
     ).json()["id"]
+    _seed_gitlab_repo(session_factory, team_id, gitlab_id)
 
     report = _run_report(api_client, team_id)
 
@@ -195,7 +225,7 @@ def test_transient_code_source_error_produces_partial_data_note(
 
 
 def test_rate_limited_code_source_produces_partial_data_note(
-    api_client: TestClient, monkeypatch: pytest.MonkeyPatch
+    api_client: TestClient, session_factory: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """ConnectorRateLimitedError on code fetch → succeeded report with a partial-data note.
 
@@ -222,6 +252,7 @@ def test_rate_limited_code_source_produces_partial_data_note(
             "sprint_length_days": 14,
         },
     ).json()["id"]
+    _seed_gitlab_repo(session_factory, team_id, gitlab_id)
 
     report = _run_report(api_client, team_id)
 
@@ -231,7 +262,7 @@ def test_rate_limited_code_source_produces_partial_data_note(
 
 
 def test_non_typed_connector_error_is_still_fatal(
-    api_client: TestClient, monkeypatch: pytest.MonkeyPatch
+    api_client: TestClient, session_factory: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """ConnectorDataError (non-partial-data error) must yield 502, not a succeeded report.
 
@@ -258,6 +289,7 @@ def test_non_typed_connector_error_is_still_fatal(
             "sprint_length_days": 14,
         },
     ).json()["id"]
+    _seed_gitlab_repo(session_factory, team_id, gitlab_id)
 
     job_resp = api_client.post(
         "/api/reports/run", json={"connector": "jira", "team_profile_id": team_id}
@@ -318,7 +350,7 @@ def test_scrum_board_partial_workitem_failure_fails_gracefully(
 
 
 def test_code_only_team_all_sources_failed_marks_report_failed(
-    api_client: TestClient, monkeypatch: pytest.MonkeyPatch
+    api_client: TestClient, session_factory: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """AUDIT-5: code-only team whose sole (code) source fails → FAILED (not SUCCEEDED).
 
@@ -340,6 +372,7 @@ def test_code_only_team_all_sources_failed_marks_report_failed(
             "working_mode": "kanban",
         },
     ).json()["id"]
+    _seed_gitlab_repo(session_factory, team_id, gitlab_id)
 
     report = _run_report(api_client, team_id)
 
