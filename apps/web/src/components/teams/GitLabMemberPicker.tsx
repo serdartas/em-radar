@@ -30,6 +30,8 @@ interface PersistArgs {
 
 export interface GitLabMemberPickerProps {
   teamId: string
+  /** The team's active GitLab code connection id. Only members anchored to it are shown/saved. */
+  connectionId: string
 }
 
 function memberLabel(m: { username: string; display_name: string | null }): string {
@@ -57,7 +59,7 @@ function savedMemberToLocal(m: TeamGitLabMember): LocalMember {
  *   possible until the GET succeeds, preventing a destructive replace from
  *   an empty baseline.
  */
-export function GitLabMemberPicker({ teamId }: GitLabMemberPickerProps) {
+export function GitLabMemberPicker({ teamId, connectionId }: GitLabMemberPickerProps) {
   const queryClient = useQueryClient()
 
   // Raw query updated on every keystroke; debouncedQuery drives the search fetch.
@@ -94,12 +96,19 @@ export function GitLabMemberPicker({ teamId }: GitLabMemberPickerProps) {
   })
 
   // Seed selectedMembers from the server exactly once (first successful load).
+  // Only members anchored to the active connection are seeded: rows left over from a
+  // previous connection must not be shown or re-sent (their numeric ids are instance-local
+  // and would resolve to unrelated accounts on the current instance).
   useEffect(() => {
     if (savedMembers !== undefined && !initialized) {
-      setSelectedMembers(savedMembers.map(savedMemberToLocal))
+      setSelectedMembers(
+        savedMembers
+          .filter((m) => m.connection_id === connectionId)
+          .map(savedMemberToLocal),
+      )
       setInitialized(true)
     }
-  }, [savedMembers, initialized])
+  }, [savedMembers, initialized, connectionId])
 
   // Server-side search — enabled only when a non-empty debounced query exists.
   const { data: searchResults = [] } = useQuery<GitLabMemberSearchResult[]>({
@@ -110,7 +119,11 @@ export function GitLabMemberPicker({ teamId }: GitLabMemberPickerProps) {
 
   // PUT the full member set on each change (replace semantics).
   // The snapshot in variables lets onError roll back without stale-closure risk.
-  const { mutate: persistMembers } = useMutation<TeamGitLabMember[], Error, PersistArgs>({
+  const { mutate: persistMembers, isPending: isSaving } = useMutation<
+    TeamGitLabMember[],
+    Error,
+    PersistArgs
+  >({
     mutationFn: ({ members }) =>
       replaceGitLabMembers(
         teamId,
@@ -144,6 +157,9 @@ export function GitLabMemberPicker({ teamId }: GitLabMemberPickerProps) {
     }))
 
   function handleSelect(value: string) {
+    // Serialize writes: ignore edits while a replace PUT is in flight so an older,
+    // larger full-set request cannot commit after a newer one and resurrect members.
+    if (isSaving) return
     // Only real search results can be selected (§5.2); the Combobox's onSelect
     // fires exclusively for actual options so no free-text guard is needed here,
     // but we double-check that the value maps to a known result.
@@ -173,6 +189,7 @@ export function GitLabMemberPicker({ teamId }: GitLabMemberPickerProps) {
   }
 
   function handleRemove(gitlabUserId: number) {
+    if (isSaving) return
     const snapshot = [...selectedMembers]
     const newMembers = selectedMembers.filter((m) => m.gitlab_user_id !== gitlabUserId)
     setSelectedMembers(newMembers)
@@ -197,6 +214,7 @@ export function GitLabMemberPicker({ teamId }: GitLabMemberPickerProps) {
     <div className="space-y-2">
       <Combobox
         key={comboboxKey}
+        disabled={isSaving}
         inputLabel="Search GitLab members"
         onQueryChange={setRawQuery}
         onSelect={handleSelect}
@@ -218,7 +236,8 @@ export function GitLabMemberPicker({ teamId }: GitLabMemberPickerProps) {
               <span>{memberLabel(m)}</span>
               <button
                 aria-label={`Remove ${m.display_name ?? m.username}`}
-                className="ml-2 text-slate-400 hover:text-slate-700"
+                className="ml-2 text-slate-400 hover:text-slate-700 disabled:opacity-50"
+                disabled={isSaving}
                 onClick={() => handleRemove(m.gitlab_user_id)}
                 type="button"
               >

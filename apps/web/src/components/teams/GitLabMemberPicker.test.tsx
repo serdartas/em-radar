@@ -89,13 +89,15 @@ function mockApi({
   })
 }
 
+const connectionId = "conn-1"
+
 function renderPicker() {
   const queryClient = new QueryClient({
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
   })
   return render(
     <QueryClientProvider client={queryClient}>
-      <GitLabMemberPicker teamId={teamId} />
+      <GitLabMemberPicker connectionId={connectionId} teamId={teamId} />
     </QueryClientProvider>,
   )
 }
@@ -321,6 +323,108 @@ describe("GitLabMemberPicker: full replace set", () => {
       expect(body).toContainEqual({ gitlab_user_id: 101 })
       expect(body).toContainEqual({ gitlab_user_id: 102 })
     })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Connection filter: members anchored to a different connection are not seeded
+// ---------------------------------------------------------------------------
+
+describe("GitLabMemberPicker: connection filter", () => {
+  it("does not seed or re-send members anchored to a different connection", async () => {
+    const staleMember = {
+      ...existingMember,
+      id: "mbr-stale",
+      connection_id: "conn-OTHER",
+      gitlab_user_id: 999,
+      username: "stale",
+      display_name: "Stale User",
+    }
+    const jdoeSaved = {
+      ...existingMember,
+      id: "mbr-2",
+      gitlab_user_id: 102,
+      username: "jdoe",
+      display_name: "Jane Doe",
+    }
+    const fetchMock = mockApi({
+      // GET returns a member on the active connection plus one on a different connection.
+      initialMembers: [existingMember, staleMember],
+      searchResponse: [searchResults[1]], // Jane Doe
+      putResponse: [existingMember, jdoeSaved],
+    })
+    renderPicker()
+
+    // Only the active-connection member is shown; the stale-connection member is not.
+    await screen.findByText("John Smith @jsmith")
+    expect(screen.queryByText("Stale User @stale")).toBeNull()
+
+    // Add a new member; the PUT must not include the stale-connection id (999).
+    const input = await screen.findByRole("combobox")
+    fireEvent.change(input, { target: { value: "jane" } })
+    const option = await screen.findByRole("option", { name: /Jane Doe @jdoe/ })
+    fireEvent.mouseDown(option)
+
+    await waitFor(() => {
+      const putCalls = fetchMock.mock.calls.filter(
+        (args) => (args[1] as RequestInit | undefined)?.method === "PUT",
+      )
+      expect(putCalls).toHaveLength(1)
+      const body = JSON.parse(
+        (putCalls[0][1] as RequestInit).body as string,
+      ) as Array<{ gitlab_user_id: number }>
+      expect(body).toContainEqual({ gitlab_user_id: 101 })
+      expect(body).toContainEqual({ gitlab_user_id: 102 })
+      expect(body).not.toContainEqual({ gitlab_user_id: 999 })
+    })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Serialization: edits are blocked while a replace PUT is in flight
+// ---------------------------------------------------------------------------
+
+describe("GitLabMemberPicker: serialized writes", () => {
+  it("disables the picker while a save is pending so overlapping PUTs cannot race", async () => {
+    let resolvePut!: (r: Response) => void
+    // The PUT stays pending until we resolve it, keeping the mutation in flight.
+    const pendingPut = new Promise<Response>((resolve) => {
+      resolvePut = resolve
+    })
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = typeof input === "string" ? input : input.toString()
+      const method = (init as RequestInit | undefined)?.method ?? "GET"
+      if (url.includes("member-search")) {
+        return Promise.resolve(jsonResponse(searchResults))
+      }
+      if (url.includes("/gitlab/members")) {
+        if (method === "PUT") {
+          return pendingPut
+        }
+        return Promise.resolve(jsonResponse([existingMember]))
+      }
+      throw new Error(`unexpected fetch: ${method} ${url}`)
+    })
+    renderPicker()
+
+    await screen.findByText("John Smith @jsmith")
+
+    // Start a removal — the PUT stays pending.
+    fireEvent.click(screen.getByRole("button", { name: "Remove John Smith" }))
+
+    // While pending, the search combobox and any remove buttons are disabled, so a
+    // second overlapping PUT cannot be started.
+    await waitFor(() => {
+      expect(screen.getByRole("combobox")).toBeDisabled()
+    })
+
+    const putCalls = fetchMock.mock.calls.filter(
+      (args) => (args[1] as RequestInit | undefined)?.method === "PUT",
+    )
+    expect(putCalls).toHaveLength(1)
+
+    // Clean up the hanging promise so the test runner does not leak it.
+    resolvePut(jsonResponse([]))
   })
 })
 

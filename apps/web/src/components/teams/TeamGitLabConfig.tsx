@@ -60,7 +60,7 @@ export function TeamGitLabConfig({ codeConnections, team }: TeamGitLabConfigProp
           Select the GitLab users who belong to this team. Used to scope merge-request activity by
           author.
         </p>
-        <GitLabMemberPicker teamId={team.id} />
+        <GitLabMemberPicker connectionId={codeConnection.id} teamId={team.id} />
       </section>
 
       {/* GitLab repositories section — M9-09 mounts its picker here. */}
