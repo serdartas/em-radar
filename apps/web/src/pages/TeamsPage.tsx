@@ -14,6 +14,7 @@ export function TeamsPage() {
   const queryClient = useQueryClient()
   const { isLoading, teams, boardScopes, groups, jiraConnections, codeConnections } =
     useTeamSetupData()
+  const hasGitLabConnector = codeConnections.length > 0
   const [name, setName] = useState("")
   // Track which teams are in edit mode by team.id — stable across updated_at remounts.
   const [editingIds, setEditingIds] = useState<Set<string>>(new Set())
@@ -79,6 +80,7 @@ export function TeamsPage() {
                 boardScopes={boardScopes}
                 codeConnections={codeConnections}
                 groups={groups}
+                hasGitLabConnector={hasGitLabConnector}
                 isEditing={editingIds.has(team.id)}
                 jiraConnections={jiraConnections}
                 key={team.updated_at}

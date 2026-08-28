@@ -4,6 +4,8 @@ import { apiFetch } from "@/lib/api"
 
 export type WorkingMode = "kanban" | "scrum"
 
+export type GitLabConfigStatus = "not_applicable" | "setup_required" | "configured"
+
 export interface TeamProfile {
   id: string
   name: string
@@ -15,6 +17,7 @@ export interface TeamProfile {
   working_mode: WorkingMode
   sprint_length_days: number | null
   member_user_keys: string[]
+  gitlab_config_status: GitLabConfigStatus
   created_at: string
   updated_at: string
 }

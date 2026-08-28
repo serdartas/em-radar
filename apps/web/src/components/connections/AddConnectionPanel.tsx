@@ -5,9 +5,11 @@ import { useEffect, useRef, useState } from "react"
 import { ConnectionForm } from "@/components/connections/ConnectionForm"
 import { Button } from "@/components/ui/button"
 import { type Connector } from "@/lib/connectors"
+import { type SourceConnection } from "@/lib/connections"
 
 interface AddConnectionPanelProps {
   connectors: Connector[]
+  onSaved?: (connection: SourceConnection) => void
 }
 
 /**
@@ -20,7 +22,7 @@ interface AddConnectionPanelProps {
  * extra tab stops. When it collapses, focus returns to the "Add connection" reveal
  * button so the user does not lose their place in the page.
  */
-export function AddConnectionPanel({ connectors }: AddConnectionPanelProps) {
+export function AddConnectionPanel({ connectors, onSaved }: AddConnectionPanelProps) {
   const [open, setOpen] = useState(false)
   const revealButtonRef = useRef<HTMLButtonElement>(null)
   const formContainerRef = useRef<HTMLDivElement>(null)
@@ -53,7 +55,7 @@ export function AddConnectionPanel({ connectors }: AddConnectionPanelProps) {
       <ConnectionForm
         connectors={connectors}
         onCancel={() => setOpen(false)}
-        onSaved={() => setOpen(false)}
+        onSaved={(conn) => { setOpen(false); onSaved?.(conn) }}
       />
     </div>
   )

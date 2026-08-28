@@ -2,24 +2,52 @@
 
 import { useMemo, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useNavigate } from "react-router-dom"
 
 import { AddConnectionPanel } from "@/components/connections/AddConnectionPanel"
 import { ConnectionDeleteConfirm } from "@/components/connections/ConnectionDeleteConfirm"
 import { ConnectionForm } from "@/components/connections/ConnectionForm"
 import { TestResult } from "@/components/connections/TestResult"
 import { Button } from "@/components/ui/button"
+import { Callout } from "@/components/ui/callout"
 import { Card, CardContent } from "@/components/ui/card"
 import { type Connector, getConnectors } from "@/lib/connectors"
 import { listConnections, type SourceConnection, testExistingConnection } from "@/lib/connections"
+import { listTeams } from "@/lib/teams"
 
 export function SourceConnectionsPage() {
+  const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const connectorsQuery = useQuery({ queryKey: ["connectors"], queryFn: getConnectors })
   const connectionsQuery = useQuery({ queryKey: ["connections"], queryFn: listConnections })
 
   const connectors = useMemo(() => connectorsQuery.data ?? [], [connectorsQuery.data])
   const [editing, setEditing] = useState<SourceConnection | null>(null)
+  const [notificationCount, setNotificationCount] = useState<number | null>(null)
 
   const connections = connectionsQuery.data ?? []
+
+  const mrCapableConnectorNames = useMemo(
+    () => new Set(connectors.filter((c) => c.capabilities.provides_mergerequests).map((c) => c.name)),
+    [connectors],
+  )
+
+  function handleNewConnection(conn: SourceConnection) {
+    if (!mrCapableConnectorNames.has(conn.connector_name)) return
+    void (async () => {
+      try {
+        const freshTeams = await queryClient.fetchQuery({
+          queryKey: ["teams"],
+          queryFn: listTeams,
+          staleTime: 0,
+        })
+        const count = freshTeams.filter((t) => t.gitlab_config_status !== "configured").length
+        if (count > 0) setNotificationCount(count)
+      } catch {
+        // Notification is informational; silently skip if teams cannot be fetched.
+      }
+    })()
+  }
 
   return (
     <section aria-labelledby="page-title" className="space-y-8">
@@ -32,6 +60,36 @@ export function SourceConnectionsPage() {
           masked.
         </p>
       </header>
+
+      {notificationCount !== null && (
+        <Callout role="status" title="GitLab connected" variant="info">
+          <p>
+            {notificationCount === 1
+              ? "1 team has no GitLab configuration yet."
+              : `${notificationCount} teams have no GitLab configuration yet.`}
+          </p>
+          <div className="mt-3 flex gap-2">
+            <Button
+              onClick={() => {
+                setNotificationCount(null)
+                navigate("/teams")
+              }}
+              size="sm"
+              type="button"
+            >
+              Set up teams
+            </Button>
+            <Button
+              onClick={() => setNotificationCount(null)}
+              size="sm"
+              type="button"
+              variant="outline"
+            >
+              Later
+            </Button>
+          </div>
+        </Callout>
+      )}
 
       <ConnectionList
         connections={connections}
@@ -49,9 +107,9 @@ export function SourceConnectionsPage() {
         />
       ) : connectionsQuery.isSuccess ? (
         connections.length > 0 ? (
-          <AddConnectionPanel connectors={connectors} />
+          <AddConnectionPanel connectors={connectors} onSaved={handleNewConnection} />
         ) : (
-          <ConnectionForm connectors={connectors} />
+          <ConnectionForm connectors={connectors} onSaved={handleNewConnection} />
         )
       ) : null}
     </section>

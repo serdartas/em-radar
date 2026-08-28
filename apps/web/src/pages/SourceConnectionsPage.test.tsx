@@ -745,3 +745,280 @@ describe("SourceConnectionsPage", () => {
     })
   })
 })
+
+// ---------------------------------------------------------------------------
+// M9-10: Post-connection GitLab notification (§16)
+// ---------------------------------------------------------------------------
+
+const gitlabConnectorMR = {
+  name: "gitlab",
+  display_name: "GitLab",
+  config_schema: {
+    type: "object",
+    properties: {
+      base_url: { type: "string", title: "Base URL" },
+      token: { type: "string", title: "Token", writeOnly: true },
+    },
+    required: ["base_url", "token"],
+  },
+  capabilities: {
+    provides_workitems: false,
+    provides_sprints: false,
+    provides_mergerequests: true,
+    provides_repositories: true,
+    provides_reviews: true,
+    provides_comments: false,
+    provides_transitions: false,
+    supports_incremental_fetch: false,
+    supports_pagination_cursor: false,
+    max_window_days: null,
+  },
+}
+
+const teamsWithUnconfigured = [
+  {
+    id: "t1",
+    name: "Alpha",
+    description: null,
+    connection_ids: [],
+    scope_ids: [],
+    signal_config_group_ids: [],
+    code_connection_id: null,
+    working_mode: "scrum",
+    sprint_length_days: 14,
+    member_user_keys: [],
+    gitlab_config_status: "setup_required",
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+  },
+  {
+    id: "t2",
+    name: "Beta",
+    description: null,
+    connection_ids: [],
+    scope_ids: [],
+    signal_config_group_ids: [],
+    code_connection_id: null,
+    working_mode: "scrum",
+    sprint_length_days: 14,
+    member_user_keys: [],
+    gitlab_config_status: "configured",
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+  },
+]
+
+describe("SourceConnectionsPage — M9-10 post-connect notification (§16)", () => {
+  it("shows ONE notification with unconfigured team count after a new MR-capable connection is saved", async () => {
+    const createdGitLab = {
+      id: "gl-1",
+      name: "GitLab Cloud",
+      connector_name: "gitlab",
+      config: { base_url: "https://gitlab.com", token: "****" },
+      created_at: "2026-08-01T00:00:00Z",
+    }
+    let connectionsStore: typeof createdGitLab[] = []
+
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = typeof input === "string" ? input : input.toString()
+      const method = init?.method ?? "GET"
+      if (url.endsWith("/api/connectors")) return Promise.resolve(jsonResponse([gitlabConnectorMR]))
+      if (url.endsWith("/api/connections") && method === "GET")
+        return Promise.resolve(jsonResponse(connectionsStore))
+      if (url.endsWith("/api/connections") && method === "POST") {
+        connectionsStore = [createdGitLab]
+        return Promise.resolve(jsonResponse(createdGitLab, 201))
+      }
+      // Teams query for notification count — 1 setup_required + 1 configured = count is 1
+      if (url.endsWith("/api/teams") && method === "GET")
+        return Promise.resolve(jsonResponse(teamsWithUnconfigured))
+      throw new Error(`unexpected fetch: ${method} ${url}`)
+    })
+
+    const queryClient = new QueryClient({
+      defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
+    })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <SourceConnectionsPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    // Fill and submit the form
+    fireEvent.change(await screen.findByLabelText(/Connection name/), {
+      target: { value: "GitLab Cloud" },
+    })
+    fireEvent.change(screen.getByLabelText(/^Base URL/), {
+      target: { value: "https://gitlab.com" },
+    })
+    fireEvent.change(screen.getByLabelText(/^Token/), { target: { value: "tok" } })
+    fireEvent.click(screen.getByRole("button", { name: "Add connection" }))
+
+    // Notification must appear exactly once with the correct count (1 unconfigured out of 2)
+    const notification = await screen.findByRole("status")
+    expect(notification).toBeInTheDocument()
+    expect(notification.textContent).toMatch(/1 team has no GitLab configuration yet/i)
+
+    // There must be exactly one notification — not one per team
+    expect(screen.getAllByRole("status")).toHaveLength(1)
+
+    // Actions must be present
+    expect(screen.getByRole("button", { name: "Set up teams" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Later" })).toBeInTheDocument()
+  })
+
+  it("dismisses the notification when Later is clicked", async () => {
+    const createdGitLab = {
+      id: "gl-2",
+      name: "GitLab",
+      connector_name: "gitlab",
+      config: {},
+      created_at: "2026-08-01T00:00:00Z",
+    }
+    let connectionsStore: typeof createdGitLab[] = []
+
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = typeof input === "string" ? input : input.toString()
+      const method = init?.method ?? "GET"
+      if (url.endsWith("/api/connectors")) return Promise.resolve(jsonResponse([gitlabConnectorMR]))
+      if (url.endsWith("/api/connections") && method === "GET")
+        return Promise.resolve(jsonResponse(connectionsStore))
+      if (url.endsWith("/api/connections") && method === "POST") {
+        connectionsStore = [createdGitLab]
+        return Promise.resolve(jsonResponse(createdGitLab, 201))
+      }
+      if (url.endsWith("/api/teams") && method === "GET")
+        return Promise.resolve(jsonResponse(teamsWithUnconfigured))
+      throw new Error(`unexpected fetch: ${method} ${url}`)
+    })
+
+    const queryClient = new QueryClient({
+      defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
+    })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <SourceConnectionsPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    fireEvent.change(await screen.findByLabelText(/Connection name/), {
+      target: { value: "GitLab" },
+    })
+    fireEvent.change(screen.getByLabelText(/^Base URL/), {
+      target: { value: "https://gitlab.com" },
+    })
+    fireEvent.change(screen.getByLabelText(/^Token/), { target: { value: "tok" } })
+    fireEvent.click(screen.getByRole("button", { name: "Add connection" }))
+
+    await screen.findByRole("status")
+    fireEvent.click(screen.getByRole("button", { name: "Later" }))
+
+    await waitFor(() => {
+      expect(screen.queryByRole("status")).not.toBeInTheDocument()
+    })
+  })
+
+  it("does NOT show notification when a non-MR-capable connector is saved", async () => {
+    const createdJira = {
+      id: "j-1",
+      name: "Prod Jira",
+      connector_name: "jira",
+      config: {},
+      created_at: "2026-08-01T00:00:00Z",
+    }
+    let connectionsStore: typeof createdJira[] = []
+
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = typeof input === "string" ? input : input.toString()
+      const method = init?.method ?? "GET"
+      if (url.endsWith("/api/connectors")) return Promise.resolve(jsonResponse([jiraConnector]))
+      if (url.endsWith("/api/connections") && method === "GET")
+        return Promise.resolve(jsonResponse(connectionsStore))
+      if (url.endsWith("/api/connections") && method === "POST") {
+        connectionsStore = [createdJira]
+        return Promise.resolve(jsonResponse(createdJira, 201))
+      }
+      // Teams are available (unconfigured) so the ONLY thing suppressing the
+      // notification is the MR-capability gate, not a missing teams fetch.
+      if (url.endsWith("/api/teams") && method === "GET")
+        return Promise.resolve(jsonResponse(teamsWithUnconfigured))
+      throw new Error(`unexpected fetch: ${method} ${url}`)
+    })
+
+    const queryClient = new QueryClient({
+      defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
+    })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <SourceConnectionsPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    fireEvent.change(await screen.findByLabelText(/Connection name/), {
+      target: { value: "Prod Jira" },
+    })
+    fireEvent.change(screen.getByLabelText(/^Base URL/), {
+      target: { value: "https://jira.example.com" },
+    })
+    fireEvent.change(screen.getByLabelText(/^Token/), { target: { value: "tok" } })
+    fireEvent.click(screen.getByRole("button", { name: "Add connection" }))
+
+    // Wait for connection to appear in list
+    await screen.findByText("Prod Jira")
+    // No notification should appear (Jira is not MR-capable), even though unconfigured teams exist.
+    expect(screen.queryByRole("status")).not.toBeInTheDocument()
+  })
+
+  it("does NOT show notification when editing an existing GitLab connection", async () => {
+    const existingGitLab = {
+      id: "gl-existing",
+      name: "GitLab Cloud",
+      connector_name: "gitlab",
+      config: { base_url: "https://gitlab.com" },
+      created_at: "2026-08-01T00:00:00Z",
+    }
+
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = typeof input === "string" ? input : input.toString()
+      const method = init?.method ?? "GET"
+      if (url.endsWith("/api/connectors")) return Promise.resolve(jsonResponse([gitlabConnectorMR]))
+      if (url.endsWith("/api/connections") && method === "GET")
+        return Promise.resolve(jsonResponse([existingGitLab]))
+      if (url.includes("/api/connections/") && method === "PUT")
+        return Promise.resolve(jsonResponse(existingGitLab))
+      // Unconfigured teams exist: only the create-vs-edit gate suppresses the notification.
+      if (url.endsWith("/api/teams") && method === "GET")
+        return Promise.resolve(jsonResponse(teamsWithUnconfigured))
+      throw new Error(`unexpected fetch: ${method} ${url}`)
+    })
+
+    const queryClient = new QueryClient({
+      defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
+    })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <SourceConnectionsPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    // Enter edit mode for the existing GitLab connection and save it.
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }))
+    const saveButton = await screen.findByRole("button", { name: "Save connection" })
+    await waitFor(() => expect(saveButton).not.toBeDisabled())
+    // Submit the form directly — clicking a submit button can miss the form's onSubmit.
+    fireEvent.submit(saveButton.closest("form")!)
+
+    // Editing must not trigger the post-connection notification (§16 is create-only).
+    await waitFor(() => {
+      expect(screen.queryByRole("status")).not.toBeInTheDocument()
+    })
+  })
+})
