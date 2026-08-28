@@ -29,6 +29,7 @@ class Capabilities:
     provides_comments: bool = False
     provides_transitions: bool = False
     provides_members: bool = False
+    provides_projects: bool = False
     supports_incremental_fetch: bool = False
     supports_pagination_cursor: bool = False
     max_window_days: int | None = None
@@ -197,6 +198,20 @@ class MemberProvider(Protocol):
     async def get_user(self, provider_user_id: str) -> MemberRef | None: ...
 
 
+@dataclass(frozen=True)
+class RepositoryRef:
+    provider_project_id: str
+    name: str
+    path_with_namespace: str
+
+
+@runtime_checkable
+class RepositorySearchProvider(Protocol):
+    async def search_projects(self, query: str, *, limit: int) -> list[RepositoryRef]: ...
+
+    async def get_project(self, provider_project_id: str) -> RepositoryRef | None: ...
+
+
 class ConnectorError(Exception):
     pass
 
@@ -243,6 +258,8 @@ __all__ = [
     "MemberRef",
     "MergeRequestProvider",
     "MergeRequestScope",
+    "RepositoryRef",
+    "RepositorySearchProvider",
     "ReviewProvider",
     "SignalCapabilitySchema",
     "SignalField",

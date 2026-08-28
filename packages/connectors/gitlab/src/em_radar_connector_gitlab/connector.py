@@ -25,6 +25,7 @@ from em_radar_core.connectors import (
     FieldAvailability,
     MemberRef,
     MergeRequestScope,
+    RepositoryRef,
     SignalCapabilitySchema,
     SignalField,
     ValueProvider,
@@ -157,6 +158,7 @@ class GitLabConnector:
             provides_repositories=True,
             provides_reviews=True,
             provides_members=True,
+            provides_projects=True,
             supports_incremental_fetch=True,
         )
 
@@ -544,6 +546,40 @@ class GitLabConnector:
         except ConnectorNotFoundError:
             return None
         return _member_ref_from_payload(payload)
+
+    async def search_projects(self, query: str, *, limit: int) -> list[RepositoryRef]:
+        limit = max(1, limit)
+        per_page = min(limit, PAGE_SIZE)
+        projects: list[RepositoryRef] = []
+        page = 1
+        while len(projects) < limit:
+            payloads, next_page = await self._request_json_list_page(
+                "api/v4/projects",
+                params={
+                    "search": query,
+                    "search_namespaces": True,
+                    "per_page": per_page,
+                    "page": page,
+                    "order_by": "id",
+                    # Keep discovery scoped to projects reachable through the connection;
+                    # without this GitLab.com returns unrelated public projects.
+                    "membership": True,
+                },
+            )
+            projects.extend(_repository_ref_from_payload(payload) for payload in payloads)
+            if next_page is None:
+                break
+            if next_page <= page:
+                raise ConnectorDataError("GitLab project pagination did not advance")
+            page = next_page
+        return projects[:limit]
+
+    async def get_project(self, provider_project_id: str) -> RepositoryRef | None:
+        try:
+            payload = await self._request_json(f"api/v4/projects/{provider_project_id}")
+        except ConnectorNotFoundError:
+            return None
+        return _repository_ref_from_payload(payload)
 
     async def fetch_reviews(
         self,
@@ -1033,6 +1069,14 @@ def _member_ref_from_payload(payload: Mapping[str, object]) -> MemberRef:
         username=_required_str(payload, "username"),
         display_name=_required_str(payload, "name"),
         avatar_url=_optional_str(payload, "avatar_url"),
+    )
+
+
+def _repository_ref_from_payload(payload: Mapping[str, object]) -> RepositoryRef:
+    return RepositoryRef(
+        provider_project_id=str(_required_positive_int(payload, "id")),
+        name=_required_str(payload, "name"),
+        path_with_namespace=_required_str(payload, "path_with_namespace"),
     )
 
 
