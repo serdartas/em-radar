@@ -208,12 +208,9 @@ class RepositoryRef:
 
 
 @dataclass(frozen=True)
-class RepositoryActivity:
+class RepositoryActivity(RepositoryRef):
     """Per-project activity aggregated across a set of members for a discovery window."""
 
-    provider_project_id: str
-    name: str
-    path_with_namespace: str
     contributing_member_count: int
     merge_request_count: int
     last_activity_at: datetime

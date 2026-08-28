@@ -9,7 +9,7 @@ import pytest
 
 import em_radar_connector_gitlab.connector as gitlab_connector_module
 from em_radar_connector_gitlab.connector import DISCOVERY_DEFAULT_WINDOW_DAYS, GitLabConnector
-from em_radar_core.connectors import RepositoryActivity
+from em_radar_core.connectors import RepositoryActivity, RepositoryRef
 
 
 def _client_factory_for(
@@ -88,6 +88,8 @@ def test_discover_aggregates_mrs_per_project_single_member(
     results = asyncio.run(run())
 
     assert len(results) == 2
+    # RepositoryActivity is a RepositoryRef subtype per the connector contract.
+    assert all(isinstance(r, RepositoryRef) for r in results)
     alpha = next(r for r in results if r.provider_project_id == "10")
     beta = next(r for r in results if r.provider_project_id == "20")
 
