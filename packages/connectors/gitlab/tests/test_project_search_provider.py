@@ -264,3 +264,33 @@ def test_search_projects_returns_empty_list_when_no_results(
         return results
 
     assert asyncio.run(run()) == []
+
+
+def test_search_projects_page_param_starts_at_given_page(monkeypatch: pytest.MonkeyPatch) -> None:
+    requests: list[httpx.Request] = []
+
+    async def run() -> list[RepositoryRef]:
+        def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            return httpx.Response(
+                200,
+                headers={"X-Next-Page": ""},
+                json=[_PROJECT_PAYLOAD],
+            )
+
+        monkeypatch.setattr(
+            gitlab_connector_module,
+            "CLIENT_FACTORY",
+            _client_factory_for(handler),
+        )
+        connector = GitLabConnector(
+            {"base_url": "https://gitlab.example.com", "token": "gitlab-token-1234"}
+        )
+        results = await connector.search_projects("fraud", limit=20, page=2)
+        await connector.close()
+        return results
+
+    asyncio.run(run())
+
+    assert len(requests) == 1
+    assert requests[0].url.params["page"] == "2"

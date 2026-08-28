@@ -262,3 +262,33 @@ def test_search_users_avatar_url_can_be_none(monkeypatch: pytest.MonkeyPatch) ->
     results = asyncio.run(run())
     assert len(results) == 1
     assert results[0].avatar_url is None
+
+
+def test_search_users_page_param_starts_at_given_page(monkeypatch: pytest.MonkeyPatch) -> None:
+    requests: list[httpx.Request] = []
+
+    async def run() -> list[MemberRef]:
+        def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            return httpx.Response(
+                200,
+                headers={"X-Next-Page": ""},
+                json=[_USER_PAYLOAD],
+            )
+
+        monkeypatch.setattr(
+            gitlab_connector_module,
+            "CLIENT_FACTORY",
+            _client_factory_for(handler),
+        )
+        connector = GitLabConnector(
+            {"base_url": "https://gitlab.example.com", "token": "gitlab-token-1234"}
+        )
+        results = await connector.search_users("musta", limit=20, page=2)
+        await connector.close()
+        return results
+
+    asyncio.run(run())
+
+    assert len(requests) == 1
+    assert requests[0].url.params["page"] == "2"

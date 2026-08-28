@@ -539,11 +539,11 @@ class GitLabConnector:
                 raise ConnectorDataError("GitLab project pagination did not advance")
             page = next_page
 
-    async def search_users(self, query: str, *, limit: int) -> list[MemberRef]:
+    async def search_users(self, query: str, *, limit: int, page: int = 1) -> list[MemberRef]:
         limit = max(1, limit)
         per_page = min(limit, PAGE_SIZE)
         members: list[MemberRef] = []
-        page = 1
+        page = max(1, page)
         while len(members) < limit:
             payloads, next_page = await self._request_json_list_page(
                 "api/v4/users",
@@ -564,11 +564,13 @@ class GitLabConnector:
             return None
         return _member_ref_from_payload(payload)
 
-    async def search_projects(self, query: str, *, limit: int) -> list[RepositoryRef]:
+    async def search_projects(
+        self, query: str, *, limit: int, page: int = 1
+    ) -> list[RepositoryRef]:
         limit = max(1, limit)
         per_page = min(limit, PAGE_SIZE)
         projects: list[RepositoryRef] = []
-        page = 1
+        page = max(1, page)
         while len(projects) < limit:
             payloads, next_page = await self._request_json_list_page(
                 "api/v4/projects",
