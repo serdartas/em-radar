@@ -22,7 +22,7 @@ from em_radar_api.team_profiles import (
     TeamProfileRead,
     TeamProfileUpdate,
 )
-from em_radar_core.models import WorkingMode
+from em_radar_core.models import ScopeVerificationStatus, WorkingMode
 
 
 class InvalidTeamProfile(ValueError):
@@ -45,19 +45,34 @@ def create_team_profile(session: Session, team: TeamProfileCreate) -> TeamProfil
 
 def list_team_profiles(session: Session) -> list[TeamProfileRead]:
     rows = session.exec(select(TeamProfileTable).order_by(TeamProfileTable.created_at)).all()
-    # Fetch config-status presence with two grouped queries instead of two per team (N+1).
-    teams_with_members = set(
-        session.exec(select(TeamGitLabMemberTable.team_profile_id).distinct()).all()
-    )
-    teams_with_repos = set(
-        session.exec(select(TeamGitLabRepositoryTable.team_profile_id).distinct()).all()
-    )
+    # Fetch config-status with two grouped queries (no N+1). A team is configured only when
+    # it has at least one VERIFIED row anchored to its current code_connection_id.
+    verified_member_pairs: set[tuple[UUID, UUID | None]] = {
+        (team_profile_id, connection_id)
+        for team_profile_id, connection_id in session.exec(
+            select(
+                TeamGitLabMemberTable.team_profile_id, TeamGitLabMemberTable.connection_id
+            ).where(TeamGitLabMemberTable.verification_status == ScopeVerificationStatus.VERIFIED)
+        ).all()
+    }
+    verified_repo_pairs: set[tuple[UUID, UUID | None]] = {
+        (team_profile_id, connection_id)
+        for team_profile_id, connection_id in session.exec(
+            select(
+                TeamGitLabRepositoryTable.team_profile_id,
+                TeamGitLabRepositoryTable.connection_id,
+            ).where(
+                TeamGitLabRepositoryTable.verification_status == ScopeVerificationStatus.VERIFIED
+            )
+        ).all()
+    }
     result: list[TeamProfileRead] = []
     for row in rows:
+        pair = (row.id, row.code_connection_id)
         status = _gitlab_config_status_from_flags(
             row.code_connection_id,
-            row.id in teams_with_members,
-            row.id in teams_with_repos,
+            pair in verified_member_pairs,
+            pair in verified_repo_pairs,
         )
         result.append(TeamProfileRead.model_validate(row, update={"gitlab_config_status": status}))
     return result
@@ -160,14 +175,20 @@ def _compute_gitlab_config_status(
         return GitLabConfigStatus.NOT_APPLICABLE
     has_member = (
         session.exec(
-            select(TeamGitLabMemberTable).where(TeamGitLabMemberTable.team_profile_id == team_id)
+            select(TeamGitLabMemberTable).where(
+                TeamGitLabMemberTable.team_profile_id == team_id,
+                TeamGitLabMemberTable.connection_id == code_connection_id,
+                TeamGitLabMemberTable.verification_status == ScopeVerificationStatus.VERIFIED,
+            )
         ).first()
         is not None
     )
     has_repo = (
         session.exec(
             select(TeamGitLabRepositoryTable).where(
-                TeamGitLabRepositoryTable.team_profile_id == team_id
+                TeamGitLabRepositoryTable.team_profile_id == team_id,
+                TeamGitLabRepositoryTable.connection_id == code_connection_id,
+                TeamGitLabRepositoryTable.verification_status == ScopeVerificationStatus.VERIFIED,
             )
         ).first()
         is not None

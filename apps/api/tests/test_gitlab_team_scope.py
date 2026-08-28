@@ -596,7 +596,7 @@ def test_member_search_proxies_to_connector(
     assert len(data) == 2
     assert data[0]["username"] == "alice"
     assert data[1]["username"] == "bob"
-    mock_connector.search_users.assert_awaited_once_with("ali", limit=10)
+    mock_connector.search_users.assert_awaited_once_with("ali", limit=10, page=1)
 
 
 def test_member_search_caps_limit(
@@ -614,7 +614,7 @@ def test_member_search_caps_limit(
     )
 
     api_client.get(f"/api/teams/{team_id}/gitlab/member-search?q=x&limit=999")
-    mock_connector.search_users.assert_awaited_once_with("x", limit=50)
+    mock_connector.search_users.assert_awaited_once_with("x", limit=50, page=1)
 
 
 def test_member_search_auth_error_is_502(
@@ -678,7 +678,7 @@ def test_project_search_proxies_to_connector(
     assert len(data) == 1
     assert data[0]["provider_project_id"] == "10"
     assert data[0]["name"] == "frontend"
-    mock_connector.search_projects.assert_awaited_once_with("front", limit=5)
+    mock_connector.search_projects.assert_awaited_once_with("front", limit=5, page=1)
 
 
 def test_project_search_auth_error_is_not_empty_list(
@@ -821,3 +821,275 @@ def test_repository_suggestions_auth_error_is_502(
 
     resp = api_client.get(f"/api/teams/{team_id}/gitlab/repository-suggestions")
     assert resp.status_code == 502
+
+
+# ---------------------------------------------------------------------------
+# Fix 2: config status only counts VERIFIED rows on the current connection
+# ---------------------------------------------------------------------------
+
+
+def test_gitlab_config_status_setup_required_when_member_on_different_connection(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+) -> None:
+    conn_id = _make_gitlab_connection(session_factory)
+    other_conn_id = _make_gitlab_connection(session_factory)
+    team_id = _make_team(session_factory, code_connection_id=conn_id)
+
+    now = datetime.now(UTC)
+    with session_factory() as session:
+        session.add(
+            TeamGitLabMemberTable(
+                team_profile_id=team_id,
+                connection_id=other_conn_id,
+                gitlab_user_id=100,
+                username="stale_user",
+                display_name="Stale User",
+                verification_status=ScopeVerificationStatus.VERIFIED,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        session.commit()
+
+    resp = api_client.get(f"/api/teams/{team_id}")
+    assert resp.status_code == 200
+    assert resp.json()["gitlab_config_status"] == "setup_required"
+
+
+def test_gitlab_config_status_setup_required_when_member_is_unavailable(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+) -> None:
+    conn_id = _make_gitlab_connection(session_factory)
+    team_id = _make_team(session_factory, code_connection_id=conn_id)
+
+    now = datetime.now(UTC)
+    with session_factory() as session:
+        session.add(
+            TeamGitLabMemberTable(
+                team_profile_id=team_id,
+                connection_id=conn_id,
+                gitlab_user_id=100,
+                username="unavail_user",
+                display_name="Unavail User",
+                verification_status=ScopeVerificationStatus.UNAVAILABLE,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        session.commit()
+
+    resp = api_client.get(f"/api/teams/{team_id}")
+    assert resp.status_code == 200
+    assert resp.json()["gitlab_config_status"] == "setup_required"
+
+
+def test_list_teams_gitlab_config_status_setup_required_when_member_on_different_connection(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+) -> None:
+    conn_id = _make_gitlab_connection(session_factory)
+    other_conn_id = _make_gitlab_connection(session_factory)
+    team_id = _make_team(session_factory, code_connection_id=conn_id)
+
+    now = datetime.now(UTC)
+    with session_factory() as session:
+        session.add(
+            TeamGitLabMemberTable(
+                team_profile_id=team_id,
+                connection_id=other_conn_id,
+                gitlab_user_id=200,
+                username="stale_user",
+                display_name="Stale User",
+                verification_status=ScopeVerificationStatus.VERIFIED,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        session.commit()
+
+    resp = api_client.get("/api/teams")
+    assert resp.status_code == 200
+    team = next((t for t in resp.json() if t["id"] == str(team_id)), None)
+    assert team is not None
+    assert team["gitlab_config_status"] == "setup_required"
+
+
+def test_list_teams_gitlab_config_status_setup_required_when_repo_is_unavailable(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+) -> None:
+    conn_id = _make_gitlab_connection(session_factory)
+    team_id = _make_team(session_factory, code_connection_id=conn_id)
+
+    now = datetime.now(UTC)
+    with session_factory() as session:
+        session.add(
+            TeamGitLabRepositoryTable(
+                team_profile_id=team_id,
+                connection_id=conn_id,
+                gitlab_project_id=50,
+                name="old-repo",
+                path_with_namespace="org/old-repo",
+                verification_status=ScopeVerificationStatus.UNAVAILABLE,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        session.commit()
+
+    resp = api_client.get("/api/teams")
+    assert resp.status_code == 200
+    team = next((t for t in resp.json() if t["id"] == str(team_id)), None)
+    assert team is not None
+    assert team["gitlab_config_status"] == "setup_required"
+
+
+# ---------------------------------------------------------------------------
+# Fix 3: repository suggestions exclude members on wrong connection / unavailable
+# ---------------------------------------------------------------------------
+
+
+def test_repository_suggestions_excludes_members_on_wrong_connection(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conn_id = _make_gitlab_connection(session_factory)
+    other_conn_id = _make_gitlab_connection(session_factory)
+    team_id = _make_team(session_factory, code_connection_id=conn_id)
+
+    now = datetime.now(UTC)
+    with session_factory() as session:
+        session.add(
+            TeamGitLabMemberTable(
+                team_profile_id=team_id,
+                connection_id=conn_id,
+                gitlab_user_id=100,
+                username="valid_user",
+                display_name="Valid User",
+                verification_status=ScopeVerificationStatus.VERIFIED,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        session.add(
+            TeamGitLabMemberTable(
+                team_profile_id=team_id,
+                connection_id=other_conn_id,
+                gitlab_user_id=200,
+                username="stale_user",
+                display_name="Stale User",
+                verification_status=ScopeVerificationStatus.VERIFIED,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        session.add(
+            TeamGitLabMemberTable(
+                team_profile_id=team_id,
+                connection_id=conn_id,
+                gitlab_user_id=300,
+                username="unavail_user",
+                display_name="Unavail User",
+                verification_status=ScopeVerificationStatus.UNAVAILABLE,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        session.commit()
+
+    mock_connector = _make_mock_connector()
+    monkeypatch.setattr(
+        "em_radar_api.routers.teams.instantiate_connector",
+        lambda *_a, **_kw: mock_connector,
+    )
+
+    resp = api_client.get(f"/api/teams/{team_id}/gitlab/repository-suggestions")
+    assert resp.status_code == 200
+
+    mock_connector.discover_repositories_by_activity.assert_awaited_once()
+    call_args = mock_connector.discover_repositories_by_activity.call_args
+    passed_ids = call_args.args[0]
+    assert "100" in passed_ids
+    assert "200" not in passed_ids
+    assert "300" not in passed_ids
+
+
+def test_repository_suggestions_returns_empty_when_all_members_stale(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conn_id = _make_gitlab_connection(session_factory)
+    other_conn_id = _make_gitlab_connection(session_factory)
+    team_id = _make_team(session_factory, code_connection_id=conn_id)
+
+    now = datetime.now(UTC)
+    with session_factory() as session:
+        session.add(
+            TeamGitLabMemberTable(
+                team_profile_id=team_id,
+                connection_id=other_conn_id,
+                gitlab_user_id=999,
+                username="stale_user",
+                display_name="Stale User",
+                verification_status=ScopeVerificationStatus.VERIFIED,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        session.commit()
+
+    mock_connector = _make_mock_connector()
+    monkeypatch.setattr(
+        "em_radar_api.routers.teams.instantiate_connector",
+        lambda *_a, **_kw: mock_connector,
+    )
+
+    resp = api_client.get(f"/api/teams/{team_id}/gitlab/repository-suggestions")
+    assert resp.status_code == 200
+    assert resp.json() == []
+    mock_connector.discover_repositories_by_activity.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Fix 4: page parameter is forwarded through the search endpoints
+# ---------------------------------------------------------------------------
+
+
+def test_member_search_forwards_page_to_connector(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conn_id = _make_gitlab_connection(session_factory)
+    team_id = _make_team(session_factory, code_connection_id=conn_id)
+
+    mock_connector = _make_mock_connector(search_users_return=[])
+    monkeypatch.setattr(
+        "em_radar_api.routers.teams.instantiate_connector",
+        lambda *_a, **_kw: mock_connector,
+    )
+
+    api_client.get(f"/api/teams/{team_id}/gitlab/member-search?q=ali&limit=10&page=2")
+    mock_connector.search_users.assert_awaited_once_with("ali", limit=10, page=2)
+
+
+def test_project_search_forwards_page_to_connector(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conn_id = _make_gitlab_connection(session_factory)
+    team_id = _make_team(session_factory, code_connection_id=conn_id)
+
+    mock_connector = _make_mock_connector(search_projects_return=[])
+    monkeypatch.setattr(
+        "em_radar_api.routers.teams.instantiate_connector",
+        lambda *_a, **_kw: mock_connector,
+    )
+
+    api_client.get(f"/api/teams/{team_id}/gitlab/project-search?q=front&limit=5&page=2")
+    mock_connector.search_projects.assert_awaited_once_with("front", limit=5, page=2)

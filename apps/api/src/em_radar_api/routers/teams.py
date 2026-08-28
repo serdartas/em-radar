@@ -8,7 +8,7 @@ from sqlmodel import Session, select
 from starlette.responses import Response
 
 from em_radar_api.connector_registry import create_connector
-from em_radar_api.db import get_session, get_write_session
+from em_radar_api.db import get_session, get_write_session, write_lock_acquired
 from em_radar_api.repositories.source_connections import instantiate_connector
 from em_radar_api.repositories.team_profiles import (
     InvalidTeamProfile,
@@ -140,7 +140,7 @@ def list_gitlab_members(
 async def replace_gitlab_members(
     team_id: UUID,
     body: list[GitLabMemberInput],
-    session: Session = Depends(get_write_session),
+    session: Session = Depends(get_session),
 ) -> list[TeamGitLabMemberRead]:
     team_row = session.get(TeamProfileTable, team_id)
     if team_row is None:
@@ -176,30 +176,33 @@ async def replace_gitlab_members(
         for entry in resolved:
             deduped.setdefault(entry[0], entry)
         now = datetime.now(UTC)
-        for existing in session.exec(
-            select(TeamGitLabMemberTable).where(TeamGitLabMemberTable.team_profile_id == team_id)
-        ).all():
-            session.delete(existing)
-        # Flush the deletes before inserting so re-saving an id that is still in the old set
-        # does not collide with the not-yet-flushed delete under the unique constraint.
-        session.flush()
-        result_rows: list[TeamGitLabMemberTable] = []
-        for gitlab_user_id, username, display_name in deduped.values():
-            row = TeamGitLabMemberTable(
-                team_profile_id=team_id,
-                connection_id=team_row.code_connection_id,
-                gitlab_user_id=gitlab_user_id,
-                username=username,
-                display_name=display_name,
-                verification_status=ScopeVerificationStatus.VERIFIED,
-                created_at=now,
-                updated_at=now,
-            )
-            session.add(row)
-            result_rows.append(row)
-        session.commit()
-        for row in result_rows:
-            session.refresh(row)
+        with write_lock_acquired():
+            for existing in session.exec(
+                select(TeamGitLabMemberTable).where(
+                    TeamGitLabMemberTable.team_profile_id == team_id
+                )
+            ).all():
+                session.delete(existing)
+            # Flush the deletes before inserting so re-saving an id that is still in the old
+            # set does not collide with the not-yet-flushed delete under the unique constraint.
+            session.flush()
+            result_rows: list[TeamGitLabMemberTable] = []
+            for gitlab_user_id, username, display_name in deduped.values():
+                row = TeamGitLabMemberTable(
+                    team_profile_id=team_id,
+                    connection_id=team_row.code_connection_id,
+                    gitlab_user_id=gitlab_user_id,
+                    username=username,
+                    display_name=display_name,
+                    verification_status=ScopeVerificationStatus.VERIFIED,
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(row)
+                result_rows.append(row)
+            session.commit()
+            for row in result_rows:
+                session.refresh(row)
         return [TeamGitLabMemberRead.model_validate(row) for row in result_rows]
     finally:
         await connector.close()
@@ -232,7 +235,7 @@ def list_gitlab_repositories(
 async def replace_gitlab_repositories(
     team_id: UUID,
     body: list[GitLabRepositoryInput],
-    session: Session = Depends(get_write_session),
+    session: Session = Depends(get_session),
 ) -> list[TeamGitLabRepositoryRead]:
     team_row = session.get(TeamProfileTable, team_id)
     if team_row is None:
@@ -268,32 +271,33 @@ async def replace_gitlab_repositories(
         for entry in resolved:
             deduped.setdefault(entry[0], entry)
         now = datetime.now(UTC)
-        for existing in session.exec(
-            select(TeamGitLabRepositoryTable).where(
-                TeamGitLabRepositoryTable.team_profile_id == team_id
-            )
-        ).all():
-            session.delete(existing)
-        # Flush the deletes before inserting so re-saving an id that is still in the old set
-        # does not collide with the not-yet-flushed delete under the unique constraint.
-        session.flush()
-        result_rows: list[TeamGitLabRepositoryTable] = []
-        for gitlab_project_id, name, path_with_namespace in deduped.values():
-            row = TeamGitLabRepositoryTable(
-                team_profile_id=team_id,
-                connection_id=team_row.code_connection_id,
-                gitlab_project_id=gitlab_project_id,
-                name=name,
-                path_with_namespace=path_with_namespace,
-                verification_status=ScopeVerificationStatus.VERIFIED,
-                created_at=now,
-                updated_at=now,
-            )
-            session.add(row)
-            result_rows.append(row)
-        session.commit()
-        for row in result_rows:
-            session.refresh(row)
+        with write_lock_acquired():
+            for existing in session.exec(
+                select(TeamGitLabRepositoryTable).where(
+                    TeamGitLabRepositoryTable.team_profile_id == team_id
+                )
+            ).all():
+                session.delete(existing)
+            # Flush the deletes before inserting so re-saving an id that is still in the old
+            # set does not collide with the not-yet-flushed delete under the unique constraint.
+            session.flush()
+            result_rows: list[TeamGitLabRepositoryTable] = []
+            for gitlab_project_id, name, path_with_namespace in deduped.values():
+                row = TeamGitLabRepositoryTable(
+                    team_profile_id=team_id,
+                    connection_id=team_row.code_connection_id,
+                    gitlab_project_id=gitlab_project_id,
+                    name=name,
+                    path_with_namespace=path_with_namespace,
+                    verification_status=ScopeVerificationStatus.VERIFIED,
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(row)
+                result_rows.append(row)
+            session.commit()
+            for row in result_rows:
+                session.refresh(row)
         return [TeamGitLabRepositoryRead.model_validate(row) for row in result_rows]
     finally:
         await connector.close()
@@ -312,6 +316,7 @@ async def gitlab_member_search(
     team_id: UUID,
     q: str = Query(default=""),
     limit: int = Query(default=_MEMBER_SEARCH_DEFAULT_LIMIT, ge=1),
+    page: int = Query(1, ge=1),
     session: Session = Depends(get_session),
 ) -> list[MemberSearchResult]:
     team_row = session.get(TeamProfileTable, team_id)
@@ -326,7 +331,7 @@ async def gitlab_member_search(
             )
         capped = min(limit, _MEMBER_SEARCH_MAX_LIMIT)
         try:
-            refs = await connector.search_users(q, limit=capped)
+            refs = await connector.search_users(q, limit=capped, page=page)
         except ConnectorAuthError as error:
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)
@@ -361,6 +366,7 @@ async def gitlab_project_search(
     team_id: UUID,
     q: str = Query(default=""),
     limit: int = Query(default=_PROJECT_SEARCH_DEFAULT_LIMIT, ge=1),
+    page: int = Query(1, ge=1),
     session: Session = Depends(get_session),
 ) -> list[ProjectSearchResult]:
     team_row = session.get(TeamProfileTable, team_id)
@@ -375,7 +381,7 @@ async def gitlab_project_search(
             )
         capped = min(limit, _PROJECT_SEARCH_MAX_LIMIT)
         try:
-            refs = await connector.search_projects(q, limit=capped)
+            refs = await connector.search_projects(q, limit=capped, page=page)
         except ConnectorAuthError as error:
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)
@@ -420,7 +426,13 @@ async def gitlab_repository_suggestions(
             status_code=status.HTTP_409_CONFLICT,
             detail="team has no GitLab connection configured",
         )
-    saved_members = list_team_gitlab_members(session, team_id)
+    all_members = list_team_gitlab_members(session, team_id)
+    saved_members = [
+        m
+        for m in all_members
+        if m.connection_id == team_row.code_connection_id
+        and m.verification_status == ScopeVerificationStatus.VERIFIED
+    ]
     if not saved_members:
         return []
     connector = _require_gitlab_connector(session, team_row)
