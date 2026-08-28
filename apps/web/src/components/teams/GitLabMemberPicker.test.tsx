@@ -9,6 +9,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { GitLabMemberPicker } from "@/components/teams/GitLabMemberPicker"
+import { GitLabRepositoryPicker } from "@/components/teams/GitLabRepositoryPicker"
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -460,6 +461,67 @@ describe("GitLabMemberPicker: load gate", () => {
 })
 
 // ---------------------------------------------------------------------------
+// Connection change re-seed: picker re-seeds when connectionId prop changes
+// (Testing-library rerender keeps the SAME instance so this exercises the
+// internal seededConnectionId guard, not a parent-key remount.)
+// ---------------------------------------------------------------------------
+
+describe("GitLabMemberPicker: connection change re-seed", () => {
+  it("re-seeds from the new connection and clears the old connection's chips", async () => {
+    const memberA = {
+      id: "mbr-a",
+      team_profile_id: teamId,
+      connection_id: "conn-A",
+      gitlab_user_id: 201,
+      username: "alice",
+      display_name: "Alice",
+      verification_status: "verified",
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    }
+    const memberB = {
+      id: "mbr-b",
+      team_profile_id: teamId,
+      connection_id: "conn-B",
+      gitlab_user_id: 202,
+      username: "bob",
+      display_name: "Bob",
+      verification_status: "verified",
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    }
+    // The members GET always returns both rows; the seed effect filters by connectionId.
+    mockApi({ initialMembers: [memberA, memberB] })
+
+    const queryClient = new QueryClient({
+      defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
+    })
+
+    const { rerender } = render(
+      <QueryClientProvider client={queryClient}>
+        <GitLabMemberPicker connectionId="conn-A" teamId={teamId} />
+      </QueryClientProvider>,
+    )
+
+    // Initial seed: only the conn-A member chip should appear.
+    await screen.findByText("Alice @alice")
+    expect(screen.queryByText("Bob @bob")).toBeNull()
+
+    // Rerender the SAME component instance with a different connectionId.
+    // seededConnectionId ("conn-A") !== connectionId ("conn-B") so re-seed fires.
+    rerender(
+      <QueryClientProvider client={queryClient}>
+        <GitLabMemberPicker connectionId="conn-B" teamId={teamId} />
+      </QueryClientProvider>,
+    )
+
+    // After re-seed: conn-B chip appears and conn-A chip is gone.
+    await screen.findByText("Bob @bob")
+    expect(screen.queryByText("Alice @alice")).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
 // onError rollback: a failed PUT must revert the optimistic update
 // ---------------------------------------------------------------------------
 
@@ -500,5 +562,87 @@ describe("GitLabMemberPicker: PUT failure rollback", () => {
 
     // The original member is still shown.
     expect(screen.getByText("John Smith @jsmith")).toBeInTheDocument()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Suggestions invalidation: member PUT (success or error) triggers a refetch
+// of the repository-suggestions query for any currently mounted repository picker
+// ---------------------------------------------------------------------------
+
+describe("GitLabMemberPicker: suggestions invalidation after member change", () => {
+  it("refetches repository-suggestions after a member PUT settles (success)", async () => {
+    let suggestionFetchCount = 0
+
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = typeof input === "string" ? input : input.toString()
+      const method = (init as RequestInit | undefined)?.method ?? "GET"
+
+      if (url.includes("repository-suggestions")) {
+        suggestionFetchCount++
+        return Promise.resolve(
+          jsonResponse([
+            {
+              provider_project_id: "201",
+              name: "frontend",
+              path_with_namespace: "acme/frontend",
+              contributing_member_count: 3,
+              merge_request_count: 42,
+              last_activity_at: "2026-07-01T00:00:00Z",
+            },
+          ]),
+        )
+      }
+      if (url.includes("project-search")) {
+        return Promise.resolve(jsonResponse([]))
+      }
+      if (url.includes("/gitlab/repositories")) {
+        return Promise.resolve(jsonResponse([]))
+      }
+      if (url.includes("member-search")) {
+        return Promise.resolve(jsonResponse(searchResults))
+      }
+      if (url.includes("/gitlab/members")) {
+        if (method === "PUT") {
+          return Promise.resolve(jsonResponse([existingMember]))
+        }
+        return Promise.resolve(jsonResponse([]))
+      }
+      throw new Error(`unexpected fetch: ${method} ${url}`)
+    })
+
+    // Both pickers share one QueryClient so the invalidation from the member picker
+    // reaches the suggestions query that the repository picker has an active observer on.
+    const sharedQueryClient = new QueryClient({
+      defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
+    })
+    const sharedTeamId = "team-shared-inv"
+    const sharedConnectionId = "conn-shared-inv"
+
+    render(
+      <QueryClientProvider client={sharedQueryClient}>
+        <GitLabMemberPicker connectionId={sharedConnectionId} teamId={sharedTeamId} />
+        <GitLabRepositoryPicker connectionId={sharedConnectionId} teamId={sharedTeamId} />
+      </QueryClientProvider>,
+    )
+
+    // Wait for both pickers to complete their initial load (suggestions fetched once).
+    const combobox = await screen.findByRole("combobox")
+    await waitFor(() => expect(suggestionFetchCount).toBeGreaterThanOrEqual(1))
+    const countBefore = suggestionFetchCount
+
+    // Add a member via the member picker to trigger a PUT.
+    fireEvent.change(combobox, { target: { value: "john" } })
+    const option = await screen.findByRole("option", { name: /John Smith @jsmith/ })
+    fireEvent.mouseDown(option)
+
+    // After the PUT settles, the member picker invalidates the suggestions query.
+    // The repository picker has an active observer so it refetches immediately.
+    await waitFor(
+      () => {
+        expect(suggestionFetchCount).toBeGreaterThan(countBefore)
+      },
+      { timeout: 2000 },
+    )
   })
 })

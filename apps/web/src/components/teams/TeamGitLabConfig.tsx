@@ -61,7 +61,7 @@ export function TeamGitLabConfig({ codeConnections, team }: TeamGitLabConfigProp
           Select the GitLab users who belong to this team. Used to scope merge-request activity by
           author.
         </p>
-        <GitLabMemberPicker connectionId={codeConnection.id} teamId={team.id} />
+        <GitLabMemberPicker key={codeConnection.id} connectionId={codeConnection.id} teamId={team.id} />
       </section>
 
       {/* GitLab repositories section — M9-09 mounts its picker here. */}
@@ -73,7 +73,7 @@ export function TeamGitLabConfig({ codeConnections, team }: TeamGitLabConfigProp
           Select the repositories owned by this team. Used to scope merge-request activity by
           project.
         </p>
-        <GitLabRepositoryPicker connectionId={codeConnection.id} teamId={team.id} />
+        <GitLabRepositoryPicker key={codeConnection.id} connectionId={codeConnection.id} teamId={team.id} />
       </section>
     </div>
   )

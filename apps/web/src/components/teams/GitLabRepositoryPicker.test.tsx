@@ -591,6 +591,67 @@ describe("GitLabRepositoryPicker: load gate", () => {
 })
 
 // ---------------------------------------------------------------------------
+// Connection change re-seed: picker re-seeds when connectionId prop changes
+// (Testing-library rerender keeps the SAME instance so this exercises the
+// internal seededConnectionId guard, not a parent-key remount.)
+// ---------------------------------------------------------------------------
+
+describe("GitLabRepositoryPicker: connection change re-seed", () => {
+  it("re-seeds from the new connection and clears the old connection's chips", async () => {
+    const repoA = {
+      id: "repo-a",
+      team_profile_id: teamId,
+      connection_id: "conn-A",
+      gitlab_project_id: 101,
+      name: "repo-alpha",
+      path_with_namespace: "acme/repo-alpha",
+      verification_status: "verified",
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    }
+    const repoB = {
+      id: "repo-b",
+      team_profile_id: teamId,
+      connection_id: "conn-B",
+      gitlab_project_id: 202,
+      name: "repo-beta",
+      path_with_namespace: "acme/repo-beta",
+      verification_status: "verified",
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    }
+    // The repositories GET always returns both rows; the seed effect filters by connectionId.
+    mockApi({ initialRepos: [repoA, repoB] })
+
+    const queryClient = new QueryClient({
+      defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
+    })
+
+    const { rerender } = render(
+      <QueryClientProvider client={queryClient}>
+        <GitLabRepositoryPicker connectionId="conn-A" teamId={teamId} />
+      </QueryClientProvider>,
+    )
+
+    // Initial seed: only the conn-A chip should appear.
+    await screen.findByRole("button", { name: /Remove repo-alpha/ })
+    expect(screen.queryByRole("button", { name: /Remove repo-beta/ })).toBeNull()
+
+    // Rerender the SAME component instance with a different connectionId.
+    // seededConnectionId ("conn-A") !== connectionId ("conn-B") so re-seed fires.
+    rerender(
+      <QueryClientProvider client={queryClient}>
+        <GitLabRepositoryPicker connectionId="conn-B" teamId={teamId} />
+      </QueryClientProvider>,
+    )
+
+    // After re-seed: conn-B chip appears and conn-A chip is gone.
+    await screen.findByRole("button", { name: /Remove repo-beta/ })
+    expect(screen.queryByRole("button", { name: /Remove repo-alpha/ })).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
 // onError rollback: a failed PUT must revert the optimistic update
 // ---------------------------------------------------------------------------
 

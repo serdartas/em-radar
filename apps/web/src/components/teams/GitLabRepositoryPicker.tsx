@@ -120,7 +120,9 @@ export function GitLabRepositoryPicker({ connectionId, teamId }: GitLabRepositor
   // The authoritative confirmed set displayed as chips. Seeded from the server
   // on first successful load; reconciled from the PUT response on each save.
   const [selectedRepos, setSelectedRepos] = useState<LocalRepo[]>([])
-  const [initialized, setInitialized] = useState(false)
+  // Tracks which connectionId was last used to seed selectedRepos so the effect
+  // re-seeds whenever the active connection changes while the component stays mounted.
+  const [seededConnectionId, setSeededConnectionId] = useState<string | null>(null)
 
   // Key prop used to force-remount the Combobox after each selection so it
   // resets to an empty, closed state without exposing its internals.
@@ -146,32 +148,35 @@ export function GitLabRepositoryPicker({ connectionId, teamId }: GitLabRepositor
     queryFn: () => listGitLabRepositories(teamId),
   })
 
-  // Seed selectedRepos from the server exactly once (first successful load).
-  // Only repositories anchored to the active connection are seeded: rows left over
-  // from a previous connection must not be shown or re-sent (their numeric ids are
-  // instance-local and would resolve to unrelated projects on the current instance).
+  // Seed selectedRepos whenever the active connection changes (or on first load).
+  // Comparing seededConnectionId to connectionId detects a mid-mount connection switch
+  // so selectedRepos is never left showing the previous connection's project ids
+  // (numeric ids are instance-local and would resolve to wrong projects on another instance).
   useEffect(() => {
-    if (savedRepos !== undefined && !initialized) {
+    if (savedRepos !== undefined && seededConnectionId !== connectionId) {
       setSelectedRepos(
         savedRepos.filter((r) => r.connection_id === connectionId).map(savedRepoToLocal),
       )
-      setInitialized(true)
+      setSeededConnectionId(connectionId)
     }
-  }, [savedRepos, initialized, connectionId])
+  }, [savedRepos, connectionId, seededConnectionId])
 
   // Load ranked suggestions from members' recent activity (§10, §11).
+  // connectionId is included in the key so suggestions refetch per connection rather
+  // than sharing a cross-connection cache entry.
   const {
     data: suggestions = [],
     isError: suggestionsIsError,
     error: suggestionsError,
   } = useQuery<RepositoryActivityResult[]>({
-    queryKey: ["gitlab-repository-suggestions", teamId],
+    queryKey: ["gitlab-repository-suggestions", teamId, connectionId],
     queryFn: () => getRepositorySuggestions(teamId),
   })
 
   // Server-side project search — enabled only when a non-empty debounced query exists.
+  // connectionId is included in the key so search results are scoped per connection.
   const { data: searchResults = [] } = useQuery({
-    queryKey: ["gitlab-project-search", teamId, debouncedQuery],
+    queryKey: ["gitlab-project-search", teamId, connectionId, debouncedQuery],
     queryFn: () => searchGitLabProjects(teamId, debouncedQuery),
     enabled: debouncedQuery.trim().length > 0,
   })

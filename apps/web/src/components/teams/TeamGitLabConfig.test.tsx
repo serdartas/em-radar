@@ -172,6 +172,15 @@ function mockApi(options: MockOptions = {}) {
     if (url.includes("/gitlab/members") && method === "GET") {
       return Promise.resolve(jsonResponse([]))
     }
+    // M9-09: GitLabRepositoryPicker mounts inside the GitLab repositories section
+    // and fetches saved repositories and ranked suggestions. Return empty lists so
+    // existing M9-07 tests are not disturbed.
+    if (url.includes("/gitlab/repositories") && method === "GET") {
+      return Promise.resolve(jsonResponse([]))
+    }
+    if (url.includes("repository-suggestions")) {
+      return Promise.resolve(jsonResponse([]))
+    }
     throw new Error(`unexpected fetch: ${method} ${url}`)
   })
 }
