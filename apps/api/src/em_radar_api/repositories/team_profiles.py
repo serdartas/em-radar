@@ -16,7 +16,12 @@ from em_radar_api.tables import (
     TeamGitLabRepositoryTable,
     TeamProfileTable,
 )
-from em_radar_api.team_profiles import TeamProfileCreate, TeamProfileRead, TeamProfileUpdate
+from em_radar_api.team_profiles import (
+    GitLabConfigStatus,
+    TeamProfileCreate,
+    TeamProfileRead,
+    TeamProfileUpdate,
+)
 from em_radar_core.models import WorkingMode
 
 
@@ -35,17 +40,32 @@ def create_team_profile(session: Session, team: TeamProfileCreate) -> TeamProfil
     now = datetime.now(UTC)
     row = TeamProfileTable.model_validate(team, update={"created_at": now, "updated_at": now})
     _write(session, row)
-    return TeamProfileRead.model_validate(row)
+    return _build_read(session, row)
 
 
 def list_team_profiles(session: Session) -> list[TeamProfileRead]:
     rows = session.exec(select(TeamProfileTable).order_by(TeamProfileTable.created_at)).all()
-    return [TeamProfileRead.model_validate(row) for row in rows]
+    # Fetch config-status presence with two grouped queries instead of two per team (N+1).
+    teams_with_members = set(
+        session.exec(select(TeamGitLabMemberTable.team_profile_id).distinct()).all()
+    )
+    teams_with_repos = set(
+        session.exec(select(TeamGitLabRepositoryTable.team_profile_id).distinct()).all()
+    )
+    result: list[TeamProfileRead] = []
+    for row in rows:
+        status = _gitlab_config_status_from_flags(
+            row.code_connection_id,
+            row.id in teams_with_members,
+            row.id in teams_with_repos,
+        )
+        result.append(TeamProfileRead.model_validate(row, update={"gitlab_config_status": status}))
+    return result
 
 
 def get_team_profile(session: Session, team_id: UUID) -> TeamProfileRead | None:
     row = session.get(TeamProfileTable, team_id)
-    return TeamProfileRead.model_validate(row) if row is not None else None
+    return _build_read(session, row) if row is not None else None
 
 
 def update_team_profile(
@@ -83,7 +103,7 @@ def update_team_profile(
     row.sqlmodel_update(values)
     row.updated_at = datetime.now(UTC)
     _write(session, row)
-    return TeamProfileRead.model_validate(row)
+    return _build_read(session, row)
 
 
 def delete_team_profile(session: Session, team_id: UUID) -> bool:
@@ -108,6 +128,63 @@ def delete_team_profile(session: Session, team_id: UUID) -> bool:
     session.delete(row)
     session.commit()
     return True
+
+
+def list_team_gitlab_members(session: Session, team_id: UUID) -> list[TeamGitLabMemberTable]:
+    return session.exec(
+        select(TeamGitLabMemberTable).where(TeamGitLabMemberTable.team_profile_id == team_id)
+    ).all()
+
+
+def list_team_gitlab_repositories(
+    session: Session, team_id: UUID
+) -> list[TeamGitLabRepositoryTable]:
+    return session.exec(
+        select(TeamGitLabRepositoryTable).where(
+            TeamGitLabRepositoryTable.team_profile_id == team_id
+        )
+    ).all()
+
+
+def _build_read(session: Session, row: TeamProfileTable) -> TeamProfileRead:
+    status = _compute_gitlab_config_status(session, row.id, row.code_connection_id)
+    return TeamProfileRead.model_validate(row, update={"gitlab_config_status": status})
+
+
+def _compute_gitlab_config_status(
+    session: Session,
+    team_id: UUID,
+    code_connection_id: UUID | None,
+) -> GitLabConfigStatus:
+    if code_connection_id is None:
+        return GitLabConfigStatus.NOT_APPLICABLE
+    has_member = (
+        session.exec(
+            select(TeamGitLabMemberTable).where(TeamGitLabMemberTable.team_profile_id == team_id)
+        ).first()
+        is not None
+    )
+    has_repo = (
+        session.exec(
+            select(TeamGitLabRepositoryTable).where(
+                TeamGitLabRepositoryTable.team_profile_id == team_id
+            )
+        ).first()
+        is not None
+    )
+    return _gitlab_config_status_from_flags(code_connection_id, has_member, has_repo)
+
+
+def _gitlab_config_status_from_flags(
+    code_connection_id: UUID | None,
+    has_member: bool,
+    has_repo: bool,
+) -> GitLabConfigStatus:
+    if code_connection_id is None:
+        return GitLabConfigStatus.NOT_APPLICABLE
+    if has_member or has_repo:
+        return GitLabConfigStatus.CONFIGURED
+    return GitLabConfigStatus.SETUP_REQUIRED
 
 
 def _validate_team_profile(session: Session, team: TeamProfileCreate) -> None:
