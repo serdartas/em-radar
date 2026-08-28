@@ -24,6 +24,8 @@ from em_radar_core.models import (
     Review,
     SignalFinding,
     Sprint,
+    TeamGitLabMember,
+    TeamGitLabRepository,
     TeamProfile,
     Transition,
     User,
@@ -173,6 +175,42 @@ class ReportJobTable(SQLModel, table=True):
         sa_column=Column(sa.Uuid(), ForeignKey("report.id", ondelete="SET NULL"), nullable=True),
     )
     error: str | None = None
+
+
+class TeamGitLabMemberTable(TeamGitLabMember, table=True):
+    __tablename__ = "team_gitlab_member"
+    __table_args__ = (UniqueConstraint("team_profile_id", "gitlab_user_id"),)
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    team_profile_id: UUID = Field(
+        sa_column=Column(
+            sa.Uuid(), ForeignKey("team_profile.id", ondelete="CASCADE"), nullable=False
+        )
+    )
+    connection_id: UUID | None = Field(
+        default=None,
+        sa_column=Column(
+            sa.Uuid(), ForeignKey("source_connection.id", ondelete="SET NULL"), nullable=True
+        ),
+    )
+
+
+class TeamGitLabRepositoryTable(TeamGitLabRepository, table=True):
+    __tablename__ = "team_gitlab_repository"
+    __table_args__ = (UniqueConstraint("team_profile_id", "gitlab_project_id"),)
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    team_profile_id: UUID = Field(
+        sa_column=Column(
+            sa.Uuid(), ForeignKey("team_profile.id", ondelete="CASCADE"), nullable=False
+        )
+    )
+    connection_id: UUID | None = Field(
+        default=None,
+        sa_column=Column(
+            sa.Uuid(), ForeignKey("source_connection.id", ondelete="SET NULL"), nullable=True
+        ),
+    )
 
 
 class AppSettingsTable(SQLModel, table=True):

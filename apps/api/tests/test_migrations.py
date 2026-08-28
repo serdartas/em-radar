@@ -29,6 +29,8 @@ EXPECTED_TABLES = {
     "scope_definition",
     "source_connection",
     "sprint",
+    "team_gitlab_member",
+    "team_gitlab_repository",
     "team_profile",
     "transition",
     "user",
@@ -222,3 +224,116 @@ def test_sprint_label_migration_backfills_existing_sprint_windows(
         ).scalar_one()
 
     assert label == "Sprint 99"
+
+
+def test_team_gitlab_member_and_repository_migration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M9-04: new tables created, member_user_keys dropped; rows survive connection removal."""
+    database_path = tmp_path / "m9-04.db"
+    monkeypatch.setenv(DATABASE_PATH_ENV, str(database_path))
+    config = Config(REPO_ROOT / "alembic.ini")
+
+    # Upgrade to one step before M9-04 to seed a team and connection.
+    command.upgrade(config, "c1d2e3f4a5b6")
+    engine = create_db_engine(database_path)
+
+    team_id = uuid4()
+    connection_id = uuid4()
+    member_id = uuid4()
+    repo_id = uuid4()
+
+    with engine.begin() as conn:
+        conn.execute(
+            sa.text(
+                "INSERT INTO source_connection (id, connector_name, config, name, created_at)"
+                " VALUES (:id, 'gitlab', '{}', 'GL prod', '2026-01-01')"
+            ),
+            {"id": connection_id.hex},
+        )
+        conn.execute(
+            sa.text(
+                "INSERT INTO team_profile"
+                " (id, name, connection_ids, scope_ids, signal_config_group_ids,"
+                " working_mode, member_user_keys, created_at, updated_at)"
+                " VALUES (:id, 'Eng', '[]', '[]', '[]', 'SCRUM', '[]',"
+                " '2026-01-01', '2026-01-01')"
+            ),
+            {"id": team_id.hex},
+        )
+
+    # Apply M9-04.
+    command.upgrade(config, "d2e3f4a5b6c7")
+
+    # member_user_keys must be gone from team_profile.
+    with engine.connect() as conn:
+        cols = {
+            row[1] for row in conn.execute(sa.text("PRAGMA table_info(team_profile)")).fetchall()
+        }
+    assert "member_user_keys" not in cols
+
+    # Seed a member and a repository row referencing the team and connection (verification_status
+    # defaults to VERIFIED via the server_default).
+    with engine.begin() as conn:
+        conn.execute(
+            sa.text(
+                "INSERT INTO team_gitlab_member"
+                " (id, team_profile_id, connection_id, gitlab_user_id, username,"
+                " verification_status, created_at, updated_at)"
+                " VALUES (:id, :team_id, :conn_id, 42, 'alice', 'VERIFIED',"
+                " '2026-01-01', '2026-01-01')"
+            ),
+            {"id": member_id.hex, "team_id": team_id.hex, "conn_id": connection_id.hex},
+        )
+        conn.execute(
+            sa.text(
+                "INSERT INTO team_gitlab_repository"
+                " (id, team_profile_id, connection_id, gitlab_project_id, name,"
+                " path_with_namespace, verification_status, created_at, updated_at)"
+                " VALUES (:id, :team_id, :conn_id, 99, 'my-repo', 'group/my-repo', 'VERIFIED',"
+                " '2026-01-01', '2026-01-01')"
+            ),
+            {"id": repo_id.hex, "team_id": team_id.hex, "conn_id": connection_id.hex},
+        )
+
+    # §22: connection_id FK is SET NULL — deleting the source_connection must succeed and
+    # the member/repo rows must survive with connection_id cleared.
+    with engine.begin() as conn:
+        conn.execute(sa.text("PRAGMA foreign_keys=ON"))
+        conn.execute(
+            sa.text("DELETE FROM source_connection WHERE id = :id"),
+            {"id": connection_id.hex},
+        )
+
+    # Both rows survive the connection removal.
+    with engine.connect() as conn:
+        assert conn.execute(sa.text("SELECT COUNT(*) FROM team_gitlab_member")).scalar_one() == 1
+        assert (
+            conn.execute(sa.text("SELECT COUNT(*) FROM team_gitlab_repository")).scalar_one() == 1
+        )
+
+    # connection_id must be NULL on both rows after SET NULL deletion.
+    with engine.connect() as conn:
+        m_conn_id = conn.execute(
+            sa.text("SELECT connection_id FROM team_gitlab_member WHERE id = :id"),
+            {"id": member_id.hex},
+        ).scalar_one()
+        r_conn_id = conn.execute(
+            sa.text("SELECT connection_id FROM team_gitlab_repository WHERE id = :id"),
+            {"id": repo_id.hex},
+        ).scalar_one()
+
+    assert m_conn_id is None
+    assert r_conn_id is None
+
+    # Downgrade must remove the new tables and restore member_user_keys.
+    command.downgrade(config, "c1d2e3f4a5b6")
+    with engine.connect() as conn:
+        tables = set(inspect(engine).get_table_names())
+        restored_cols = {
+            row[1] for row in conn.execute(sa.text("PRAGMA table_info(team_profile)")).fetchall()
+        }
+
+    assert "team_gitlab_member" not in tables
+    assert "team_gitlab_repository" not in tables
+    assert "member_user_keys" in restored_cols  # restored by downgrade server_default

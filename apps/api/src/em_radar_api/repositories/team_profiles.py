@@ -10,7 +10,12 @@ from em_radar_api.connector_registry import get_connector_capabilities
 from em_radar_api.scope_definitions import ScopeDefinitionTable, ScopeType
 from em_radar_api.signal_config_groups import SignalConfigGroupTable
 from em_radar_api.source_connections import SourceConnectionTable
-from em_radar_api.tables import EvaluationWindowTable, TeamProfileTable
+from em_radar_api.tables import (
+    EvaluationWindowTable,
+    TeamGitLabMemberTable,
+    TeamGitLabRepositoryTable,
+    TeamProfileTable,
+)
 from em_radar_api.team_profiles import TeamProfileCreate, TeamProfileRead, TeamProfileUpdate
 from em_radar_core.models import WorkingMode
 
@@ -90,6 +95,16 @@ def delete_team_profile(session: Session, team_id: UUID) -> bool:
     ).first()
     if window is not None:
         raise TeamProfileInUse("team is referenced by an evaluation window")
+    for member in session.exec(
+        select(TeamGitLabMemberTable).where(TeamGitLabMemberTable.team_profile_id == team_id)
+    ).all():
+        session.delete(member)
+    for repo in session.exec(
+        select(TeamGitLabRepositoryTable).where(
+            TeamGitLabRepositoryTable.team_profile_id == team_id
+        )
+    ).all():
+        session.delete(repo)
     session.delete(row)
     session.commit()
     return True

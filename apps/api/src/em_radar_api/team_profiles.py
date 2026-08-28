@@ -19,7 +19,6 @@ class TeamProfileCreate(SQLModel):
     code_connection_id: UUID | None = None
     working_mode: WorkingMode = WorkingMode.SCRUM
     sprint_length_days: int | None = None
-    member_user_keys: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_working_mode(self) -> Self:
@@ -37,7 +36,6 @@ class TeamProfileUpdate(SQLModel):
     code_connection_id: UUID | None = None
     working_mode: WorkingMode | None = None
     sprint_length_days: int | None = None
-    member_user_keys: list[str] | None = None
 
 
 class TeamProfileRead(TeamProfileCreate):

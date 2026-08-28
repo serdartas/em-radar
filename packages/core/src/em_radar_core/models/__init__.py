@@ -12,6 +12,7 @@ from em_radar_core.models.enums import (
     ReportStatus,
     ReviewDecision,
     Severity,
+    ScopeVerificationStatus,
     Source,
     SprintState,
     StatusCategory,
@@ -33,6 +34,7 @@ from em_radar_core.models.signals import (
     SignalOrigin,
     SignalTargetScope,
 )
+from em_radar_core.models.team import TeamGitLabMember, TeamGitLabRepository
 
 __all__ = [
     "Board",
@@ -54,6 +56,7 @@ __all__ = [
     "Review",
     "ReviewDecision",
     "ReportSettings",
+    "ScopeVerificationStatus",
     "Severity",
     "SignalDefinition",
     "SignalFinding",
@@ -63,6 +66,8 @@ __all__ = [
     "Sprint",
     "SprintState",
     "StatusCategory",
+    "TeamGitLabMember",
+    "TeamGitLabRepository",
     "Transition",
     "TeamProfile",
     "UUIDListJSON",
