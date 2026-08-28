@@ -69,7 +69,9 @@ export function GitLabMemberPicker({ teamId, connectionId }: GitLabMemberPickerP
   // The authoritative selection displayed as chips. Seeded from the server
   // on first successful load; reconciled from the PUT response on each save.
   const [selectedMembers, setSelectedMembers] = useState<LocalMember[]>([])
-  const [initialized, setInitialized] = useState(false)
+  // Tracks which connectionId was last used to seed selectedMembers so the effect
+  // re-seeds whenever the active connection changes while the component stays mounted.
+  const [seededConnectionId, setSeededConnectionId] = useState<string | null>(null)
 
   // Key prop used to force-remount the Combobox after each selection so it
   // resets to an empty, closed state without external control of its internals.
@@ -95,24 +97,25 @@ export function GitLabMemberPicker({ teamId, connectionId }: GitLabMemberPickerP
     queryFn: () => listGitLabMembers(teamId),
   })
 
-  // Seed selectedMembers from the server exactly once (first successful load).
-  // Only members anchored to the active connection are seeded: rows left over from a
-  // previous connection must not be shown or re-sent (their numeric ids are instance-local
-  // and would resolve to unrelated accounts on the current instance).
+  // Seed selectedMembers whenever the active connection changes (or on first load).
+  // Comparing seededConnectionId to connectionId detects a mid-mount connection switch
+  // so selectedMembers is never left showing the previous connection's user ids
+  // (numeric ids are instance-local and would resolve to unrelated accounts on another instance).
   useEffect(() => {
-    if (savedMembers !== undefined && !initialized) {
+    if (savedMembers !== undefined && seededConnectionId !== connectionId) {
       setSelectedMembers(
         savedMembers
           .filter((m) => m.connection_id === connectionId)
           .map(savedMemberToLocal),
       )
-      setInitialized(true)
+      setSeededConnectionId(connectionId)
     }
-  }, [savedMembers, initialized, connectionId])
+  }, [savedMembers, connectionId, seededConnectionId])
 
   // Server-side search — enabled only when a non-empty debounced query exists.
+  // connectionId is included in the key so search results are scoped per connection.
   const { data: searchResults = [] } = useQuery<GitLabMemberSearchResult[]>({
-    queryKey: ["gitlab-member-search", teamId, debouncedQuery],
+    queryKey: ["gitlab-member-search", teamId, connectionId, debouncedQuery],
     queryFn: () => searchGitLabMembers(teamId, debouncedQuery),
     enabled: debouncedQuery.trim().length > 0,
   })
@@ -136,12 +139,19 @@ export function GitLabMemberPicker({ teamId, connectionId }: GitLabMemberPickerP
       setMutationError(null)
       // Keep the query cache in sync for future mounts of this picker.
       queryClient.setQueryData(["gitlab-members", teamId], data)
+      // A membership change affects which repositories the server will suggest;
+      // invalidate so the repository picker refetches suggestions on next mount
+      // or immediately if it is currently mounted.
+      queryClient.invalidateQueries({ queryKey: ["gitlab-repository-suggestions", teamId] })
     },
     onError: (err, { snapshot }) => {
       // Roll back the optimistic update to the pre-mutation state so a failed
       // write never looks successful.
       setSelectedMembers(snapshot)
       setMutationError(apiErrorMessage(err, "Failed to save members. Please try again."))
+      // Even a failed write may have partially changed server state; invalidate
+      // so stale suggestions are not shown indefinitely.
+      queryClient.invalidateQueries({ queryKey: ["gitlab-repository-suggestions", teamId] })
     },
   })
 

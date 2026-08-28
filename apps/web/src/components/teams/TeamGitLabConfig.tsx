@@ -4,6 +4,7 @@ import type { SourceConnection } from "@/lib/connections"
 import type { TeamProfile } from "@/lib/teams"
 
 import { GitLabMemberPicker } from "@/components/teams/GitLabMemberPicker"
+import { GitLabRepositoryPicker } from "@/components/teams/GitLabRepositoryPicker"
 
 export interface TeamGitLabConfigProps {
   team: TeamProfile
@@ -60,7 +61,7 @@ export function TeamGitLabConfig({ codeConnections, team }: TeamGitLabConfigProp
           Select the GitLab users who belong to this team. Used to scope merge-request activity by
           author.
         </p>
-        <GitLabMemberPicker connectionId={codeConnection.id} teamId={team.id} />
+        <GitLabMemberPicker key={codeConnection.id} connectionId={codeConnection.id} teamId={team.id} />
       </section>
 
       {/* GitLab repositories section — M9-09 mounts its picker here. */}
@@ -72,11 +73,7 @@ export function TeamGitLabConfig({ codeConnections, team }: TeamGitLabConfigProp
           Select the repositories owned by this team. Used to scope merge-request activity by
           project.
         </p>
-        {/* M9-09: replace this paragraph with <TeamGitLabRepositoriesPicker team={team} codeConnection={codeConnection} /> */}
-        <p className="text-sm text-slate-400">
-          GitLab repository selection is coming soon. Save without selecting repositories and
-          configure this later.
-        </p>
+        <GitLabRepositoryPicker key={codeConnection.id} connectionId={codeConnection.id} teamId={team.id} />
       </section>
     </div>
   )
