@@ -28,6 +28,7 @@ class Capabilities:
     provides_reviews: bool = False
     provides_comments: bool = False
     provides_transitions: bool = False
+    provides_members: bool = False
     supports_incremental_fetch: bool = False
     supports_pagination_cursor: bool = False
     max_window_days: int | None = None
@@ -181,6 +182,21 @@ class CommentProvider(Protocol):
     ) -> AsyncIterator[Comment]: ...
 
 
+@dataclass(frozen=True)
+class MemberRef:
+    provider_user_id: str
+    username: str
+    display_name: str
+    avatar_url: str | None = None
+
+
+@runtime_checkable
+class MemberProvider(Protocol):
+    async def search_users(self, query: str, *, limit: int) -> list[MemberRef]: ...
+
+    async def get_user(self, provider_user_id: str) -> MemberRef | None: ...
+
+
 class ConnectorError(Exception):
     pass
 
@@ -223,6 +239,8 @@ __all__ = [
     "ConnectorRateLimitedError",
     "ConnectorTransientError",
     "FieldAvailability",
+    "MemberProvider",
+    "MemberRef",
     "MergeRequestProvider",
     "MergeRequestScope",
     "ReviewProvider",

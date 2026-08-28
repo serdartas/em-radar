@@ -23,6 +23,7 @@ from em_radar_core.connectors import (
     ConnectorRateLimitedError,
     ConnectorTransientError,
     FieldAvailability,
+    MemberRef,
     MergeRequestScope,
     SignalCapabilitySchema,
     SignalField,
@@ -155,6 +156,7 @@ class GitLabConnector:
             provides_mergerequests=True,
             provides_repositories=True,
             provides_reviews=True,
+            provides_members=True,
             supports_incremental_fetch=True,
         )
 
@@ -517,6 +519,31 @@ class GitLabConnector:
             if next_page <= page:
                 raise ConnectorDataError("GitLab project pagination did not advance")
             page = next_page
+
+    async def search_users(self, query: str, *, limit: int) -> list[MemberRef]:
+        limit = max(1, limit)
+        per_page = min(limit, PAGE_SIZE)
+        members: list[MemberRef] = []
+        page = 1
+        while len(members) < limit:
+            payloads, next_page = await self._request_json_list_page(
+                "api/v4/users",
+                params={"search": query, "per_page": per_page, "page": page},
+            )
+            members.extend(_member_ref_from_payload(payload) for payload in payloads)
+            if next_page is None:
+                break
+            if next_page <= page:
+                raise ConnectorDataError("GitLab user pagination did not advance")
+            page = next_page
+        return members[:limit]
+
+    async def get_user(self, provider_user_id: str) -> MemberRef | None:
+        try:
+            payload = await self._request_json(f"api/v4/users/{provider_user_id}")
+        except ConnectorNotFoundError:
+            return None
+        return _member_ref_from_payload(payload)
 
     async def fetch_reviews(
         self,
@@ -997,6 +1024,15 @@ def _review_from_note(
         reviewer_id=reviewer_id,
         decision=decision,
         submitted_at=submitted_at,
+    )
+
+
+def _member_ref_from_payload(payload: Mapping[str, object]) -> MemberRef:
+    return MemberRef(
+        provider_user_id=str(_required_positive_int(payload, "id")),
+        username=_required_str(payload, "username"),
+        display_name=_required_str(payload, "name"),
+        avatar_url=_optional_str(payload, "avatar_url"),
     )
 
 
