@@ -25,6 +25,7 @@ from em_radar_core.connectors import (
     FieldAvailability,
     MemberRef,
     MergeRequestScope,
+    RepositoryActivity,
     RepositoryRef,
     SignalCapabilitySchema,
     SignalField,
@@ -47,6 +48,10 @@ _logger = logging.getLogger(__name__)
 CLIENT_FACTORY: Callable[..., httpx.AsyncClient] = httpx.AsyncClient
 PAGE_SIZE = 100
 _NAMESPACE = UUID("c7d8a5f1-3b4e-4f2a-8c9d-1e0f7a6b5c3d")
+
+# Default discovery window for repository activity lookups (§15).
+# Callers derive `since` from this constant; the connector method itself only consumes `since`.
+DISCOVERY_DEFAULT_WINDOW_DAYS: int = 90
 
 
 def _url_instance_prefix(base_url: HttpUrl) -> str:
@@ -88,6 +93,17 @@ _PIPELINE_STATUS_MAP: dict[str, PipelineStatus] = {
     "scheduled": PipelineStatus.RUNNING,
     "created": PipelineStatus.RUNNING,
 }
+
+
+class _ProjectAgg:
+    """Mutable accumulator for one project's activity during repository discovery."""
+
+    def __init__(self, name: str, path_with_namespace: str, last_activity_at: datetime) -> None:
+        self.name = name
+        self.path_with_namespace = path_with_namespace
+        self.member_ids: set[str] = set()
+        self.mr_count: int = 0
+        self.last_activity_at = last_activity_at
 
 
 class GitLabConnectorConfig(BaseModel):
@@ -159,6 +175,7 @@ class GitLabConnector:
             provides_reviews=True,
             provides_members=True,
             provides_projects=True,
+            provides_repository_discovery=True,
             supports_incremental_fetch=True,
         )
 
@@ -580,6 +597,74 @@ class GitLabConnector:
         except ConnectorNotFoundError:
             return None
         return _repository_ref_from_payload(payload)
+
+    async def discover_repositories_by_activity(
+        self,
+        member_provider_user_ids: list[str],
+        *,
+        since: datetime,
+        limit: int,
+    ) -> list[RepositoryActivity]:
+        """Return repositories where the given members opened MRs since `since`, ranked strongest-first.
+
+        Ranking: contributing member count desc, MR count desc, last activity desc.
+        Results are capped at `limit`. Only MRs created at or after `since` are considered.
+        """
+        limit = max(1, limit)
+        aggs: dict[str, _ProjectAgg] = {}
+
+        for member_id in member_provider_user_ids:
+            page = 1
+            while True:
+                payloads, next_page = await self._request_json_list_page(
+                    "api/v4/merge_requests",
+                    params={
+                        "author_id": member_id,
+                        "created_after": since.isoformat(),
+                        "per_page": PAGE_SIZE,
+                        "page": page,
+                        "order_by": "created_at",
+                        "sort": "desc",
+                        # Without scope=all the non-project-scoped MR endpoint defaults to
+                        # created_by_me, ignoring author_id for anyone but the token owner.
+                        "scope": "all",
+                    },
+                )
+                for payload in payloads:
+                    project_id_str, name, path_with_namespace = _project_ref_from_mr_payload(
+                        payload
+                    )
+                    created_at = _required_datetime(payload, "created_at")
+                    agg = aggs.get(project_id_str)
+                    if agg is None:
+                        agg = _ProjectAgg(name, path_with_namespace, created_at)
+                        aggs[project_id_str] = agg
+                    agg.member_ids.add(member_id)
+                    agg.mr_count += 1
+                    if created_at > agg.last_activity_at:
+                        agg.last_activity_at = created_at
+                if next_page is None:
+                    break
+                if next_page <= page:
+                    raise ConnectorDataError("GitLab MR pagination did not advance")
+                page = next_page
+
+        results: list[RepositoryActivity] = [
+            RepositoryActivity(
+                provider_project_id=project_id_str,
+                name=agg.name,
+                path_with_namespace=agg.path_with_namespace,
+                contributing_member_count=len(agg.member_ids),
+                merge_request_count=agg.mr_count,
+                last_activity_at=agg.last_activity_at,
+            )
+            for project_id_str, agg in aggs.items()
+        ]
+        results.sort(
+            key=lambda a: (a.contributing_member_count, a.merge_request_count, a.last_activity_at),
+            reverse=True,
+        )
+        return results[:limit]
 
     async def fetch_reviews(
         self,
@@ -1078,6 +1163,34 @@ def _repository_ref_from_payload(payload: Mapping[str, object]) -> RepositoryRef
         name=_required_str(payload, "name"),
         path_with_namespace=_required_str(payload, "path_with_namespace"),
     )
+
+
+def _project_ref_from_mr_payload(payload: Mapping[str, object]) -> tuple[str, str, str]:
+    """Extract (provider_project_id, name, path_with_namespace) from an MR list payload.
+
+    Uses `references.full` (format `<path_with_namespace>!<iid>`) as the primary source.
+    Falls back to parsing `web_url` when references are absent.
+
+    The MR list payload carries no project object, so `name` is the path's last segment
+    (a slug), not the project's display name. Callers that persist suggestions should resolve
+    the real display name via `get_project` on confirmation.
+    """
+    project_id = _required_positive_int(payload, "project_id")
+    path_with_namespace = ""
+
+    refs = payload.get("references")
+    if isinstance(refs, Mapping):
+        full_ref = refs.get("full")
+        if isinstance(full_ref, str) and "!" in full_ref:
+            path_with_namespace = full_ref.rpartition("!")[0]
+
+    if not path_with_namespace:
+        web_url = _optional_str(payload, "web_url") or ""
+        if "/-/" in web_url:
+            path_with_namespace = urlparse(web_url.split("/-/")[0]).path.lstrip("/")
+
+    name = path_with_namespace.rsplit("/", 1)[-1] if path_with_namespace else str(project_id)
+    return str(project_id), name, path_with_namespace
 
 
 def _error_for_status(

@@ -2,6 +2,7 @@
 
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import ClassVar, Literal, Protocol, runtime_checkable
 
 from em_radar_core.models import (
@@ -30,6 +31,7 @@ class Capabilities:
     provides_transitions: bool = False
     provides_members: bool = False
     provides_projects: bool = False
+    provides_repository_discovery: bool = False
     supports_incremental_fetch: bool = False
     supports_pagination_cursor: bool = False
     max_window_days: int | None = None
@@ -205,11 +207,34 @@ class RepositoryRef:
     path_with_namespace: str
 
 
+@dataclass(frozen=True)
+class RepositoryActivity:
+    """Per-project activity aggregated across a set of members for a discovery window."""
+
+    provider_project_id: str
+    name: str
+    path_with_namespace: str
+    contributing_member_count: int
+    merge_request_count: int
+    last_activity_at: datetime
+
+
 @runtime_checkable
 class RepositorySearchProvider(Protocol):
     async def search_projects(self, query: str, *, limit: int) -> list[RepositoryRef]: ...
 
     async def get_project(self, provider_project_id: str) -> RepositoryRef | None: ...
+
+
+@runtime_checkable
+class RepositoryActivityProvider(Protocol):
+    async def discover_repositories_by_activity(
+        self,
+        member_provider_user_ids: list[str],
+        *,
+        since: datetime,
+        limit: int,
+    ) -> list[RepositoryActivity]: ...
 
 
 class ConnectorError(Exception):
@@ -258,6 +283,8 @@ __all__ = [
     "MemberRef",
     "MergeRequestProvider",
     "MergeRequestScope",
+    "RepositoryActivity",
+    "RepositoryActivityProvider",
     "RepositoryRef",
     "RepositorySearchProvider",
     "ReviewProvider",
