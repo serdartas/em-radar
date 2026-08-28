@@ -600,6 +600,13 @@ class GitLabConnector:
             return None
         return _repository_ref_from_payload(payload)
 
+    async def get_repository(self, provider_project_id: str) -> Repository | None:
+        try:
+            payload = await self._request_json(f"api/v4/projects/{provider_project_id}")
+        except ConnectorNotFoundError:
+            return None
+        return _repository_from_payload(payload, self._instance_prefix)
+
     async def discover_repositories_by_activity(
         self,
         member_provider_user_ids: list[str],

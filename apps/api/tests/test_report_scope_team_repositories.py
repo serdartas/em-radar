@@ -25,6 +25,7 @@ from em_radar_core.connectors import (
     Capabilities,
     ConnectionTestResult,
     MergeRequestScope,
+    RepositoryLookupProvider,
 )
 from em_radar_core.models import (
     EvaluationWindow,
@@ -199,9 +200,90 @@ class _NamespacedMRConnector:
             )
 
 
+class _LookupMRConnector:
+    """Fake that simulates a repo the token can READ but is NOT a member of.
+
+    list_repositories() returns an empty list (membership=True would exclude it on GitLab).
+    get_repository(pid) returns a Repository with a namespaced external_id, proving the
+    runner resolves configured ids directly rather than relying on list_repositories().
+    fetch_mergerequests derives repository_id from the scope entry it receives, mirroring
+    the real GitLabConnector.
+    """
+
+    name: ClassVar[str] = "gitlab"
+    display_name: ClassVar[str] = "GitLab (lookup test)"
+    config_schema: ClassVar[dict[str, object]] = {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": True,
+    }
+    min_model_version: ClassVar[int] = 1
+
+    _external_id: ClassVar[str] = f"gitlab.example.com/{_CONFIGURED_PROJECT_ID}"
+
+    received_scopes: ClassVar[list[MergeRequestScope]] = []
+
+    def __init__(self, config: dict[str, object]) -> None:
+        pass
+
+    async def test_connection(self) -> ConnectionTestResult:
+        return ConnectionTestResult(ok=True, detail="ok")
+
+    @classmethod
+    def describe_capabilities(cls) -> Capabilities:
+        return Capabilities(provides_mergerequests=True, provides_repositories=True)
+
+    async def close(self) -> None:
+        pass
+
+    async def list_repositories(self) -> list[Repository]:
+        # Simulates membership=True exclusion: the configured repo is absent from this listing.
+        return []
+
+    async def get_repository(self, provider_project_id: str) -> Repository | None:
+        if provider_project_id != str(_CONFIGURED_PROJECT_ID):
+            return None
+        return Repository(
+            id=_namespaced_repository_id(self._external_id),
+            source=Source.GITLAB,
+            external_id=self._external_id,
+            name="configured-repo",
+            full_path="org/configured-repo",
+            default_branch="main",
+        )
+
+    async def fetch_mergerequests(
+        self,
+        scope: MergeRequestScope,
+        window: EvaluationWindow,
+    ) -> AsyncIterator[MergeRequest]:
+        _LookupMRConnector.received_scopes.append(scope)
+        for external_id in scope.repository_external_ids:
+            yield MergeRequest(
+                id=uuid5(_NAMESPACE, f"mergerequest:{external_id}"),
+                source=Source.GITLAB,
+                external_id=f"{external_id}/mr-99",
+                repository_id=_namespaced_repository_id(external_id),
+                iid=99,
+                title="Lookup MR",
+                state=MergeRequestState.OPEN,
+                author_id=_MR_AUTHOR_ID,
+                target_branch="main",
+                source_branch="feature/lookup",
+                created_at=_REPORT_STARTED_AT,
+                updated_at=_REPORT_STARTED_AT,
+            )
+
+
+assert isinstance(_LookupMRConnector({}), RepositoryLookupProvider), (
+    "_LookupMRConnector must satisfy RepositoryLookupProvider for the runner branch to fire"
+)
+
+
 @pytest.fixture(autouse=True)
 def _clear_scopes() -> None:
     _ScopingMRConnector.received_scopes.clear()
+    _LookupMRConnector.received_scopes.clear()
 
 
 def _create_gitlab_connection(api_client: TestClient) -> str:
@@ -418,3 +500,54 @@ def test_code_findings_carry_team_owned_scope_label(
         assert finding["scope_name"] == "MRs in team-owned repositories", (
             f"expected scope_name='MRs in team-owned repositories'; got {finding['scope_name']!r}"
         )
+
+
+def test_configured_repo_resolved_via_get_repository_even_when_absent_from_list(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A configured repo absent from list_repositories() is still resolved via get_repository.
+
+    This closes the gap where GitLab's membership=True filter silently dropped repos the token
+    could read but was not a member of. With RepositoryLookupProvider, the runner resolves each
+    configured id directly, so the report succeeds and produces an MR finding.
+
+    Verifying that list_repositories()-only logic would fail: _LookupMRConnector.list_repositories
+    returns [], so the old filter path would produce no repositories, no scope, and no findings.
+    """
+    monkeypatch.setattr(
+        "em_radar_api.connector_registry._connector_types",
+        lambda: [_LookupMRConnector],
+    )
+    monkeypatch.setattr("em_radar_api.routers.reports.datetime", FrozenReportDateTime)
+
+    gitlab_id = _create_gitlab_connection(api_client)
+    group_id = _create_mr_signal_group(api_client)
+    team_id = api_client.post(
+        "/api/teams",
+        json={
+            "name": "Lookup repo team",
+            "code_connection_id": gitlab_id,
+            "signal_config_group_ids": [group_id],
+            "working_mode": "kanban",
+        },
+    ).json()["id"]
+    _seed_gitlab_repo(session_factory, team_id, gitlab_id, _CONFIGURED_PROJECT_ID)
+
+    report = _run_report(api_client, team_id)
+
+    assert report["status"] == "succeeded", (
+        f"report must succeed even when list_repositories returns []; got status={report['status']!r}"
+    )
+    mr_findings = [f for f in report["findings"] if f["entity_type"] == "mergerequest"]
+    assert len(mr_findings) > 0, (
+        "the configured repo must be resolved via get_repository and produce an MR finding"
+    )
+
+    assert len(_LookupMRConnector.received_scopes) == 1
+    scope = _LookupMRConnector.received_scopes[0]
+    assert scope.repository_external_ids == [_LookupMRConnector._external_id], (
+        f"fetch_mergerequests must receive the connector's namespaced external id; "
+        f"got {scope.repository_external_ids!r}"
+    )

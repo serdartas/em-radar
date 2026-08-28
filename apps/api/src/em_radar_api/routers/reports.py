@@ -17,6 +17,7 @@ from em_radar_core.connectors import (
     ConnectorTransientError,
     MergeRequestProvider,
     MergeRequestScope,
+    RepositoryLookupProvider,
     ReviewProvider,
     SignalCapabilitySchema,
     TransitionProvider,
@@ -1078,11 +1079,22 @@ async def _fetch_code_data(
         # MR fetch to their connector-native external ids. Using the connector's own external_id
         # (not the bare numeric id) keeps the fetched MRs' repository_id consistent with the
         # persisted Repository rows, so the MR -> Repository FK resolves on persistence.
-        configured_set = set(configured_repo_ids)
-        all_repositories = await code_connector.list_repositories()
-        repositories = [
-            repo for repo in all_repositories if repo.external_id.split("/")[-1] in configured_set
-        ]
+        #
+        # Prefer direct per-id resolution so a repository the token can READ but is NOT a member
+        # of is not silently dropped (list_repositories uses membership=True on GitLab, which
+        # omits non-member readable projects from its results). Fall back to list+filter for
+        # connectors that do not implement RepositoryLookupProvider.
+        if isinstance(code_connector, RepositoryLookupProvider):
+            resolved = [await code_connector.get_repository(pid) for pid in configured_repo_ids]
+            repositories = [repo for repo in resolved if repo is not None]
+        else:
+            configured_set = set(configured_repo_ids)
+            all_repositories = await code_connector.list_repositories()
+            repositories = [
+                repo
+                for repo in all_repositories
+                if repo.external_id.split("/")[-1] in configured_set
+            ]
         mr_scope = MergeRequestScope(
             repository_external_ids=[repo.external_id for repo in repositories]
         )
