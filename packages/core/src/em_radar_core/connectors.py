@@ -160,6 +160,11 @@ class MergeRequestProvider(Protocol):
 
 
 @runtime_checkable
+class RepositoryLookupProvider(Protocol):
+    async def get_repository(self, provider_project_id: str) -> Repository | None: ...
+
+
+@runtime_checkable
 class ReviewProvider(Protocol):
     def fetch_reviews(
         self,
@@ -282,6 +287,7 @@ __all__ = [
     "MergeRequestScope",
     "RepositoryActivity",
     "RepositoryActivityProvider",
+    "RepositoryLookupProvider",
     "RepositoryRef",
     "RepositorySearchProvider",
     "ReviewProvider",

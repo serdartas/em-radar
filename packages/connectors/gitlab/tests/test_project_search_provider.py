@@ -9,6 +9,7 @@ import pytest
 import em_radar_connector_gitlab.connector as gitlab_connector_module
 from em_radar_connector_gitlab.connector import GitLabConnector
 from em_radar_core.connectors import ConnectorAuthError, ConnectorDataError, RepositoryRef
+from em_radar_core.models import Repository
 
 
 def _client_factory_for(
@@ -294,3 +295,83 @@ def test_search_projects_page_param_starts_at_given_page(monkeypatch: pytest.Mon
 
     assert len(requests) == 1
     assert requests[0].url.params["page"] == "2"
+
+
+_REPOSITORY_PAYLOAD: dict[str, object] = {
+    "id": 17,
+    "name": "fraud-detection",
+    "path_with_namespace": "risk/fraud-detection",
+    "web_url": "https://gitlab.example.com/risk/fraud-detection",
+    "default_branch": "main",
+    "archived": False,
+}
+
+
+def test_get_repository_maps_project_payload_to_namespaced_repository(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def run() -> Repository | None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            assert request.url.path == "/api/v4/projects/17"
+            return httpx.Response(200, json=_REPOSITORY_PAYLOAD)
+
+        monkeypatch.setattr(
+            gitlab_connector_module,
+            "CLIENT_FACTORY",
+            _client_factory_for(handler),
+        )
+        connector = GitLabConnector(
+            {"base_url": "https://gitlab.example.com", "token": "gitlab-token-1234"}
+        )
+        result = await connector.get_repository("17")
+        await connector.close()
+        return result
+
+    result = asyncio.run(run())
+
+    assert result is not None
+    assert result.external_id == "gitlab.example.com/17"
+    assert result.name == "fraud-detection"
+    assert result.full_path == "risk/fraud-detection"
+    assert result.default_branch == "main"
+    assert result.is_archived is False
+
+
+def test_get_repository_returns_none_on_404(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def run() -> Repository | None:
+        def handler(_: httpx.Request) -> httpx.Response:
+            return httpx.Response(404)
+
+        monkeypatch.setattr(
+            gitlab_connector_module,
+            "CLIENT_FACTORY",
+            _client_factory_for(handler),
+        )
+        connector = GitLabConnector(
+            {"base_url": "https://gitlab.example.com", "token": "gitlab-token-1234"}
+        )
+        result = await connector.get_repository("99999")
+        await connector.close()
+        return result
+
+    assert asyncio.run(run()) is None
+
+
+def test_get_repository_raises_auth_error_on_403(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def run() -> None:
+        def handler(_: httpx.Request) -> httpx.Response:
+            return httpx.Response(403)
+
+        monkeypatch.setattr(
+            gitlab_connector_module,
+            "CLIENT_FACTORY",
+            _client_factory_for(handler),
+        )
+        connector = GitLabConnector(
+            {"base_url": "https://gitlab.example.com", "token": "gitlab-token-1234"}
+        )
+        with pytest.raises(ConnectorAuthError):
+            await connector.get_repository("17")
+        await connector.close()
+
+    asyncio.run(run())

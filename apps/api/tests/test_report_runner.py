@@ -23,13 +23,14 @@ from em_radar_core.models import (
     MergeRequest,
     MergeRequestState,
     Repository,
+    ScopeVerificationStatus,
     Source,
     Sprint,
     SprintState,
     WindowType,
 )
 
-from em_radar_api.tables import MergeRequestTable, WorkItemTable
+from em_radar_api.tables import MergeRequestTable, TeamGitLabRepositoryTable, WorkItemTable
 from test_source_connection_routes import (
     FrozenReportDateTime,
     JiraTestConnector,
@@ -154,7 +155,7 @@ class _RecordingMRConnector:
             Repository(
                 id=_REPO_ID,
                 source=Source.GITLAB,
-                external_id="repo-1",
+                external_id="1",
                 name="my-repo",
                 full_path="group/my-repo",
                 default_branch="main",
@@ -181,6 +182,30 @@ def _create_gitlab_connection(api_client: TestClient) -> str:
         "/api/connections",
         json={"name": "GitLab", "connector_name": "gitlab", "config": {}},
     ).json()["id"]
+
+
+def _seed_gitlab_repo(
+    session_factory: sessionmaker[Session],
+    team_id: str,
+    connection_id: str,
+    gitlab_project_id: int = 1,
+) -> None:
+    """Insert a verified TeamGitLabRepositoryTable row so report scoping includes it."""
+    now = datetime.now(UTC)
+    with session_factory() as session:
+        session.add(
+            TeamGitLabRepositoryTable(
+                team_profile_id=UUID(team_id),
+                connection_id=UUID(connection_id),
+                gitlab_project_id=gitlab_project_id,
+                name="my-repo",
+                path_with_namespace="group/my-repo",
+                verification_status=ScopeVerificationStatus.VERIFIED,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        session.commit()
 
 
 def _create_mr_signal(api_client: TestClient, name: str) -> str:
@@ -215,7 +240,7 @@ def _create_mr_signal_group(api_client: TestClient, name: str) -> str:
 
 
 def test_scrum_sprint_window_is_converted_to_date_range_for_mr_fetch(
-    api_client: TestClient, monkeypatch
+    api_client: TestClient, session_factory: sessionmaker[Session], monkeypatch
 ) -> None:
     """SPRINT window → DATE_RANGE with sprint's start_date/end_date passed to MR provider."""
     monkeypatch.setattr(
@@ -240,6 +265,7 @@ def test_scrum_sprint_window_is_converted_to_date_range_for_mr_fetch(
             "sprint_length_days": 14,
         },
     ).json()["id"]
+    _seed_gitlab_repo(session_factory, team_id, gitlab_id)
 
     _run_report(api_client, team_id)
 
@@ -253,7 +279,7 @@ def test_scrum_sprint_window_is_converted_to_date_range_for_mr_fetch(
 
 
 def test_sprint_without_dates_uses_fallback_lookback_window(
-    api_client: TestClient, monkeypatch
+    api_client: TestClient, session_factory: sessionmaker[Session], monkeypatch
 ) -> None:
     """Sprint with no start_date/end_date → fallback 14-day lookback for both bounds."""
     monkeypatch.setattr(
@@ -278,6 +304,7 @@ def test_sprint_without_dates_uses_fallback_lookback_window(
             "sprint_length_days": 14,
         },
     ).json()["id"]
+    _seed_gitlab_repo(session_factory, team_id, gitlab_id)
 
     _run_report(api_client, team_id)
 
@@ -289,7 +316,7 @@ def test_sprint_without_dates_uses_fallback_lookback_window(
 
 
 def test_future_sprint_code_window_is_clamped_to_report_time(
-    api_client: TestClient, monkeypatch
+    api_client: TestClient, session_factory: sessionmaker[Session], monkeypatch
 ) -> None:
     """Selected future sprint (start_date > started_at): window is clamped to start=end=started_at
     so the MR provider receives a valid (empty) range instead of a reversed window."""
@@ -315,6 +342,7 @@ def test_future_sprint_code_window_is_clamped_to_report_time(
             "sprint_length_days": 14,
         },
     ).json()["id"]
+    _seed_gitlab_repo(session_factory, team_id, gitlab_id)
 
     resp = api_client.post(
         "/api/reports/run",
@@ -338,7 +366,7 @@ def test_future_sprint_code_window_is_clamped_to_report_time(
 
 
 def test_closed_undated_sprint_code_window_ends_at_completion_date(
-    api_client: TestClient, monkeypatch
+    api_client: TestClient, session_factory: sessionmaker[Session], monkeypatch
 ) -> None:
     """Closed sprint with a completion date but no start_date: the fallback lookback anchors on
     the completion date (end), not the report time, so start <= end and terminal MRs are kept."""
@@ -364,6 +392,7 @@ def test_closed_undated_sprint_code_window_ends_at_completion_date(
             "sprint_length_days": 14,
         },
     ).json()["id"]
+    _seed_gitlab_repo(session_factory, team_id, gitlab_id)
 
     resp = api_client.post(
         "/api/reports/run",
@@ -444,6 +473,7 @@ def test_report_run_populates_merge_request_workitem_links(
             "sprint_length_days": 14,
         },
     ).json()["id"]
+    _seed_gitlab_repo(session_factory, team_id, gitlab_id)
 
     _run_report(api_client, team_id)
 
@@ -459,7 +489,7 @@ def test_report_run_populates_merge_request_workitem_links(
 
 
 def test_date_range_window_passes_through_unchanged_to_mr_fetch(
-    api_client: TestClient, monkeypatch
+    api_client: TestClient, session_factory: sessionmaker[Session], monkeypatch
 ) -> None:
     """DATE_RANGE window (kanban / code-only) is forwarded to the MR provider as-is."""
     monkeypatch.setattr(
@@ -479,6 +509,7 @@ def test_date_range_window_passes_through_unchanged_to_mr_fetch(
             "working_mode": "kanban",
         },
     ).json()["id"]
+    _seed_gitlab_repo(session_factory, team_id, gitlab_id)
 
     _run_report(api_client, team_id)
 
@@ -540,8 +571,10 @@ def test_findings_carry_scope_name(api_client: TestClient, monkeypatch) -> None:
         assert finding["scope_name"] == "Platform Scrum"
 
 
-def test_mr_findings_carry_scope_name(api_client: TestClient, monkeypatch) -> None:
-    """MR findings produced by a merge_request signal include scope_name == 'code'."""
+def test_mr_findings_carry_scope_name(
+    api_client: TestClient, session_factory: sessionmaker[Session], monkeypatch
+) -> None:
+    """MR findings produced by a merge_request signal include scope_name == 'MRs in team-owned repositories'."""
     monkeypatch.setattr(
         "em_radar_api.connector_registry._connector_types",
         lambda: [JiraTestConnector, _LinkingMRConnector],
@@ -583,9 +616,10 @@ def test_mr_findings_carry_scope_name(api_client: TestClient, monkeypatch) -> No
             "sprint_length_days": 14,
         },
     ).json()["id"]
+    _seed_gitlab_repo(session_factory, team_id, gitlab_id)
 
     report = _run_report(api_client, team_id)
     mr_findings = [f for f in report["findings"] if f["entity_type"] == "mergerequest"]
     assert len(mr_findings) > 0, "expected at least one MR finding from the open MR"
     for finding in mr_findings:
-        assert finding["scope_name"] == "code"
+        assert finding["scope_name"] == "MRs in team-owned repositories"
