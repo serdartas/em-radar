@@ -84,7 +84,9 @@ export function TeamCard({
                   GitLab configured
                 </span>
               )}
-              {hasGitLabConnector && team.gitlab_config_status === "setup_required" && (
+              {/* A team with no code source yet (not_applicable) also needs setup now that a
+                  GitLab connector exists, so treat anything other than configured as setup-required. */}
+              {hasGitLabConnector && team.gitlab_config_status !== "configured" && (
                 <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-medium text-amber-800">
                   GitLab setup required
                 </span>
@@ -145,9 +147,13 @@ export function TeamCard({
           </p>
         )}
 
-        {!isEditing && hasGitLabConnector && team.gitlab_config_status === "setup_required" && (
+        {!isEditing && hasGitLabConnector && team.gitlab_config_status !== "configured" && (
           <Callout variant="warning">
-            <p>This team has a GitLab connection but no members or repositories configured yet.</p>
+            <p>
+              {team.gitlab_config_status === "setup_required"
+                ? "This team has a GitLab connection but no members or repositories configured yet."
+                : "This team has no GitLab code source selected yet."}
+            </p>
             <Button className="mt-3" onClick={onStartEdit} size="sm" type="button" variant="outline">
               Configure GitLab
             </Button>

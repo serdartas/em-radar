@@ -1021,4 +1021,63 @@ describe("SourceConnectionsPage — M9-10 post-connect notification (§16)", () 
       expect(screen.queryByRole("status")).not.toBeInTheDocument()
     })
   })
+
+  it("does NOT show notification when a SECOND MR-capable connection is added", async () => {
+    const existingGitLab = {
+      id: "gl-first",
+      name: "GitLab One",
+      connector_name: "gitlab",
+      config: {},
+      created_at: "2026-07-01T00:00:00Z",
+    }
+    const createdSecond = {
+      id: "gl-second",
+      name: "GitLab Two",
+      connector_name: "gitlab",
+      config: {},
+      created_at: "2026-08-01T00:00:00Z",
+    }
+    let connectionsStore = [existingGitLab]
+
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = typeof input === "string" ? input : input.toString()
+      const method = init?.method ?? "GET"
+      if (url.endsWith("/api/connectors")) return Promise.resolve(jsonResponse([gitlabConnectorMR]))
+      if (url.endsWith("/api/connections") && method === "GET")
+        return Promise.resolve(jsonResponse(connectionsStore))
+      if (url.endsWith("/api/connections") && method === "POST") {
+        connectionsStore = [existingGitLab, createdSecond]
+        return Promise.resolve(jsonResponse(createdSecond, 201))
+      }
+      if (url.endsWith("/api/teams") && method === "GET")
+        return Promise.resolve(jsonResponse(teamsWithUnconfigured))
+      throw new Error(`unexpected fetch: ${method} ${url}`)
+    })
+
+    const queryClient = new QueryClient({
+      defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
+    })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <SourceConnectionsPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    // A GitLab connection already exists, so the add form is behind a reveal button.
+    fireEvent.click(await screen.findByRole("button", { name: "Add connection" }))
+    fireEvent.change(await screen.findByLabelText(/Connection name/), {
+      target: { value: "GitLab Two" },
+    })
+    fireEvent.change(screen.getByLabelText(/^Base URL/), {
+      target: { value: "https://gitlab.example.com" },
+    })
+    fireEvent.change(screen.getByLabelText(/^Token/), { target: { value: "tok" } })
+    fireEvent.click(screen.getByRole("button", { name: "Add connection" }))
+
+    await screen.findByText("GitLab Two")
+    // The notification is first-connection-only, so a second MR-capable connection must not re-show it.
+    expect(screen.queryByRole("status")).not.toBeInTheDocument()
+  })
 })

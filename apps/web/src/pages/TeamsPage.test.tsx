@@ -803,7 +803,9 @@ describe("TeamsPage — M9-10 per-team GitLab config status (§17)", () => {
     expect(screen.getByText("GitLab setup required")).toBeInTheDocument()
   })
 
-  it("shows no GitLab status badge for a not_applicable team", async () => {
+  it("shows 'GitLab setup required' for a not_applicable team once a GitLab connector exists", async () => {
+    // A team with no code source yet still needs setup now that GitLab is connected, so it must
+    // be surfaced as setup-required (matching the post-connection notification count).
     const naTeam = {
       ...team,
       id: "t-na",
@@ -815,8 +817,8 @@ describe("TeamsPage — M9-10 per-team GitLab config status (§17)", () => {
     renderPage()
 
     await screen.findByText("No Status")
+    expect(screen.getByText("GitLab setup required")).toBeInTheDocument()
     expect(screen.queryByText("GitLab configured")).not.toBeInTheDocument()
-    expect(screen.queryByText("GitLab setup required")).not.toBeInTheDocument()
   })
 
   it("shows no GitLab status badge when no GitLab connector exists (no codeConnections)", async () => {

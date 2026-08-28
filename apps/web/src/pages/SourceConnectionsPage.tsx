@@ -34,6 +34,12 @@ export function SourceConnectionsPage() {
 
   function handleNewConnection(conn: SourceConnection) {
     if (!mrCapableConnectorNames.has(conn.connector_name)) return
+    // Only announce on the FIRST MR-capable connection: if one already existed, adding
+    // another must not re-show the post-connection notification.
+    const hadMrCapableBefore = connections.some(
+      (c) => c.id !== conn.id && mrCapableConnectorNames.has(c.connector_name),
+    )
+    if (hadMrCapableBefore) return
     void (async () => {
       try {
         const freshTeams = await queryClient.fetchQuery({
