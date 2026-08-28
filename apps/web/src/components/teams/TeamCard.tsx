@@ -6,6 +6,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { CodeSourcePicker } from "@/components/teams/CodeSourcePicker"
 import { SignalGroupAttachList } from "@/components/teams/SignalGroupAttachList"
 import { TaskBoardPicker } from "@/components/teams/TaskBoardPicker"
+import { TeamGitLabConfig } from "@/components/teams/TeamGitLabConfig"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
@@ -136,6 +137,8 @@ export function TeamCard({
               team={team}
             />
             <CodeSourcePicker codeConnections={codeConnections} team={team} />
+            {/* Self-gates: renders nothing unless the team's code connection is MR-capable (§3). */}
+            <TeamGitLabConfig codeConnections={codeConnections} team={team} />
             <SignalGroupAttachList groups={groups} team={team} />
           </>
         )}
