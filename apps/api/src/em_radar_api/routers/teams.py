@@ -453,6 +453,9 @@ async def gitlab_repository_suggestions(
                 detail="GitLab connector does not support repository discovery",
             )
         capped = min(limit, _SUGGESTION_MAX_LIMIT)
+        # Fetch at least the widening threshold so a small caller limit cannot force a needless
+        # widen (the connector caps its output at the requested limit); slice to `capped` after.
+        discover_limit = max(capped, DISCOVERY_MIN_CANDIDATES)
         member_ids = [str(m.gitlab_user_id) for m in saved_members]
         now = datetime.now(UTC)
 
@@ -461,7 +464,7 @@ async def gitlab_repository_suggestions(
                 return await connector.discover_repositories_by_activity(
                     member_ids,
                     since=now - timedelta(days=window),
-                    limit=capped,
+                    limit=discover_limit,
                 )
             except (ConnectorAuthError, ConnectorError) as error:
                 raise HTTPException(
@@ -484,7 +487,7 @@ async def gitlab_repository_suggestions(
                 merge_request_count=activity.merge_request_count,
                 last_activity_at=activity.last_activity_at,
             )
-            for activity in activities
+            for activity in activities[:capped]
         ]
         return RepositorySuggestionsResponse(window_days=window_days, repositories=repositories)
     finally:

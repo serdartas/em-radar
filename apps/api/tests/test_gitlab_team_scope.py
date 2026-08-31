@@ -1183,6 +1183,38 @@ def test_repository_suggestions_uses_default_window_when_enough_candidates(
     assert abs((used_since - expected_since).total_seconds()) < 5
 
 
+def test_repository_suggestions_small_limit_does_not_force_widening(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A caller limit below the threshold must not force a widen: the endpoint fetches at least
+    DISCOVERY_MIN_CANDIDATES to decide, then slices the response to the requested limit."""
+    conn_id = _make_gitlab_connection(session_factory)
+    team_id = _make_team(session_factory, code_connection_id=conn_id)
+    _seed_member(session_factory, team_id, conn_id)
+
+    now = datetime.now(UTC)
+    enough = [_make_activity(i, now) for i in range(DISCOVERY_MIN_CANDIDATES)]
+    connector = _make_mock_connector(discover_repos_return=enough)
+    monkeypatch.setattr(
+        "em_radar_api.routers.teams.instantiate_connector",
+        lambda *_a, **_kw: connector,
+    )
+
+    resp = api_client.get(f"/api/teams/{team_id}/gitlab/repository-suggestions?limit=1")
+    assert resp.status_code == 200
+    data = resp.json()
+    # Default window kept (enough candidates existed within 90 days) despite the small limit.
+    assert data["window_days"] == DISCOVERY_DEFAULT_WINDOW_DAYS
+    assert len(data["repositories"]) == 1
+    # Single connector call; it was asked for at least the threshold, not the raw limit of 1.
+    connector.discover_repositories_by_activity.assert_awaited_once()
+    assert connector.discover_repositories_by_activity.call_args.kwargs["limit"] >= (
+        DISCOVERY_MIN_CANDIDATES
+    )
+
+
 def test_repository_suggestions_widens_to_wide_window_when_too_few_candidates(
     api_client: TestClient,
     session_factory: sessionmaker[Session],
