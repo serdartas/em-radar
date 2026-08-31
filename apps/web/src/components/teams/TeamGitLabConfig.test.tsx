@@ -179,7 +179,7 @@ function mockApi(options: MockOptions = {}) {
       return Promise.resolve(jsonResponse([]))
     }
     if (url.includes("repository-suggestions")) {
-      return Promise.resolve(jsonResponse([]))
+      return Promise.resolve(jsonResponse({ window_days: 90, repositories: [] }))
     }
     throw new Error(`unexpected fetch: ${method} ${url}`)
   })

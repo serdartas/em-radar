@@ -11,6 +11,7 @@ import {
   replaceGitLabRepositories,
   searchGitLabProjects,
   type RepositoryActivityResult,
+  type RepositorySuggestionsResponse,
   type TeamGitLabRepository,
 } from "@/lib/gitlabScope"
 
@@ -21,6 +22,10 @@ import {
  * those below appear separately so stronger candidates are always shown first.
  */
 const LIKELY_THRESHOLD = 2
+
+/** Matches DISCOVERY_DEFAULT_WINDOW_DAYS in the connector (§15). Used to detect
+ *  when the server widened the discovery window beyond the default. */
+const DISCOVERY_DEFAULT_WINDOW_DAYS = 90
 
 /** In-memory representation of a confirmed repository — normalises the two
  *  source shapes (search result vs. saved repository) into one. */
@@ -165,13 +170,16 @@ export function GitLabRepositoryPicker({ connectionId, teamId }: GitLabRepositor
   // connectionId is included in the key so suggestions refetch per connection rather
   // than sharing a cross-connection cache entry.
   const {
-    data: suggestions = [],
+    data: suggestionsResponse,
     isError: suggestionsIsError,
     error: suggestionsError,
-  } = useQuery<RepositoryActivityResult[]>({
+  } = useQuery<RepositorySuggestionsResponse>({
     queryKey: ["gitlab-repository-suggestions", teamId, connectionId],
     queryFn: () => getRepositorySuggestions(teamId),
   })
+
+  const suggestions: RepositoryActivityResult[] = suggestionsResponse?.repositories ?? []
+  const windowDays: number = suggestionsResponse?.window_days ?? DISCOVERY_DEFAULT_WINDOW_DAYS
 
   // Server-side project search — enabled only when a non-empty debounced query exists.
   // connectionId is included in the key so search results are scoped per connection.
@@ -326,6 +334,11 @@ export function GitLabRepositoryPicker({ connectionId, teamId }: GitLabRepositor
         <h5 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
           Suggested repositories
         </h5>
+        {windowDays > DISCOVERY_DEFAULT_WINDOW_DAYS && suggestions.length > 0 && (
+          <p className="mb-2 text-xs text-slate-500">
+            Showing repositories from the last {windowDays} days.
+          </p>
+        )}
         {suggestionsIsError ? (
           <p className="text-sm text-destructive" role="alert">
             {apiErrorMessage(suggestionsError, "Failed to load repository suggestions.")}

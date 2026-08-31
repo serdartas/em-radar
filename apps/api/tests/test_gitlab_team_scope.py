@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
@@ -15,6 +15,11 @@ from em_radar_api.tables import (
     TeamGitLabMemberTable,
     TeamGitLabRepositoryTable,
     TeamProfileTable,
+)
+from em_radar_connector_gitlab import (
+    DISCOVERY_DEFAULT_WINDOW_DAYS,
+    DISCOVERY_MIN_CANDIDATES,
+    DISCOVERY_WIDE_WINDOW_DAYS,
 )
 from em_radar_core.connectors import (
     ConnectorAuthError,
@@ -720,7 +725,9 @@ def test_repository_suggestions_returns_empty_when_no_saved_members(
 
     resp = api_client.get(f"/api/teams/{team_id}/gitlab/repository-suggestions")
     assert resp.status_code == 200
-    assert resp.json() == []
+    data = resp.json()
+    assert data["window_days"] == DISCOVERY_DEFAULT_WINDOW_DAYS
+    assert data["repositories"] == []
     mock_connector.discover_repositories_by_activity.assert_not_awaited()
 
 
@@ -734,7 +741,8 @@ def test_repository_suggestions_returns_ranked_repos_from_connector(
 
     now = datetime.now(UTC)
 
-    # Seed a member directly so the discovery endpoint has member_ids to pass
+    # Seed a member directly so the discovery endpoint has member_ids to pass.
+    # Use DISCOVERY_MIN_CANDIDATES repos so the endpoint stays on the default window.
     with session_factory() as session:
         session.add(
             TeamGitLabMemberTable(
@@ -750,15 +758,18 @@ def test_repository_suggestions_returns_ranked_repos_from_connector(
         )
         session.commit()
 
-    activity = RepositoryActivity(
-        provider_project_id="20",
-        name="service-a",
-        path_with_namespace="acme/service-a",
-        contributing_member_count=1,
-        merge_request_count=5,
-        last_activity_at=now,
-    )
-    mock_connector = _make_mock_connector(discover_repos_return=[activity])
+    activities = [
+        RepositoryActivity(
+            provider_project_id=str(i),
+            name=f"service-{i}",
+            path_with_namespace=f"acme/service-{i}",
+            contributing_member_count=1,
+            merge_request_count=i,
+            last_activity_at=now,
+        )
+        for i in range(DISCOVERY_MIN_CANDIDATES)
+    ]
+    mock_connector = _make_mock_connector(discover_repos_return=activities)
     monkeypatch.setattr(
         "em_radar_api.routers.teams.instantiate_connector",
         lambda *_a, **_kw: mock_connector,
@@ -767,11 +778,11 @@ def test_repository_suggestions_returns_ranked_repos_from_connector(
     resp = api_client.get(f"/api/teams/{team_id}/gitlab/repository-suggestions?limit=10")
     assert resp.status_code == 200
     data = resp.json()
-    assert len(data) == 1
-    assert data[0]["provider_project_id"] == "20"
-    assert data[0]["name"] == "service-a"
-    assert data[0]["contributing_member_count"] == 1
-    assert data[0]["merge_request_count"] == 5
+    assert data["window_days"] == DISCOVERY_DEFAULT_WINDOW_DAYS
+    repos = data["repositories"]
+    assert len(repos) == DISCOVERY_MIN_CANDIDATES
+    assert repos[0]["provider_project_id"] == "0"
+    assert repos[0]["name"] == "service-0"
 
     mock_connector.discover_repositories_by_activity.assert_awaited_once()
     call_args = mock_connector.discover_repositories_by_activity.call_args
@@ -1000,7 +1011,9 @@ def test_repository_suggestions_excludes_members_on_wrong_connection(
         )
         session.commit()
 
-    mock_connector = _make_mock_connector()
+    now = datetime.now(UTC)
+    enough = [_make_activity(i, now) for i in range(DISCOVERY_MIN_CANDIDATES)]
+    mock_connector = _make_mock_connector(discover_repos_return=enough)
     monkeypatch.setattr(
         "em_radar_api.routers.teams.instantiate_connector",
         lambda *_a, **_kw: mock_connector,
@@ -1009,6 +1022,7 @@ def test_repository_suggestions_excludes_members_on_wrong_connection(
     resp = api_client.get(f"/api/teams/{team_id}/gitlab/repository-suggestions")
     assert resp.status_code == 200
 
+    # Called once: enough candidates from the default window so no widening occurs.
     mock_connector.discover_repositories_by_activity.assert_awaited_once()
     call_args = mock_connector.discover_repositories_by_activity.call_args
     passed_ids = call_args.args[0]
@@ -1050,7 +1064,9 @@ def test_repository_suggestions_returns_empty_when_all_members_stale(
 
     resp = api_client.get(f"/api/teams/{team_id}/gitlab/repository-suggestions")
     assert resp.status_code == 200
-    assert resp.json() == []
+    data = resp.json()
+    assert data["window_days"] == DISCOVERY_DEFAULT_WINDOW_DAYS
+    assert data["repositories"] == []
     mock_connector.discover_repositories_by_activity.assert_not_awaited()
 
 
@@ -1093,3 +1109,119 @@ def test_project_search_forwards_page_to_connector(
 
     api_client.get(f"/api/teams/{team_id}/gitlab/project-search?q=front&limit=5&page=2")
     mock_connector.search_projects.assert_awaited_once_with("front", limit=5, page=2)
+
+
+# ---------------------------------------------------------------------------
+# M9-12: Adaptive 90/180-day discovery window
+# ---------------------------------------------------------------------------
+
+
+def _seed_member(
+    session_factory: sessionmaker[Session],
+    team_id: UUID,
+    conn_id: UUID,
+    gitlab_user_id: int = 100,
+) -> None:
+    now = datetime.now(UTC)
+    with session_factory() as session:
+        session.add(
+            TeamGitLabMemberTable(
+                team_profile_id=team_id,
+                connection_id=conn_id,
+                gitlab_user_id=gitlab_user_id,
+                username="dev",
+                display_name="Dev",
+                verification_status=ScopeVerificationStatus.VERIFIED,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        session.commit()
+
+
+def _make_activity(i: int, now: datetime) -> RepositoryActivity:
+    return RepositoryActivity(
+        provider_project_id=str(i),
+        name=f"repo-{i}",
+        path_with_namespace=f"acme/repo-{i}",
+        contributing_member_count=1,
+        merge_request_count=i + 1,
+        last_activity_at=now,
+    )
+
+
+def test_repository_suggestions_uses_default_window_when_enough_candidates(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the 90-day window returns >= DISCOVERY_MIN_CANDIDATES, use it and report window_days=90."""
+    conn_id = _make_gitlab_connection(session_factory)
+    team_id = _make_team(session_factory, code_connection_id=conn_id)
+    _seed_member(session_factory, team_id, conn_id)
+
+    now = datetime.now(UTC)
+    enough = [_make_activity(i, now) for i in range(DISCOVERY_MIN_CANDIDATES)]
+
+    connector = _make_mock_connector(discover_repos_return=enough)
+    monkeypatch.setattr(
+        "em_radar_api.routers.teams.instantiate_connector",
+        lambda *_a, **_kw: connector,
+    )
+
+    resp = api_client.get(f"/api/teams/{team_id}/gitlab/repository-suggestions?limit=20")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["window_days"] == DISCOVERY_DEFAULT_WINDOW_DAYS
+    assert len(data["repositories"]) == DISCOVERY_MIN_CANDIDATES
+
+    # Connector called exactly once (no widening needed).
+    connector.discover_repositories_by_activity.assert_awaited_once()
+    call_args = connector.discover_repositories_by_activity.call_args
+    used_since: datetime = call_args.kwargs["since"]
+    expected_since = now - timedelta(days=DISCOVERY_DEFAULT_WINDOW_DAYS)
+    assert abs((used_since - expected_since).total_seconds()) < 5
+
+
+def test_repository_suggestions_widens_to_wide_window_when_too_few_candidates(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the 90-day window returns < DISCOVERY_MIN_CANDIDATES, retry at 180 days and report that window."""
+    conn_id = _make_gitlab_connection(session_factory)
+    team_id = _make_team(session_factory, code_connection_id=conn_id)
+    _seed_member(session_factory, team_id, conn_id)
+
+    now = datetime.now(UTC)
+    # First call (90-day): fewer than the threshold.
+    few = [_make_activity(i, now) for i in range(DISCOVERY_MIN_CANDIDATES - 1)]
+    # Second call (180-day): more results.
+    wide = [_make_activity(i, now) for i in range(DISCOVERY_MIN_CANDIDATES + 2)]
+
+    connector = MagicMock()
+    connector.close = AsyncMock()
+    connector.discover_repositories_by_activity = AsyncMock(side_effect=[few, wide])
+
+    monkeypatch.setattr(
+        "em_radar_api.routers.teams.instantiate_connector",
+        lambda *_a, **_kw: connector,
+    )
+
+    resp = api_client.get(f"/api/teams/{team_id}/gitlab/repository-suggestions?limit=20")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["window_days"] == DISCOVERY_WIDE_WINDOW_DAYS
+    assert len(data["repositories"]) == DISCOVERY_MIN_CANDIDATES + 2
+
+    # Connector called twice: once for each window.
+    assert connector.discover_repositories_by_activity.await_count == 2
+    first_call, second_call = connector.discover_repositories_by_activity.call_args_list
+
+    first_since: datetime = first_call.kwargs["since"]
+    expected_default_since = now - timedelta(days=DISCOVERY_DEFAULT_WINDOW_DAYS)
+    assert abs((first_since - expected_default_since).total_seconds()) < 5
+
+    second_since: datetime = second_call.kwargs["since"]
+    expected_wide_since = now - timedelta(days=DISCOVERY_WIDE_WINDOW_DAYS)
+    assert abs((second_since - expected_wide_since).total_seconds()) < 5

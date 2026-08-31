@@ -32,6 +32,7 @@ from em_radar_api.team_profiles import (
     MemberSearchResult,
     ProjectSearchResult,
     RepositoryActivityResult,
+    RepositorySuggestionsResponse,
     TeamGitLabMemberRead,
     TeamGitLabRepositoryRead,
     TeamProfileCreate,
@@ -44,15 +45,22 @@ from em_radar_core.connectors import (
     ConnectorConfigError,
     ConnectorError,
     MemberProvider,
+    RepositoryActivity,
     RepositoryActivityProvider,
     RepositorySearchProvider,
 )
 from em_radar_core.models import ScopeVerificationStatus
 
 try:
-    from em_radar_connector_gitlab import DISCOVERY_DEFAULT_WINDOW_DAYS
+    from em_radar_connector_gitlab import (
+        DISCOVERY_DEFAULT_WINDOW_DAYS,
+        DISCOVERY_MIN_CANDIDATES,
+        DISCOVERY_WIDE_WINDOW_DAYS,
+    )
 except ImportError:
     DISCOVERY_DEFAULT_WINDOW_DAYS = 90
+    DISCOVERY_WIDE_WINDOW_DAYS = 180
+    DISCOVERY_MIN_CANDIDATES = 3
 
 _MEMBER_SEARCH_DEFAULT_LIMIT = 20
 _MEMBER_SEARCH_MAX_LIMIT = 50
@@ -409,13 +417,13 @@ async def gitlab_project_search(
 
 @router.get(
     "/teams/{team_id}/gitlab/repository-suggestions",
-    response_model=list[RepositoryActivityResult],
+    response_model=RepositorySuggestionsResponse,
 )
 async def gitlab_repository_suggestions(
     team_id: UUID,
     limit: int = Query(default=_SUGGESTION_DEFAULT_LIMIT, ge=1),
     session: Session = Depends(get_session),
-) -> list[RepositoryActivityResult]:
+) -> RepositorySuggestionsResponse:
     team_row = session.get(TeamProfileTable, team_id)
     if team_row is None:
         raise _team_not_found()
@@ -434,7 +442,9 @@ async def gitlab_repository_suggestions(
         and m.verification_status == ScopeVerificationStatus.VERIFIED
     ]
     if not saved_members:
-        return []
+        return RepositorySuggestionsResponse(
+            window_days=DISCOVERY_DEFAULT_WINDOW_DAYS, repositories=[]
+        )
     connector = _require_gitlab_connector(session, team_row)
     try:
         if not isinstance(connector, RepositoryActivityProvider):
@@ -443,23 +453,29 @@ async def gitlab_repository_suggestions(
                 detail="GitLab connector does not support repository discovery",
             )
         capped = min(limit, _SUGGESTION_MAX_LIMIT)
-        since = datetime.now(UTC) - timedelta(days=DISCOVERY_DEFAULT_WINDOW_DAYS)
         member_ids = [str(m.gitlab_user_id) for m in saved_members]
-        try:
-            activities = await connector.discover_repositories_by_activity(
-                member_ids,
-                since=since,
-                limit=capped,
-            )
-        except ConnectorAuthError as error:
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)
-            ) from error
-        except ConnectorError as error:
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)
-            ) from error
-        return [
+        now = datetime.now(UTC)
+
+        async def _discover(window: int) -> list[RepositoryActivity]:
+            try:
+                return await connector.discover_repositories_by_activity(
+                    member_ids,
+                    since=now - timedelta(days=window),
+                    limit=capped,
+                )
+            except (ConnectorAuthError, ConnectorError) as error:
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)
+                ) from error
+
+        # Start at the default window; widen once when it yields too few candidates (§15).
+        window_days = DISCOVERY_DEFAULT_WINDOW_DAYS
+        activities = await _discover(window_days)
+        if len(activities) < DISCOVERY_MIN_CANDIDATES:
+            window_days = DISCOVERY_WIDE_WINDOW_DAYS
+            activities = await _discover(window_days)
+
+        repositories = [
             RepositoryActivityResult(
                 provider_project_id=activity.provider_project_id,
                 name=activity.name,
@@ -470,6 +486,7 @@ async def gitlab_repository_suggestions(
             )
             for activity in activities
         ]
+        return RepositorySuggestionsResponse(window_days=window_days, repositories=repositories)
     finally:
         await connector.close()
 

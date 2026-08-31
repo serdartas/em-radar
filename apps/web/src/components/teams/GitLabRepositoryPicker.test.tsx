@@ -72,6 +72,8 @@ function jsonResponse(body: unknown, status = 200): Response {
 interface MockApiOptions {
   initialRepos?: unknown[]
   suggestions?: unknown[]
+  /** window_days reported in the suggestions response envelope (default: 90). */
+  suggestionsWindowDays?: number
   searchResponse?: unknown[]
   putResponse?: unknown[]
 }
@@ -79,23 +81,29 @@ interface MockApiOptions {
 /**
  * Spy on `globalThis.fetch` and route calls to the GitLab repository endpoints.
  *
- * - GET  .../repository-suggestions  -> suggestions
+ * - GET  .../repository-suggestions  -> { window_days, repositories: suggestions }
  * - GET  .../project-search          -> searchResponse
  * - GET  .../gitlab/repositories     -> initialRepos
  * - PUT  .../gitlab/repositories     -> putResponse (falls back to initialRepos)
+ *
+ * suggestions is wrapped in the RepositorySuggestionsResponse envelope so
+ * callers can pass a plain array and the mock handles the shape change transparently.
+ * Pass suggestionsWindowDays > 90 to simulate a widened-window response.
  */
 function mockApi({
   initialRepos = [],
   putResponse,
   searchResponse = [],
   suggestions = [],
+  suggestionsWindowDays = 90,
 }: MockApiOptions = {}) {
+  const suggestionsEnvelope = { window_days: suggestionsWindowDays, repositories: suggestions }
   return vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
     const url = typeof input === "string" ? input : input.toString()
     const method = (init as RequestInit | undefined)?.method ?? "GET"
 
     if (url.includes("repository-suggestions")) {
-      return Promise.resolve(jsonResponse(suggestions))
+      return Promise.resolve(jsonResponse(suggestionsEnvelope))
     }
     if (url.includes("project-search")) {
       return Promise.resolve(jsonResponse(searchResponse))
@@ -184,6 +192,9 @@ describe("GitLabRepositoryPicker: suggestions rendering", () => {
       const method = (init as RequestInit | undefined)?.method ?? "GET"
       if (url.includes("repository-suggestions")) {
         return Promise.resolve(jsonResponse({ detail: "Server error" }, 500))
+      }
+      if (url.includes("project-search")) {
+        return Promise.resolve(jsonResponse([]))
       }
       if (url.includes("/gitlab/repositories") && method === "GET") {
         // Initial repositories load succeeds so the picker is not load-gated.
@@ -514,7 +525,9 @@ describe("GitLabRepositoryPicker: serialized writes", () => {
       const url = typeof input === "string" ? input : input.toString()
       const method = (init as RequestInit | undefined)?.method ?? "GET"
       if (url.includes("repository-suggestions")) {
-        return Promise.resolve(jsonResponse(suggestionsData))
+        return Promise.resolve(
+          jsonResponse({ window_days: 90, repositories: suggestionsData }),
+        )
       }
       if (url.includes("project-search")) {
         return Promise.resolve(jsonResponse(searchResultsData))
@@ -563,7 +576,7 @@ describe("GitLabRepositoryPicker: load gate", () => {
       const url = typeof input === "string" ? input : input.toString()
       const method = (init as RequestInit | undefined)?.method ?? "GET"
       if (url.includes("repository-suggestions")) {
-        return Promise.resolve(jsonResponse([]))
+        return Promise.resolve(jsonResponse({ window_days: 90, repositories: [] }))
       }
       if (url.includes("/gitlab/repositories")) {
         if (method === "PUT") throw new Error("PUT must not be called during a load failure")
@@ -661,7 +674,9 @@ describe("GitLabRepositoryPicker: PUT failure rollback", () => {
       const url = typeof input === "string" ? input : input.toString()
       const method = (init as RequestInit | undefined)?.method ?? "GET"
       if (url.includes("repository-suggestions")) {
-        return Promise.resolve(jsonResponse(suggestionsData))
+        return Promise.resolve(
+          jsonResponse({ window_days: 90, repositories: suggestionsData }),
+        )
       }
       if (url.includes("project-search")) {
         return Promise.resolve(jsonResponse(searchResultsData))
@@ -689,5 +704,41 @@ describe("GitLabRepositoryPicker: PUT failure rollback", () => {
 
     // An inline error alert must be visible.
     expect(screen.getByRole("alert")).toBeInTheDocument()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// M9-12: Adaptive discovery window indicator
+// ---------------------------------------------------------------------------
+
+describe("GitLabRepositoryPicker: adaptive discovery window indicator", () => {
+  it("shows the widened-window indicator when window_days exceeds the default", async () => {
+    mockApi({ suggestions: suggestionsData, suggestionsWindowDays: 180 })
+    renderPicker()
+
+    await screen.findByText(/Suggested repositories/i)
+    expect(
+      screen.getByText(/Showing repositories from the last 180 days\./i),
+    ).toBeInTheDocument()
+  })
+
+  it("does not show the widened-window indicator when the default window was used", async () => {
+    mockApi({ suggestions: suggestionsData, suggestionsWindowDays: 90 })
+    renderPicker()
+
+    await screen.findByText(/Suggested repositories/i)
+    expect(
+      screen.queryByText(/Showing repositories from the last/i),
+    ).not.toBeInTheDocument()
+  })
+
+  it("does not show the indicator when suggestions are empty and window is default", async () => {
+    mockApi({ suggestions: [], suggestionsWindowDays: 90 })
+    renderPicker()
+
+    await screen.findByText(/No suggestions yet/i)
+    expect(
+      screen.queryByText(/Showing repositories from the last/i),
+    ).not.toBeInTheDocument()
   })
 })
