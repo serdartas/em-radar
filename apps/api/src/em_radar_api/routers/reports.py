@@ -40,6 +40,7 @@ from em_radar_core.models import (
     EvaluationContext,
     EvaluationWindow,
     MergeRequest,
+    MergeRequestSignalScope,
     Project,
     ReportStatus,
     Repository,
@@ -752,6 +753,25 @@ async def _run_team_report(
     code_mergerequests = code_data.mergerequests if code_data else []
     code_reviews = code_data.reviews if code_data else []
 
+    # An authored-scope MR signal cannot be evaluated when the team has no verified members:
+    # skip those signals with a non-blocking note rather than silently reporting zero findings.
+    team_author_ids = code_data.team_member_author_ids if code_data else frozenset()
+    authored_scope_blocked_ids: frozenset[int] = frozenset()
+    if code_data is not None and not team_author_ids:
+        authored_defs = [
+            defn
+            for defn in code_definitions
+            if defn.report_settings.mr_scope is MergeRequestSignalScope.AUTHORED_BY_MEMBERS
+        ]
+        if authored_defs:
+            authored_scope_blocked_ids = frozenset(id(defn) for defn in authored_defs)
+            partial_data_notes.append(
+                {
+                    "source": "code_members",
+                    "reason": "no team members configured; authored-scope merge-request signals not evaluated",
+                }
+            )
+
     # Extract work-item keys from each MR and resolve them against the fetched board work
     # items so linked_workitem_keys/ids are persisted (mutates each MR in place).
     key_pattern = _workitem_key_pattern(session)
@@ -902,6 +922,8 @@ async def _run_team_report(
                     ),
                 )
                 for definition in code_definitions:
+                    if id(definition) in authored_scope_blocked_ids:
+                        continue
                     findings.extend(
                         evaluate_signal_definition(
                             definition,
