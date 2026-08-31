@@ -42,6 +42,52 @@ export interface GitLabMemberInput {
   gitlab_user_id: number
 }
 
+// ---------------------------------------------------------------------------
+// Bulk member resolve types and API function (M9-13)
+// ---------------------------------------------------------------------------
+
+/**
+ * Classification returned per entry by the bulk-resolve endpoint.
+ *
+ * - matched: exactly one GitLab user matched the entry.
+ * - ambiguous: more than one user matched; requires explicit selection.
+ * - unmatched: no user matched; cannot be added.
+ */
+export type MemberResolveStatus = "matched" | "ambiguous" | "unmatched"
+
+/**
+ * Per-entry result from the bulk-resolve endpoint
+ * (POST /api/teams/{teamId}/gitlab/member-resolve).
+ */
+export interface MemberResolveResult {
+  entry: string
+  status: MemberResolveStatus
+  match: GitLabMemberSearchResult | null
+  candidates: GitLabMemberSearchResult[]
+}
+
+/** Response envelope from the bulk-resolve endpoint. */
+export interface BulkMemberResolveResponse {
+  results: MemberResolveResult[]
+}
+
+/**
+ * Resolve a list of raw name/username strings against GitLab.
+ *
+ * Each entry is classified by the server as matched, ambiguous, or unmatched.
+ * Blank entries are skipped server-side. The caller is responsible for
+ * splitting a pasted block into individual entries before calling this.
+ */
+export async function resolveGitLabMembers(
+  teamId: string,
+  entries: string[],
+): Promise<BulkMemberResolveResponse> {
+  return apiFetch<BulkMemberResolveResponse>(`/teams/${teamId}/gitlab/member-resolve`, {
+    method: "POST",
+    body: JSON.stringify({ entries }),
+  })
+}
+
 /**
  * Server-side search for GitLab users matching `q`.
  *

@@ -23,6 +23,7 @@ from em_radar_connector_gitlab import (
 )
 from em_radar_core.connectors import (
     ConnectorAuthError,
+    ConnectorError,
     MemberRef,
     RepositoryActivity,
     RepositoryRef,
@@ -1257,3 +1258,218 @@ def test_repository_suggestions_widens_to_wide_window_when_too_few_candidates(
     second_since: datetime = second_call.kwargs["since"]
     expected_wide_since = now - timedelta(days=DISCOVERY_WIDE_WINDOW_DAYS)
     assert abs((second_since - expected_wide_since).total_seconds()) < 5
+
+
+# ---------------------------------------------------------------------------
+# M9-13: POST /teams/{id}/gitlab/member-resolve (bulk resolve)
+# ---------------------------------------------------------------------------
+
+
+def test_bulk_resolve_classifies_matched_entry(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conn_id = _make_gitlab_connection(session_factory)
+    team_id = _make_team(session_factory, code_connection_id=conn_id)
+
+    mock_connector = _make_mock_connector(
+        search_users_return=[
+            MemberRef(provider_user_id="10", username="alice", display_name="Alice"),
+        ]
+    )
+    monkeypatch.setattr(
+        "em_radar_api.routers.teams.instantiate_connector",
+        lambda *_a, **_kw: mock_connector,
+    )
+
+    resp = api_client.post(
+        f"/api/teams/{team_id}/gitlab/member-resolve",
+        json={"entries": ["alice"]},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data["results"]) == 1
+    result = data["results"][0]
+    assert result["entry"] == "alice"
+    assert result["status"] == "matched"
+    assert result["match"]["username"] == "alice"
+    assert result["candidates"] == []
+
+
+def test_bulk_resolve_classifies_ambiguous_entry(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conn_id = _make_gitlab_connection(session_factory)
+    team_id = _make_team(session_factory, code_connection_id=conn_id)
+
+    mock_connector = _make_mock_connector(
+        search_users_return=[
+            MemberRef(provider_user_id="20", username="bsmith", display_name="Bob Smith"),
+            MemberRef(provider_user_id="21", username="bobsmth", display_name="Bob Smth"),
+        ]
+    )
+    monkeypatch.setattr(
+        "em_radar_api.routers.teams.instantiate_connector",
+        lambda *_a, **_kw: mock_connector,
+    )
+
+    resp = api_client.post(
+        f"/api/teams/{team_id}/gitlab/member-resolve",
+        json={"entries": ["bob smith"]},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data["results"]) == 1
+    result = data["results"][0]
+    assert result["entry"] == "bob smith"
+    assert result["status"] == "ambiguous"
+    assert result["match"] is None
+    assert len(result["candidates"]) == 2
+    usernames = {c["username"] for c in result["candidates"]}
+    assert "bsmith" in usernames
+    assert "bobsmth" in usernames
+
+
+def test_bulk_resolve_classifies_unmatched_entry(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conn_id = _make_gitlab_connection(session_factory)
+    team_id = _make_team(session_factory, code_connection_id=conn_id)
+
+    mock_connector = _make_mock_connector(search_users_return=[])
+    monkeypatch.setattr(
+        "em_radar_api.routers.teams.instantiate_connector",
+        lambda *_a, **_kw: mock_connector,
+    )
+
+    resp = api_client.post(
+        f"/api/teams/{team_id}/gitlab/member-resolve",
+        json={"entries": ["unknown-person"]},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data["results"]) == 1
+    result = data["results"][0]
+    assert result["entry"] == "unknown-person"
+    assert result["status"] == "unmatched"
+    assert result["match"] is None
+    assert result["candidates"] == []
+
+
+def test_bulk_resolve_skips_blank_entries(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conn_id = _make_gitlab_connection(session_factory)
+    team_id = _make_team(session_factory, code_connection_id=conn_id)
+
+    mock_connector = _make_mock_connector(
+        search_users_return=[
+            MemberRef(provider_user_id="1", username="alice", display_name="Alice"),
+        ]
+    )
+    monkeypatch.setattr(
+        "em_radar_api.routers.teams.instantiate_connector",
+        lambda *_a, **_kw: mock_connector,
+    )
+
+    resp = api_client.post(
+        f"/api/teams/{team_id}/gitlab/member-resolve",
+        json={"entries": ["", "  ", "alice", ""]},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    # Only the non-blank entry should produce a result.
+    assert len(data["results"]) == 1
+    assert data["results"][0]["entry"] == "alice"
+
+
+def test_bulk_resolve_no_code_connection_returns_409(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+) -> None:
+    team_id = _make_team(session_factory, code_connection_id=None)
+
+    resp = api_client.post(
+        f"/api/teams/{team_id}/gitlab/member-resolve",
+        json={"entries": ["alice"]},
+    )
+    assert resp.status_code == 409
+
+
+def test_bulk_resolve_auth_error_returns_502(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conn_id = _make_gitlab_connection(session_factory)
+    team_id = _make_team(session_factory, code_connection_id=conn_id)
+
+    mock_connector = _make_mock_connector(raise_auth_error=True)
+    monkeypatch.setattr(
+        "em_radar_api.routers.teams.instantiate_connector",
+        lambda *_a, **_kw: mock_connector,
+    )
+
+    resp = api_client.post(
+        f"/api/teams/{team_id}/gitlab/member-resolve",
+        json={"entries": ["alice"]},
+    )
+    assert resp.status_code == 502
+    # The connector must still be closed even when a search raises.
+    mock_connector.close.assert_awaited()
+
+
+def test_bulk_resolve_generic_connector_error_returns_502_and_closes(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A non-auth ConnectorError (e.g. permission/network) also maps to 502, and closes."""
+    conn_id = _make_gitlab_connection(session_factory)
+    team_id = _make_team(session_factory, code_connection_id=conn_id)
+
+    mock_connector = _make_mock_connector()
+    mock_connector.search_users = AsyncMock(side_effect=ConnectorError("boom"))
+    monkeypatch.setattr(
+        "em_radar_api.routers.teams.instantiate_connector",
+        lambda *_a, **_kw: mock_connector,
+    )
+
+    resp = api_client.post(
+        f"/api/teams/{team_id}/gitlab/member-resolve",
+        json={"entries": ["alice"]},
+    )
+    assert resp.status_code == 502
+    mock_connector.close.assert_awaited()
+
+
+def test_bulk_resolve_caps_per_entry_search_limit(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The endpoint must pass the bounded per-entry limit to search_users (§24)."""
+    conn_id = _make_gitlab_connection(session_factory)
+    team_id = _make_team(session_factory, code_connection_id=conn_id)
+
+    mock_connector = _make_mock_connector(search_users_return=[])
+    monkeypatch.setattr(
+        "em_radar_api.routers.teams.instantiate_connector",
+        lambda *_a, **_kw: mock_connector,
+    )
+
+    api_client.post(
+        f"/api/teams/{team_id}/gitlab/member-resolve",
+        json={"entries": ["alice"]},
+    )
+    # search_users must have been called with a small bounded limit, not unbounded.
+    call_kwargs = mock_connector.search_users.call_args
+    used_limit = call_kwargs.kwargs.get("limit") or call_kwargs.args[1]
+    assert used_limit <= 10

@@ -91,6 +91,27 @@ class MemberSearchResult(SQLModel):
     avatar_url: str | None = None
 
 
+class MemberResolveStatus(StrEnum):
+    MATCHED = "matched"
+    AMBIGUOUS = "ambiguous"
+    UNMATCHED = "unmatched"
+
+
+class MemberResolveResult(SQLModel):
+    entry: str
+    status: MemberResolveStatus
+    match: MemberSearchResult | None = None
+    candidates: list[MemberSearchResult] = Field(default_factory=list)
+
+
+class BulkMemberResolveRequest(SQLModel):
+    entries: list[str]
+
+
+class BulkMemberResolveResponse(SQLModel):
+    results: list[MemberResolveResult]
+
+
 class ProjectSearchResult(SQLModel):
     provider_project_id: str
     name: str

@@ -27,8 +27,12 @@ from em_radar_api.tables import (
     TeamProfileTable,
 )
 from em_radar_api.team_profiles import (
+    BulkMemberResolveRequest,
+    BulkMemberResolveResponse,
     GitLabMemberInput,
     GitLabRepositoryInput,
+    MemberResolveResult,
+    MemberResolveStatus,
     MemberSearchResult,
     ProjectSearchResult,
     RepositoryActivityResult,
@@ -68,6 +72,7 @@ _PROJECT_SEARCH_DEFAULT_LIMIT = 20
 _PROJECT_SEARCH_MAX_LIMIT = 50
 _SUGGESTION_DEFAULT_LIMIT = 20
 _SUGGESTION_MAX_LIMIT = 50
+_BULK_RESOLVE_PER_ENTRY_LIMIT = 5
 
 router = APIRouter()
 
@@ -357,6 +362,82 @@ async def gitlab_member_search(
             )
             for ref in refs
         ]
+    finally:
+        await connector.close()
+
+
+# ---------------------------------------------------------------------------
+# GitLab bulk member resolve
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/teams/{team_id}/gitlab/member-resolve",
+    response_model=BulkMemberResolveResponse,
+)
+async def gitlab_member_bulk_resolve(
+    team_id: UUID,
+    body: BulkMemberResolveRequest,
+    session: Session = Depends(get_session),
+) -> BulkMemberResolveResponse:
+    team_row = session.get(TeamProfileTable, team_id)
+    if team_row is None:
+        raise _team_not_found()
+    connector = _require_gitlab_connector(session, team_row)
+    try:
+        if not isinstance(connector, MemberProvider):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="GitLab connector does not support member search",
+            )
+        results: list[MemberResolveResult] = []
+        for entry in body.entries:
+            stripped = entry.strip()
+            if not stripped:
+                continue
+            try:
+                refs = await connector.search_users(stripped, limit=_BULK_RESOLVE_PER_ENTRY_LIMIT)
+            except ConnectorAuthError as error:
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)
+                ) from error
+            except ConnectorError as error:
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)
+                ) from error
+            candidates = [
+                MemberSearchResult(
+                    provider_user_id=ref.provider_user_id,
+                    username=ref.username,
+                    display_name=ref.display_name,
+                    avatar_url=ref.avatar_url,
+                )
+                for ref in refs
+            ]
+            if len(candidates) == 1:
+                results.append(
+                    MemberResolveResult(
+                        entry=stripped,
+                        status=MemberResolveStatus.MATCHED,
+                        match=candidates[0],
+                    )
+                )
+            elif len(candidates) > 1:
+                results.append(
+                    MemberResolveResult(
+                        entry=stripped,
+                        status=MemberResolveStatus.AMBIGUOUS,
+                        candidates=candidates,
+                    )
+                )
+            else:
+                results.append(
+                    MemberResolveResult(
+                        entry=stripped,
+                        status=MemberResolveStatus.UNMATCHED,
+                    )
+                )
+        return BulkMemberResolveResponse(results=results)
     finally:
         await connector.close()
 

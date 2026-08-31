@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 
+import { BulkMemberPaste, type ResolvedMember } from "@/components/teams/BulkMemberPaste"
 import { Combobox, type ComboboxOption } from "@/components/ui/combobox"
 import { apiErrorMessage } from "@/lib/api"
 import {
@@ -79,6 +80,9 @@ export function GitLabMemberPicker({ teamId, connectionId }: GitLabMemberPickerP
 
   // Surfaces mutation errors (add/remove failures) inline below the picker.
   const [mutationError, setMutationError] = useState<string | null>(null)
+
+  // Controls visibility of the bulk paste panel.
+  const [showPastePanel, setShowPastePanel] = useState(false)
 
   // Debounce: replace debouncedQuery with rawQuery after 300 ms of inactivity.
   useEffect(() => {
@@ -206,6 +210,18 @@ export function GitLabMemberPicker({ teamId, connectionId }: GitLabMemberPickerP
     persistMembers({ members: newMembers, snapshot })
   }
 
+  function handleBulkAdd(newMembers: ResolvedMember[]) {
+    if (isSaving || newMembers.length === 0) return
+    const existingIds = new Set(selectedMembers.map((m) => m.gitlab_user_id))
+    const fresh = newMembers.filter((m) => !existingIds.has(m.gitlab_user_id))
+    if (fresh.length === 0) return
+    const snapshot = [...selectedMembers]
+    const merged = [...selectedMembers, ...fresh]
+    setSelectedMembers(merged)
+    persistMembers({ members: merged, snapshot })
+    setShowPastePanel(false)
+  }
+
   // Gate the picker: a failed or pending initial load must not enable a
   // destructive replace from an unknown (or empty) baseline.
   if (membersLoading) {
@@ -222,15 +238,39 @@ export function GitLabMemberPicker({ teamId, connectionId }: GitLabMemberPickerP
 
   return (
     <div className="space-y-2">
-      <Combobox
-        key={comboboxKey}
-        disabled={isSaving}
-        inputLabel="Search GitLab members"
-        onQueryChange={setRawQuery}
-        onSelect={handleSelect}
-        options={options}
-        placeholder="Search by name or username..."
-      />
+      <div className="flex items-center gap-2">
+        <div className="flex-1">
+          <Combobox
+            key={comboboxKey}
+            disabled={isSaving}
+            inputLabel="Search GitLab members"
+            onQueryChange={setRawQuery}
+            onSelect={handleSelect}
+            options={options}
+            placeholder="Search by name or username..."
+          />
+        </div>
+        <button
+          aria-expanded={showPastePanel}
+          aria-label="Paste a list"
+          className="shrink-0 rounded-md border px-3 py-1.5 text-sm font-medium disabled:opacity-50"
+          disabled={isSaving}
+          onClick={() => setShowPastePanel((v) => !v)}
+          type="button"
+        >
+          Paste a list
+        </button>
+      </div>
+      {showPastePanel && (
+        <div className="rounded-md border p-3">
+          <p className="mb-2 text-sm font-medium">Paste a list of names or usernames</p>
+          <BulkMemberPaste
+            disabled={isSaving}
+            onAdd={handleBulkAdd}
+            teamId={teamId}
+          />
+        </div>
+      )}
       {mutationError && (
         <p className="mt-1 text-sm text-destructive" role="alert">
           {mutationError}
