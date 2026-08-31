@@ -152,6 +152,7 @@ spec:
       report_settings:
         severity: warning
         category: flow
+        mr_scope: team_repositories
       origin: system_template
       template_key: mergerequest-waiting-too-long
 
@@ -170,6 +171,7 @@ spec:
       report_settings:
         severity: warning
         category: quality
+        mr_scope: team_repositories
       origin: system_template
       template_key: mergerequest-without-linked-workitem
 
@@ -189,6 +191,7 @@ spec:
       report_settings:
         severity: warning
         category: quality
+        mr_scope: team_repositories
       origin: system_template
       template_key: large-mergerequest-risk
 
@@ -208,6 +211,7 @@ spec:
       report_settings:
         severity: warning
         category: flow
+        mr_scope: team_repositories
       origin: system_template
       template_key: failing-pipeline-too-long
 
@@ -227,6 +231,7 @@ spec:
       report_settings:
         severity: critical
         category: quality
+        mr_scope: team_repositories
       origin: system_template
       template_key: merged-without-enough-approval
 

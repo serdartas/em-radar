@@ -7,6 +7,7 @@ export interface ReportSettings {
   severity: Severity
   category: string
   message_template?: string | null
+  mr_scope?: string | null
 }
 
 export interface SignalDefinition {

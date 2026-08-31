@@ -2,7 +2,7 @@
 
 import asyncio
 from collections.abc import AsyncIterator, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Literal, Self
 from uuid import UUID
@@ -21,6 +21,7 @@ from em_radar_core.connectors import (
     ReviewProvider,
     SignalCapabilitySchema,
     TransitionProvider,
+    UserIdentityProvider,
     WorkItemProvider,
     WorkItemScope,
 )
@@ -39,6 +40,7 @@ from em_radar_core.models import (
     EvaluationContext,
     EvaluationWindow,
     MergeRequest,
+    MergeRequestSignalScope,
     Project,
     ReportStatus,
     Repository,
@@ -101,6 +103,7 @@ from em_radar_api.tables import (
     ReportTable,
     SignalFindingTable,
     SprintTable,
+    TeamGitLabMemberTable,
     TeamGitLabRepositoryTable,
     TeamProfileTable,
 )
@@ -503,6 +506,7 @@ class _CodeFetchResult:
     mergerequests: list[MergeRequest]
     reviews: list[Review]
     approvals_unavailable: bool = False
+    team_member_author_ids: frozenset[UUID] = field(default_factory=frozenset)
 
 
 async def _run_team_report(
@@ -637,9 +641,25 @@ async def _run_team_report(
                 {"source": "code", "reason": "no team-owned repositories configured"}
             )
 
+    # Load team's verified members for authored-scope MR signal evaluation.
+    member_gitlab_user_ids: list[str] = []
+    if code_source_selected and team_row.code_connection_id is not None:
+        member_rows = session.exec(
+            select(TeamGitLabMemberTable).where(
+                TeamGitLabMemberTable.team_profile_id == team_row.id,
+                TeamGitLabMemberTable.connection_id == team_row.code_connection_id,
+                TeamGitLabMemberTable.verification_status == ScopeVerificationStatus.VERIFIED,
+            )
+        ).all()
+        member_gitlab_user_ids = [str(m.gitlab_user_id) for m in member_rows]
+
     if code_source_selected and configured_repo_ids and team_row.code_connection_id is not None:
         code_coro = _fetch_code_data(
-            session, team_row.code_connection_id, mr_window, configured_repo_ids
+            session,
+            team_row.code_connection_id,
+            mr_window,
+            configured_repo_ids,
+            member_gitlab_user_ids,
         )
     elif code_source_selected:
         # Code signals selected but no repositories configured: return an empty result (not None)
@@ -732,6 +752,25 @@ async def _run_team_report(
 
     code_mergerequests = code_data.mergerequests if code_data else []
     code_reviews = code_data.reviews if code_data else []
+
+    # An authored-scope MR signal cannot be evaluated when the team has no verified members:
+    # skip those signals with a non-blocking note rather than silently reporting zero findings.
+    team_author_ids = code_data.team_member_author_ids if code_data else frozenset()
+    authored_scope_blocked_ids: frozenset[int] = frozenset()
+    if code_data is not None and not team_author_ids:
+        authored_defs = [
+            defn
+            for defn in code_definitions
+            if defn.report_settings.mr_scope is MergeRequestSignalScope.AUTHORED_BY_MEMBERS
+        ]
+        if authored_defs:
+            authored_scope_blocked_ids = frozenset(id(defn) for defn in authored_defs)
+            partial_data_notes.append(
+                {
+                    "source": "code_members",
+                    "reason": "no team members configured; authored-scope merge-request signals not evaluated",
+                }
+            )
 
     # Extract work-item keys from each MR and resolve them against the fetched board work
     # items so linked_workitem_keys/ids are persisted (mutates each MR in place).
@@ -843,6 +882,9 @@ async def _run_team_report(
                 repositories=tuple(code_data.repositories) if code_data else (),
                 mergerequests=tuple(code_mergerequests),
                 reviews=tuple(code_reviews),
+                team_member_author_ids=(
+                    code_data.team_member_author_ids if code_data else frozenset()
+                ),
             )
 
             # Evaluate board signals (workitem/sprint/issue entity types) when board source attached.
@@ -880,6 +922,8 @@ async def _run_team_report(
                     ),
                 )
                 for definition in code_definitions:
+                    if id(definition) in authored_scope_blocked_ids:
+                        continue
                     findings.extend(
                         evaluate_signal_definition(
                             definition,
@@ -1048,11 +1092,16 @@ async def _fetch_code_data(
     code_connection_id: UUID,
     window: EvaluationWindow,
     configured_repo_ids: list[str],
+    member_provider_user_ids: list[str] | None = None,
 ) -> _CodeFetchResult:
     """Fetch repositories, merge requests, and (if available) reviews from the code connection.
 
     Only the team's configured verified repositories (``configured_repo_ids``) are fetched;
     scope comes from saved config, never from live activity (§21 determinism).
+
+    ``member_provider_user_ids`` are the team's verified members' GitLab numeric user ids.
+    When the connector implements ``UserIdentityProvider``, they are mapped to canonical
+    UUIDs matching ``MergeRequest.author_id`` and returned in ``team_member_author_ids``.
     """
     code_connection = get_source_connection(session, code_connection_id)
     if code_connection is None:
@@ -1113,11 +1162,18 @@ async def _fetch_code_data(
     finally:
         await code_connector.close()
 
+    team_member_author_ids: frozenset[UUID] = frozenset()
+    if member_provider_user_ids and isinstance(code_connector, UserIdentityProvider):
+        team_member_author_ids = frozenset(
+            code_connector.canonical_user_id(uid) for uid in member_provider_user_ids
+        )
+
     return _CodeFetchResult(
         repositories=repositories,
         mergerequests=mergerequests,
         reviews=reviews,
         approvals_unavailable=approvals_unavailable,
+        team_member_author_ids=team_member_author_ids,
     )
 
 

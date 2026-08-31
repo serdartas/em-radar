@@ -30,3 +30,5 @@ class SignalData:
     reviews: tuple[Review, ...] = field(default_factory=tuple)
     transitions: tuple[Transition, ...] = field(default_factory=tuple)
     comments: tuple[Comment, ...] = field(default_factory=tuple)
+    # Canonical author UUIDs of team members; used by authored-scope MR signals.
+    team_member_author_ids: frozenset[UUID] = field(default_factory=frozenset)

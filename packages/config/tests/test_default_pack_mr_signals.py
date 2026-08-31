@@ -369,3 +369,25 @@ def test_mr_signals_export_round_trip(_api_harness) -> None:
         s.template_key for s in exported.pack.spec.signals if s.entity_type == "merge_request"
     }
     assert exported_mr_keys == MR_TEMPLATE_KEYS
+
+
+# ---------------------------------------------------------------------------
+# M9-11: default mr_scope for seeded MR signals
+# ---------------------------------------------------------------------------
+
+
+def test_mr_signals_default_scope_is_team_repositories() -> None:
+    """All 5 default MR signals carry mr_scope=team_repositories in their report_settings."""
+    pack = load_signal_pack(DEFAULT_PACK_PATH.read_text(encoding="utf-8")).pack
+    mr_signals = [s for s in pack.spec.signals if s.entity_type == "merge_request"]
+
+    assert {s.template_key for s in mr_signals} == MR_TEMPLATE_KEYS
+    for signal in mr_signals:
+        assert signal.report_settings is not None, (
+            f"signal '{signal.template_key}' is missing report_settings"
+        )
+        mr_scope = signal.report_settings.get("mr_scope")
+        assert mr_scope == "team_repositories", (
+            f"signal '{signal.template_key}' expected mr_scope='team_repositories'; "
+            f"got {mr_scope!r}"
+        )

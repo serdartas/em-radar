@@ -1067,3 +1067,126 @@ describe("SignalForm — rule value validation", () => {
     expect(screen.getByRole("button", { name: "Save signal" })).toBeDisabled()
   })
 })
+
+// ---------------------------------------------------------------------------
+// M9-11: MR scope selector
+// ---------------------------------------------------------------------------
+
+const MR_FIELDS: SignalField[] = [
+  {
+    key: "state",
+    label: "State",
+    type: "enum",
+    operators: ["is", "is_not"],
+    values: ["open", "merged", "closed"],
+    value_provider: null,
+    availability: null,
+    entity_type: "merge_request",
+  },
+]
+
+const FIELDS_WITH_MR: Record<string, SignalField[]> = {
+  issue: ISSUE_FIELDS,
+  merge_request: MR_FIELDS,
+}
+
+function makeMrDefinition(overrides: Partial<SignalDefinition> = {}): SignalDefinition {
+  return {
+    id: "mr-def-1",
+    name: "Stale MR",
+    description: null,
+    entity_type: "merge_request",
+    expression: {
+      type: "group",
+      operator: "all",
+      conditions: [{ field: "state", operator: "is", value: "open" }],
+    },
+    report_settings: { severity: "warning", category: "flow" },
+    origin: "system_template",
+    template_key: "mergerequest-waiting-too-long",
+    created_at: "2024-01-01T00:00:00Z",
+    updated_at: "2024-01-01T00:00:00Z",
+    ...overrides,
+  }
+}
+
+describe("SignalForm — MR scope selector (M9-11)", () => {
+  it("shows the Signal scope selector for merge_request entity type", () => {
+    renderForm({
+      fieldsByEntityType: FIELDS_WITH_MR,
+      mode: "edit",
+      initialValue: makeMrDefinition(),
+    })
+
+    expect(screen.getByLabelText("Signal scope")).toBeInTheDocument()
+  })
+
+  it("does NOT show the Signal scope selector for issue entity type", () => {
+    renderForm({
+      fieldsByEntityType: FIELDS_WITH_MR,
+      mode: "edit",
+      initialValue: makeDefinition({ entity_type: "issue" }),
+    })
+
+    expect(screen.queryByLabelText("Signal scope")).not.toBeInTheDocument()
+  })
+
+  it("defaults to team_repositories scope when mr_scope is not set", () => {
+    renderForm({
+      fieldsByEntityType: FIELDS_WITH_MR,
+      mode: "edit",
+      initialValue: makeMrDefinition({ report_settings: { severity: "warning", category: "flow" } }),
+    })
+
+    const scopeSelect = screen.getByLabelText("Signal scope") as HTMLSelectElement
+    expect(scopeSelect.value).toBe("team_repositories")
+  })
+
+  it("prefills authored_by_members scope when mr_scope is set", () => {
+    renderForm({
+      fieldsByEntityType: FIELDS_WITH_MR,
+      mode: "edit",
+      initialValue: makeMrDefinition({
+        report_settings: { severity: "warning", category: "flow", mr_scope: "authored_by_members" },
+      }),
+    })
+
+    const scopeSelect = screen.getByLabelText("Signal scope") as HTMLSelectElement
+    expect(scopeSelect.value).toBe("authored_by_members")
+  })
+
+  it("persists mr_scope=authored_by_members in onSave payload for a merge_request signal", () => {
+    const { onSave } = renderForm({
+      fieldsByEntityType: FIELDS_WITH_MR,
+      mode: "edit",
+      initialValue: makeMrDefinition(),
+    })
+
+    fireEvent.change(screen.getByLabelText("Signal scope"), {
+      target: { value: "authored_by_members" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }))
+
+    expect(onSave).toHaveBeenCalledOnce()
+    const call = onSave.mock.calls[0][0] as {
+      report_settings: { mr_scope?: string }
+    }
+    expect(call.report_settings.mr_scope).toBe("authored_by_members")
+  })
+
+  it("omits mr_scope from onSave payload for an issue signal", () => {
+    const { onSave } = renderForm({
+      fieldsByEntityType: FIELDS_WITH_MR,
+      mode: "edit",
+      initialValue: makeDefinition({ name: "Stale issue" }),
+    })
+
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }))
+
+    expect(onSave).toHaveBeenCalledOnce()
+    const call = onSave.mock.calls[0][0] as {
+      report_settings: Record<string, unknown>
+    }
+    expect("mr_scope" in call.report_settings).toBe(false)
+  })
+})

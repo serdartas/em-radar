@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import ClassVar, Literal, Protocol, runtime_checkable
+from uuid import UUID
 
 from em_radar_core.models import (
     Board,
@@ -205,6 +206,18 @@ class MemberProvider(Protocol):
     async def get_user(self, provider_user_id: str) -> MemberRef | None: ...
 
 
+@runtime_checkable
+class UserIdentityProvider(Protocol):
+    """Connector that can map a provider-native user id to the stable canonical UUID.
+
+    Used by the report runner to resolve team members' gitlab_user_id values to the
+    same canonical UUIDs that MergeRequest.author_id carries, enabling authored-scope
+    MR signal evaluation without any connector import in the evaluator.
+    """
+
+    def canonical_user_id(self, provider_user_id: str) -> UUID: ...
+
+
 @dataclass(frozen=True)
 class RepositoryRef:
     provider_project_id: str
@@ -295,6 +308,7 @@ __all__ = [
     "SignalField",
     "SignalScopeType",
     "TransitionProvider",
+    "UserIdentityProvider",
     "ValueProvider",
     "WorkItemProvider",
     "WorkItemScope",

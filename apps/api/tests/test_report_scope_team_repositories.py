@@ -551,3 +551,73 @@ def test_configured_repo_resolved_via_get_repository_even_when_absent_from_list(
         f"fetch_mergerequests must receive the connector's namespaced external id; "
         f"got {scope.repository_external_ids!r}"
     )
+
+
+def _create_authored_mr_signal_group(api_client: TestClient) -> str:
+    """Create a signal group with a single authored-scope merge-request signal (M9-11)."""
+    signal_id = api_client.post(
+        "/api/signal-definitions",
+        json={
+            "name": "Open authored MR",
+            "entity_type": "merge_request",
+            "expression": {
+                "type": "group",
+                "operator": "all",
+                "conditions": [{"field": "state", "operator": "is", "value": "open"}],
+            },
+            "report_settings": {
+                "severity": "info",
+                "category": "code",
+                "mr_scope": "authored_by_members",
+            },
+            "origin": "user_created",
+        },
+    ).json()["id"]
+    return api_client.post(
+        "/api/signal-config-groups",
+        json={"name": "Authored scope group", "signal_ids": [signal_id]},
+    ).json()["id"]
+
+
+def test_authored_scope_signal_without_members_is_skipped_with_note(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An authored-scope MR signal on a team with no members is skipped with a non-blocking note.
+
+    The report must succeed (not silently report zero authored findings), and a partial-data note
+    with source='code_members' must be recorded (M9-11 skip-with-note).
+    """
+    monkeypatch.setattr(
+        "em_radar_api.connector_registry._connector_types",
+        lambda: [_ScopingMRConnector],
+    )
+    monkeypatch.setattr("em_radar_api.routers.reports.datetime", FrozenReportDateTime)
+
+    gitlab_id = _create_gitlab_connection(api_client)
+    group_id = _create_authored_mr_signal_group(api_client)
+    team_id = api_client.post(
+        "/api/teams",
+        json={
+            "name": "Authored no members team",
+            "code_connection_id": gitlab_id,
+            "signal_config_group_ids": [group_id],
+            "working_mode": "kanban",
+        },
+    ).json()["id"]
+    # Configure a repository so the code fetch runs, but deliberately add NO members.
+    _seed_gitlab_repo(session_factory, team_id, gitlab_id, _CONFIGURED_PROJECT_ID)
+
+    report = _run_report(api_client, team_id)
+
+    assert report["status"] == "succeeded", (
+        f"report must succeed when authored scope has no members; got status={report['status']!r}"
+    )
+    notes = report["signal_pack_snapshot"]["partial_data_notes"]
+    member_notes = [n for n in notes if n["source"] == "code_members"]
+    assert len(member_notes) == 1, f"expected one code_members note; got {member_notes}"
+    assert "no team members configured" in member_notes[0]["reason"]
+    # The authored-scope signal must not have produced findings from non-member MRs.
+    mr_findings = [f for f in report["findings"] if f["entity_type"] == "mergerequest"]
+    assert mr_findings == []

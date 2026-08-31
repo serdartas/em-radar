@@ -20,6 +20,7 @@ from em_radar_core.evaluation import (
 )
 from em_radar_core.models import (
     MergeRequest,
+    MergeRequestSignalScope,
     MergeRequestState,
     PipelineStatus,
     ReportSettings,
@@ -677,3 +678,240 @@ def test_approval_count_none_does_not_fire_approval_signal() -> None:
     )
 
     assert findings == []
+
+
+# ---------------------------------------------------------------------------
+# M9-11: per-signal MR scope (authored vs team-owned repositories)
+# ---------------------------------------------------------------------------
+
+
+def _authored_scope_definition(expression: dict[str, object]) -> SignalDefinition:
+    return SignalDefinition(
+        name="Authored scope signal",
+        entity_type="merge_request",
+        expression=expression,
+        report_settings=ReportSettings(
+            severity="warning",
+            category="flow",
+            mr_scope=MergeRequestSignalScope.AUTHORED_BY_MEMBERS,
+        ),
+        origin=SignalOrigin.USER_CREATED,
+        created_at=NOW,
+        updated_at=NOW,
+    )
+
+
+def _repo_scope_definition(expression: dict[str, object]) -> SignalDefinition:
+    return SignalDefinition(
+        name="Repo scope signal",
+        entity_type="merge_request",
+        expression=expression,
+        report_settings=ReportSettings(
+            severity="warning",
+            category="flow",
+            mr_scope=MergeRequestSignalScope.TEAM_REPOSITORIES,
+        ),
+        origin=SignalOrigin.USER_CREATED,
+        created_at=NOW,
+        updated_at=NOW,
+    )
+
+
+_OPEN_EXPR: dict[str, object] = {
+    "type": "group",
+    "operator": "all",
+    "conditions": [{"field": "state", "operator": "is", "value": "open"}],
+}
+
+
+def test_authored_scope_filters_to_team_member_authors() -> None:
+    """AUTHORED_BY_MEMBERS scope evaluates only MRs whose author_id is in team_member_author_ids."""
+    member_author_id = uuid4()
+    non_member_author_id = uuid4()
+
+    member_mr = MergeRequest(
+        source=Source.GITLAB,
+        external_id="mr-member",
+        repository_id=_REPO_ID,
+        iid=1,
+        title="Member MR",
+        state=MergeRequestState.OPEN,
+        author_id=member_author_id,
+        target_branch="main",
+        source_branch="feature/member",
+        created_at=NOW,
+        updated_at=NOW,
+    )
+    non_member_mr = MergeRequest(
+        source=Source.GITLAB,
+        external_id="mr-other",
+        repository_id=_REPO_ID,
+        iid=2,
+        title="Other MR",
+        state=MergeRequestState.OPEN,
+        author_id=non_member_author_id,
+        target_branch="main",
+        source_branch="feature/other",
+        created_at=NOW,
+        updated_at=NOW,
+    )
+
+    data = SignalData(
+        report_id=uuid4(),
+        mergerequests=(member_mr, non_member_mr),
+        team_member_author_ids=frozenset([member_author_id]),
+    )
+
+    findings = evaluate_signal_definition(
+        _authored_scope_definition(_OPEN_EXPR),
+        data,
+        context(),
+        GitLabConnector.describe_signal_schema(),
+        [_scope()],
+    )
+
+    assert len(findings) == 1
+    assert findings[0].entity_id == member_mr.id
+
+
+def test_authored_scope_empty_member_set_produces_no_findings() -> None:
+    """AUTHORED_BY_MEMBERS scope with an empty team_member_author_ids produces no findings."""
+    mr = _mr(1, state=MergeRequestState.OPEN)
+    data = SignalData(
+        report_id=uuid4(),
+        mergerequests=(mr,),
+        team_member_author_ids=frozenset(),
+    )
+
+    findings = evaluate_signal_definition(
+        _authored_scope_definition(_OPEN_EXPR),
+        data,
+        context(),
+        GitLabConnector.describe_signal_schema(),
+        [_scope()],
+    )
+
+    assert findings == []
+
+
+def test_team_repositories_scope_evaluates_all_provided_mrs() -> None:
+    """TEAM_REPOSITORIES scope evaluates all MRs regardless of team_member_author_ids."""
+    member_author_id = uuid4()
+    non_member_author_id = uuid4()
+
+    mr1 = MergeRequest(
+        source=Source.GITLAB,
+        external_id="mr-1",
+        repository_id=_REPO_ID,
+        iid=1,
+        title="MR 1",
+        state=MergeRequestState.OPEN,
+        author_id=member_author_id,
+        target_branch="main",
+        source_branch="feature/a",
+        created_at=NOW,
+        updated_at=NOW,
+    )
+    mr2 = MergeRequest(
+        source=Source.GITLAB,
+        external_id="mr-2",
+        repository_id=_REPO_ID,
+        iid=2,
+        title="MR 2",
+        state=MergeRequestState.OPEN,
+        author_id=non_member_author_id,
+        target_branch="main",
+        source_branch="feature/b",
+        created_at=NOW,
+        updated_at=NOW,
+    )
+
+    data = SignalData(
+        report_id=uuid4(),
+        mergerequests=(mr1, mr2),
+        team_member_author_ids=frozenset([member_author_id]),
+    )
+
+    findings = evaluate_signal_definition(
+        _repo_scope_definition(_OPEN_EXPR),
+        data,
+        context(),
+        GitLabConnector.describe_signal_schema(),
+        [_scope()],
+    )
+
+    assert len(findings) == 2
+
+
+def test_authored_scope_name_is_correct() -> None:
+    """AUTHORED_BY_MEMBERS scope produces findings with the authored-scope label."""
+    member_author_id = uuid4()
+    mr = MergeRequest(
+        source=Source.GITLAB,
+        external_id="mr-1",
+        repository_id=_REPO_ID,
+        iid=1,
+        title="MR 1",
+        state=MergeRequestState.OPEN,
+        author_id=member_author_id,
+        target_branch="main",
+        source_branch="feature/a",
+        created_at=NOW,
+        updated_at=NOW,
+    )
+    data = SignalData(
+        report_id=uuid4(),
+        mergerequests=(mr,),
+        team_member_author_ids=frozenset([member_author_id]),
+    )
+
+    findings = evaluate_signal_definition(
+        _authored_scope_definition(_OPEN_EXPR),
+        data,
+        context(),
+        GitLabConnector.describe_signal_schema(),
+        [_scope()],
+    )
+
+    assert len(findings) == 1
+    assert findings[0].scope_name == "MRs authored by team members"
+
+
+def test_team_repositories_scope_name_is_correct() -> None:
+    """TEAM_REPOSITORIES scope produces findings with the team-owned-repositories label."""
+    mr = _mr(1, state=MergeRequestState.OPEN)
+    data = _data(mr)
+
+    findings = evaluate_signal_definition(
+        _repo_scope_definition(_OPEN_EXPR),
+        data,
+        context(),
+        GitLabConnector.describe_signal_schema(),
+        [_scope()],
+    )
+
+    assert len(findings) == 1
+    assert findings[0].scope_name == "MRs in team-owned repositories"
+
+
+def test_default_scope_is_team_repositories() -> None:
+    """A signal without mr_scope defaults to TEAM_REPOSITORIES behavior."""
+    mr = _mr(1, state=MergeRequestState.OPEN)
+    non_member_author = uuid4()
+    data = SignalData(
+        report_id=uuid4(),
+        mergerequests=(mr,),
+        team_member_author_ids=frozenset([non_member_author]),  # mr.author_id not in set
+    )
+
+    # Default scope (mr_scope=None) should still evaluate the MR (TEAM_REPOSITORIES behavior)
+    findings = evaluate_signal_definition(
+        _mr_definition(_OPEN_EXPR),
+        data,
+        context(),
+        GitLabConnector.describe_signal_schema(),
+        [_scope()],
+    )
+
+    assert len(findings) == 1
+    assert findings[0].scope_name == "MRs in team-owned repositories"
