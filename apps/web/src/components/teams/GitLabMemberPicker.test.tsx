@@ -581,16 +581,19 @@ describe("GitLabMemberPicker: suggestions invalidation after member change", () 
       if (url.includes("repository-suggestions")) {
         suggestionFetchCount++
         return Promise.resolve(
-          jsonResponse([
-            {
-              provider_project_id: "201",
-              name: "frontend",
-              path_with_namespace: "acme/frontend",
-              contributing_member_count: 3,
-              merge_request_count: 42,
-              last_activity_at: "2026-07-01T00:00:00Z",
-            },
-          ]),
+          jsonResponse({
+            window_days: 90,
+            repositories: [
+              {
+                provider_project_id: "201",
+                name: "frontend",
+                path_with_namespace: "acme/frontend",
+                contributing_member_count: 3,
+                merge_request_count: 42,
+                last_activity_at: "2026-07-01T00:00:00Z",
+              },
+            ],
+          }),
         )
       }
       if (url.includes("project-search")) {

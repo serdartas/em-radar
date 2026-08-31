@@ -140,6 +140,18 @@ export interface RepositoryActivityResult {
   last_activity_at: string
 }
 
+/**
+ * Response envelope returned by the repository-suggestions endpoint.
+ *
+ * window_days reports the discovery window that was actually used (90 days by
+ * default; 180 days when the default window returned too few candidates).
+ * repositories is the ranked list of candidates for that window.
+ */
+export interface RepositorySuggestionsResponse {
+  window_days: number
+  repositories: RepositoryActivityResult[]
+}
+
 /** Fetch the team's currently saved GitLab repositories. */
 export async function listGitLabRepositories(teamId: string): Promise<TeamGitLabRepository[]> {
   return apiFetch<TeamGitLabRepository[]>(`/teams/${teamId}/gitlab/repositories`)
@@ -181,16 +193,17 @@ export async function searchGitLabProjects(
 
 /**
  * Fetch ranked repository suggestions derived from the team's selected members'
- * recent activity (§10, §11). Empty when no members are saved yet.
+ * recent activity (§10, §11). Returns the response envelope including the
+ * discovery window that was actually used and the ranked repository list.
  */
 export async function getRepositorySuggestions(
   teamId: string,
   limit?: number,
-): Promise<RepositoryActivityResult[]> {
+): Promise<RepositorySuggestionsResponse> {
   const params = new URLSearchParams()
   if (limit !== undefined) params.set("limit", String(limit))
   const qs = params.toString()
-  return apiFetch<RepositoryActivityResult[]>(
+  return apiFetch<RepositorySuggestionsResponse>(
     `/teams/${teamId}/gitlab/repository-suggestions${qs ? `?${qs}` : ""}`,
   )
 }

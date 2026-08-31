@@ -49,9 +49,14 @@ CLIENT_FACTORY: Callable[..., httpx.AsyncClient] = httpx.AsyncClient
 PAGE_SIZE = 100
 _NAMESPACE = UUID("c7d8a5f1-3b4e-4f2a-8c9d-1e0f7a6b5c3d")
 
-# Default discovery window for repository activity lookups (§15).
-# Callers derive `since` from this constant; the connector method itself only consumes `since`.
+# Discovery window constants for repository activity lookups (§15).
+# Callers derive `since` from these constants; the connector method only consumes `since`.
+# DISCOVERY_DEFAULT_WINDOW_DAYS: initial window tried first.
+# DISCOVERY_WIDE_WINDOW_DAYS: fallback when the default window yields too few candidates.
+# DISCOVERY_MIN_CANDIDATES: threshold below which the caller widens the window.
 DISCOVERY_DEFAULT_WINDOW_DAYS: int = 90
+DISCOVERY_WIDE_WINDOW_DAYS: int = 180
+DISCOVERY_MIN_CANDIDATES: int = 3
 
 
 def _url_instance_prefix(base_url: HttpUrl) -> str:

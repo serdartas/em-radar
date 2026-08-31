@@ -104,3 +104,14 @@ class RepositoryActivityResult(SQLModel):
     contributing_member_count: int
     merge_request_count: int
     last_activity_at: datetime
+
+
+class RepositorySuggestionsResponse(SQLModel):
+    """Response envelope for the repository-suggestions endpoint.
+
+    window_days reports the discovery window that was actually used (default or widened).
+    repositories is the ranked list of candidate repositories for that window.
+    """
+
+    window_days: int
+    repositories: list[RepositoryActivityResult]
