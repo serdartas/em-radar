@@ -198,6 +198,10 @@ describe("BulkMemberPaste: ambiguous entry requires selection", () => {
 
     // Confirmed count rises to 2 (alice + bob smith choice).
     expect(screen.getByRole("button", { name: /Add confirmed matches \(2\)/ })).toBeInTheDocument()
+
+    // Clearing the choice back to the placeholder deselects it, dropping the count to 1.
+    fireEvent.change(select, { target: { value: "" } })
+    expect(screen.getByRole("button", { name: /Add confirmed matches \(1\)/ })).toBeInTheDocument()
   })
 })
 

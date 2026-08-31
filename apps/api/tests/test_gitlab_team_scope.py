@@ -1450,6 +1450,40 @@ def test_bulk_resolve_generic_connector_error_returns_502_and_closes(
     mock_connector.close.assert_awaited()
 
 
+def test_bulk_resolve_rejects_too_many_entries(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+) -> None:
+    """A paste exceeding the entry cap is rejected (422) before any connector search runs."""
+    from em_radar_api.team_profiles import BULK_RESOLVE_MAX_ENTRIES
+
+    conn_id = _make_gitlab_connection(session_factory)
+    team_id = _make_team(session_factory, code_connection_id=conn_id)
+
+    resp = api_client.post(
+        f"/api/teams/{team_id}/gitlab/member-resolve",
+        json={"entries": [f"user{i}" for i in range(BULK_RESOLVE_MAX_ENTRIES + 1)]},
+    )
+    assert resp.status_code == 422
+
+
+def test_bulk_resolve_rejects_overlong_entry(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+) -> None:
+    """An entry exceeding the per-entry length cap is rejected (422)."""
+    from em_radar_api.team_profiles import BULK_RESOLVE_MAX_ENTRY_LENGTH
+
+    conn_id = _make_gitlab_connection(session_factory)
+    team_id = _make_team(session_factory, code_connection_id=conn_id)
+
+    resp = api_client.post(
+        f"/api/teams/{team_id}/gitlab/member-resolve",
+        json={"entries": ["a" * (BULK_RESOLVE_MAX_ENTRY_LENGTH + 1)]},
+    )
+    assert resp.status_code == 422
+
+
 def test_bulk_resolve_caps_per_entry_search_limit(
     api_client: TestClient,
     session_factory: sessionmaker[Session],

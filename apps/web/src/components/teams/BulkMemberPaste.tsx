@@ -90,9 +90,17 @@ export function BulkMemberPaste({ teamId, disabled, onAdd }: BulkMemberPasteProp
     providerUserId: string,
     candidates: GitLabMemberSearchResult[],
   ) {
-    const chosen = candidates.find((c) => c.provider_user_id === providerUserId)
-    if (!chosen) return
-    setChoices((prev) => ({ ...prev, [index]: chosen }))
+    setChoices((prev) => {
+      const next = { ...prev }
+      const chosen = candidates.find((c) => c.provider_user_id === providerUserId)
+      // Empty value ("Select a user...") clears a previous selection so it is no longer confirmed.
+      if (chosen) {
+        next[index] = chosen
+      } else {
+        delete next[index]
+      }
+      return next
+    })
   }
 
   // The confirmed, persistable set: matched entries and ambiguous entries the user resolved,
