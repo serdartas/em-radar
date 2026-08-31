@@ -2,13 +2,19 @@
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Self
+from typing import Annotated, Self
 from uuid import UUID
 
-from pydantic import model_validator
+from pydantic import Field as PydanticField
+from pydantic import StringConstraints, model_validator
 from sqlmodel import Field, SQLModel
 
 from em_radar_core.models import ScopeVerificationStatus, WorkingMode
+
+# Bound bulk-resolve requests so a single paste cannot trigger thousands of sequential
+# GitLab searches or an unbounded per-entry search query (§24).
+BULK_RESOLVE_MAX_ENTRIES = 100
+BULK_RESOLVE_MAX_ENTRY_LENGTH = 200
 
 
 class TeamProfileCreate(SQLModel):
@@ -89,6 +95,30 @@ class MemberSearchResult(SQLModel):
     username: str
     display_name: str
     avatar_url: str | None = None
+
+
+class MemberResolveStatus(StrEnum):
+    MATCHED = "matched"
+    AMBIGUOUS = "ambiguous"
+    UNMATCHED = "unmatched"
+
+
+class MemberResolveResult(SQLModel):
+    entry: str
+    status: MemberResolveStatus
+    match: MemberSearchResult | None = None
+    candidates: list[MemberSearchResult] = Field(default_factory=list)
+
+
+class BulkMemberResolveRequest(SQLModel):
+    entries: Annotated[
+        list[Annotated[str, StringConstraints(max_length=BULK_RESOLVE_MAX_ENTRY_LENGTH)]],
+        PydanticField(max_length=BULK_RESOLVE_MAX_ENTRIES),
+    ]
+
+
+class BulkMemberResolveResponse(SQLModel):
+    results: list[MemberResolveResult]
 
 
 class ProjectSearchResult(SQLModel):
