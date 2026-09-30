@@ -199,11 +199,25 @@ class MemberRef:
     avatar_url: str | None = None
 
 
+@dataclass(frozen=True)
+class GroupRef:
+    provider_group_id: str
+    name: str
+    full_path: str
+
+
 @runtime_checkable
 class MemberProvider(Protocol):
     async def search_users(self, query: str, *, limit: int) -> list[MemberRef]: ...
 
     async def get_user(self, provider_user_id: str) -> MemberRef | None: ...
+
+
+@runtime_checkable
+class GroupMemberProvider(Protocol):
+    async def search_groups(self, query: str, *, limit: int) -> list[GroupRef]: ...
+
+    async def list_group_members(self, group_id_or_path: str, *, limit: int) -> list[MemberRef]: ...
 
 
 @runtime_checkable
@@ -294,6 +308,8 @@ __all__ = [
     "ConnectorRateLimitedError",
     "ConnectorTransientError",
     "FieldAvailability",
+    "GroupMemberProvider",
+    "GroupRef",
     "MemberProvider",
     "MemberRef",
     "MergeRequestProvider",

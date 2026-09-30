@@ -127,6 +127,12 @@ class ProjectSearchResult(SQLModel):
     path_with_namespace: str
 
 
+class GroupSearchResult(SQLModel):
+    provider_group_id: str
+    name: str
+    full_path: str
+
+
 class RepositoryActivityResult(SQLModel):
     provider_project_id: str
     name: str

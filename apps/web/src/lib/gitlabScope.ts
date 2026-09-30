@@ -128,6 +128,58 @@ export async function replaceGitLabMembers(
 }
 
 // ---------------------------------------------------------------------------
+// Group search and group member import (M9-14)
+// ---------------------------------------------------------------------------
+
+/**
+ * A GitLab group result from the server-side group search endpoint
+ * (GET /api/teams/{teamId}/gitlab/group-search).
+ *
+ * Field names match the backend GroupSearchResult schema exactly.
+ */
+export interface GroupRef {
+  provider_group_id: string
+  name: string
+  full_path: string
+}
+
+/**
+ * Search for GitLab groups matching `q`. Results are bounded server-side.
+ * The caller is responsible for debouncing before invoking this function.
+ */
+export async function searchGitLabGroups(
+  teamId: string,
+  q: string,
+  limit?: number,
+  page?: number,
+): Promise<GroupRef[]> {
+  const params = new URLSearchParams({ q })
+  if (limit !== undefined) params.set("limit", String(limit))
+  if (page !== undefined) params.set("page", String(page))
+  return apiFetch<GroupRef[]>(`/teams/${teamId}/gitlab/group-search?${params.toString()}`)
+}
+
+/**
+ * List the members of a GitLab group by its provider group id or path.
+ *
+ * Returns MemberSearchResult-shaped items. Permission errors from the
+ * connector surface as 502 on the server, not as empty lists.
+ */
+export async function listGitLabGroupMembers(
+  teamId: string,
+  groupId: string,
+  limit?: number,
+  page?: number,
+): Promise<GitLabMemberSearchResult[]> {
+  const params = new URLSearchParams({ group_id: groupId })
+  if (limit !== undefined) params.set("limit", String(limit))
+  if (page !== undefined) params.set("page", String(page))
+  return apiFetch<GitLabMemberSearchResult[]>(
+    `/teams/${teamId}/gitlab/group-members?${params.toString()}`,
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Repository types and API functions (M9-05 endpoints)
 // ---------------------------------------------------------------------------
 
