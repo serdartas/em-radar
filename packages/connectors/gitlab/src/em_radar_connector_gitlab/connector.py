@@ -23,6 +23,7 @@ from em_radar_core.connectors import (
     ConnectorRateLimitedError,
     ConnectorTransientError,
     FieldAvailability,
+    GroupRef,
     MemberRef,
     MergeRequestScope,
     RepositoryActivity,
@@ -605,6 +606,48 @@ class GitLabConnector:
             return None
         return _repository_ref_from_payload(payload)
 
+    async def search_groups(self, query: str, *, limit: int, page: int = 1) -> list[GroupRef]:
+        limit = max(1, limit)
+        per_page = min(limit, PAGE_SIZE)
+        groups: list[GroupRef] = []
+        page = max(1, page)
+        while len(groups) < limit:
+            payloads, next_page = await self._request_json_list_page(
+                "api/v4/groups",
+                params={"search": query, "per_page": per_page, "page": page},
+            )
+            groups.extend(_group_ref_from_payload(payload) for payload in payloads)
+            if next_page is None:
+                break
+            if next_page <= page:
+                raise ConnectorDataError("GitLab group pagination did not advance")
+            page = next_page
+        return groups[:limit]
+
+    async def list_group_members(
+        self, group_id_or_path: str, *, limit: int, page: int = 1
+    ) -> list[MemberRef]:
+        limit = max(1, limit)
+        per_page = min(limit, PAGE_SIZE)
+        members: list[MemberRef] = []
+        page = max(1, page)
+        # GitLab accepts both numeric IDs ("7") and slash-separated namespace paths
+        # ("acme/frontend") directly in the URL path. httpx normalises any percent-encoded
+        # slashes back to "/" before sending, so the path is passed as-is; both forms reach
+        # the server correctly.
+        while len(members) < limit:
+            payloads, next_page = await self._request_json_list_page(
+                f"api/v4/groups/{group_id_or_path}/members",
+                params={"per_page": per_page, "page": page},
+            )
+            members.extend(_member_ref_from_payload(payload) for payload in payloads)
+            if next_page is None:
+                break
+            if next_page <= page:
+                raise ConnectorDataError("GitLab group members pagination did not advance")
+            page = next_page
+        return members[:limit]
+
     async def get_repository(self, provider_project_id: str) -> Repository | None:
         try:
             payload = await self._request_json(f"api/v4/projects/{provider_project_id}")
@@ -1177,6 +1220,14 @@ def _member_ref_from_payload(payload: Mapping[str, object]) -> MemberRef:
         username=_required_str(payload, "username"),
         display_name=_required_str(payload, "name"),
         avatar_url=_optional_str(payload, "avatar_url"),
+    )
+
+
+def _group_ref_from_payload(payload: Mapping[str, object]) -> GroupRef:
+    return GroupRef(
+        provider_group_id=str(_required_positive_int(payload, "id")),
+        name=_required_str(payload, "name"),
+        full_path=_required_str(payload, "full_path"),
     )
 
 

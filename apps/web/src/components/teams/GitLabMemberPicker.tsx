@@ -7,10 +7,13 @@ import { BulkMemberPaste, type ResolvedMember } from "@/components/teams/BulkMem
 import { Combobox, type ComboboxOption } from "@/components/ui/combobox"
 import { apiErrorMessage } from "@/lib/api"
 import {
+  listGitLabGroupMembers,
   listGitLabMembers,
   replaceGitLabMembers,
+  searchGitLabGroups,
   searchGitLabMembers,
   type GitLabMemberSearchResult,
+  type GroupRef,
   type TeamGitLabMember,
 } from "@/lib/gitlabScope"
 
@@ -84,11 +87,29 @@ export function GitLabMemberPicker({ teamId, connectionId }: GitLabMemberPickerP
   // Controls visibility of the bulk paste panel.
   const [showPastePanel, setShowPastePanel] = useState(false)
 
+  // Controls visibility of the group import panel.
+  const [showGroupPanel, setShowGroupPanel] = useState(false)
+  // Group search debounce state.
+  const [rawGroupQuery, setRawGroupQuery] = useState("")
+  const [debouncedGroupQuery, setDebouncedGroupQuery] = useState("")
+  // The group selected by the user in the group combobox.
+  const [selectedGroup, setSelectedGroup] = useState<GroupRef | null>(null)
+  // Key to remount the group combobox after selection so it resets cleanly.
+  const [groupComboboxKey, setGroupComboboxKey] = useState(0)
+  // Set of provider_user_id values the user has checked as candidates to add.
+  const [checkedCandidates, setCheckedCandidates] = useState<Set<string>>(new Set())
+
   // Debounce: replace debouncedQuery with rawQuery after 300 ms of inactivity.
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedQuery(rawQuery), 300)
     return () => clearTimeout(timer)
   }, [rawQuery])
+
+  // Debounce group query with the same window as the member search.
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedGroupQuery(rawGroupQuery), 300)
+    return () => clearTimeout(timer)
+  }, [rawGroupQuery])
 
   // Load saved members on mount; the query status gates the entire picker.
   const {
@@ -123,6 +144,26 @@ export function GitLabMemberPicker({ teamId, connectionId }: GitLabMemberPickerP
     queryFn: () => searchGitLabMembers(teamId, debouncedQuery),
     enabled: debouncedQuery.trim().length > 0,
   })
+
+  // Group search — enabled when the debounced group query is non-empty.
+  const { data: groupSearchResults = [] } = useQuery<GroupRef[]>({
+    queryKey: ["gitlab-group-search", teamId, connectionId, debouncedGroupQuery],
+    queryFn: () => searchGitLabGroups(teamId, debouncedGroupQuery),
+    enabled: debouncedGroupQuery.trim().length > 0,
+  })
+
+  // Group members — enabled once a group has been selected.
+  const { data: groupMembers = [], isLoading: groupMembersLoading } =
+    useQuery<GitLabMemberSearchResult[]>({
+      queryKey: [
+        "gitlab-group-members",
+        teamId,
+        connectionId,
+        selectedGroup?.provider_group_id,
+      ],
+      queryFn: () => listGitLabGroupMembers(teamId, selectedGroup!.provider_group_id),
+      enabled: selectedGroup !== null,
+    })
 
   // PUT the full member set on each change (replace semantics).
   // The snapshot in variables lets onError roll back without stale-closure risk.
@@ -169,6 +210,12 @@ export function GitLabMemberPicker({ teamId, connectionId }: GitLabMemberPickerP
       // Map avatar_url into the Combobox option model (§5.1 avatar if available).
       imageUrl: r.avatar_url ?? undefined,
     }))
+
+  // Build group combobox options from group search results.
+  const groupOptions: ComboboxOption[] = groupSearchResults.map((g) => ({
+    value: g.provider_group_id,
+    label: `${g.name} (${g.full_path})`,
+  }))
 
   function handleSelect(value: string) {
     // Serialize writes: ignore edits while a replace PUT is in flight so an older,
@@ -222,6 +269,55 @@ export function GitLabMemberPicker({ teamId, connectionId }: GitLabMemberPickerP
     setShowPastePanel(false)
   }
 
+  function handleGroupSelect(value: string) {
+    const group = groupSearchResults.find((g) => g.provider_group_id === value)
+    if (!group) return
+    setSelectedGroup(group)
+    setCheckedCandidates(new Set())
+    setRawGroupQuery("")
+    setDebouncedGroupQuery("")
+    setGroupComboboxKey((k) => k + 1)
+  }
+
+  function toggleCandidate(providerUserId: string) {
+    setCheckedCandidates((prev) => {
+      const next = new Set(prev)
+      if (next.has(providerUserId)) {
+        next.delete(providerUserId)
+      } else {
+        next.add(providerUserId)
+      }
+      return next
+    })
+  }
+
+  function handleAddGroupMembers() {
+    if (isSaving) return
+    const existingIds = new Set(selectedMembers.map((m) => m.gitlab_user_id))
+    const toAdd: LocalMember[] = []
+    for (const m of groupMembers) {
+      if (!checkedCandidates.has(m.provider_user_id)) continue
+      const id = parseInt(m.provider_user_id, 10)
+      if (isNaN(id) || existingIds.has(id)) continue
+      toAdd.push({
+        gitlab_user_id: id,
+        username: m.username,
+        display_name: m.display_name || null,
+      })
+    }
+    if (toAdd.length === 0) {
+      setShowGroupPanel(false)
+      return
+    }
+    const snapshot = [...selectedMembers]
+    const merged = [...selectedMembers, ...toAdd]
+    setSelectedMembers(merged)
+    persistMembers({ members: merged, snapshot })
+    setShowGroupPanel(false)
+    setSelectedGroup(null)
+    setCheckedCandidates(new Set())
+  }
+
   // Gate the picker: a failed or pending initial load must not enable a
   // destructive replace from an unknown (or empty) baseline.
   if (membersLoading) {
@@ -260,6 +356,22 @@ export function GitLabMemberPicker({ teamId, connectionId }: GitLabMemberPickerP
         >
           Paste a list
         </button>
+        <button
+          aria-expanded={showGroupPanel}
+          aria-label="Import candidates from GitLab group"
+          className="shrink-0 rounded-md border px-3 py-1.5 text-sm font-medium disabled:opacity-50"
+          disabled={isSaving}
+          onClick={() => {
+            setShowGroupPanel((v) => !v)
+            if (showGroupPanel) {
+              setSelectedGroup(null)
+              setCheckedCandidates(new Set())
+            }
+          }}
+          type="button"
+        >
+          Import from group
+        </button>
       </div>
       {showPastePanel && (
         <div className="rounded-md border p-3">
@@ -269,6 +381,73 @@ export function GitLabMemberPicker({ teamId, connectionId }: GitLabMemberPickerP
             onAdd={handleBulkAdd}
             teamId={teamId}
           />
+        </div>
+      )}
+      {showGroupPanel && (
+        <div className="rounded-md border p-3">
+          <p className="mb-2 text-sm font-medium">Import candidates from GitLab group</p>
+          <Combobox
+            key={groupComboboxKey}
+            disabled={isSaving}
+            inputLabel="Search GitLab groups"
+            onQueryChange={setRawGroupQuery}
+            onSelect={handleGroupSelect}
+            options={groupOptions}
+            placeholder="Search by group name..."
+          />
+          {selectedGroup !== null && (
+            <div className="mt-3">
+              <p className="mb-2 text-sm text-slate-600">
+                Members of {selectedGroup.name} — select to add
+              </p>
+              {groupMembersLoading ? (
+                <p className="text-sm text-slate-500">Loading group members...</p>
+              ) : groupMembers.length === 0 ? (
+                <p className="text-sm text-slate-500">No members found in this group.</p>
+              ) : (
+                <ul aria-label="Group member candidates" className="space-y-1">
+                  {groupMembers.map((m) => {
+                    const alreadyAdded = selectedIds.has(m.provider_user_id)
+                    const isChecked = checkedCandidates.has(m.provider_user_id)
+                    return (
+                      <li
+                        key={m.provider_user_id}
+                        className="flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm"
+                      >
+                        <input
+                          aria-label={`Select ${m.display_name ?? m.username}`}
+                          checked={isChecked || alreadyAdded}
+                          disabled={alreadyAdded || isSaving}
+                          id={`group-candidate-${m.provider_user_id}`}
+                          onChange={() => toggleCandidate(m.provider_user_id)}
+                          type="checkbox"
+                        />
+                        <label htmlFor={`group-candidate-${m.provider_user_id}`}>
+                          {memberLabel({
+                            username: m.username,
+                            display_name: m.display_name || null,
+                          })}
+                          {alreadyAdded && (
+                            <span className="ml-1 text-xs text-slate-400">already added</span>
+                          )}
+                        </label>
+                      </li>
+                    )
+                  })}
+                </ul>
+              )}
+              {groupMembers.length > 0 && (
+                <button
+                  className="mt-2 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground disabled:opacity-50"
+                  disabled={checkedCandidates.size === 0 || isSaving}
+                  onClick={handleAddGroupMembers}
+                  type="button"
+                >
+                  Add selected ({checkedCandidates.size})
+                </button>
+              )}
+            </div>
+          )}
         </div>
       )}
       {mutationError && (

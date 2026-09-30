@@ -126,7 +126,7 @@ def test_gitlab_config_status_setup_required_when_code_connection_no_members(
     assert resp.json()["gitlab_config_status"] == "setup_required"
 
 
-def test_gitlab_config_status_configured_when_member_saved(
+def test_gitlab_config_status_setup_required_when_only_member_saved(
     api_client: TestClient,
     session_factory: sessionmaker[Session],
     monkeypatch: pytest.MonkeyPatch,
@@ -145,10 +145,10 @@ def test_gitlab_config_status_configured_when_member_saved(
     api_client.put(f"/api/teams/{team_id}/gitlab/members", json=[{"gitlab_user_id": 10}])
 
     resp = api_client.get(f"/api/teams/{team_id}")
-    assert resp.json()["gitlab_config_status"] == "configured"
+    assert resp.json()["gitlab_config_status"] == "setup_required"
 
 
-def test_gitlab_config_status_configured_when_repository_saved(
+def test_gitlab_config_status_setup_required_when_only_repository_saved(
     api_client: TestClient,
     session_factory: sessionmaker[Session],
     monkeypatch: pytest.MonkeyPatch,
@@ -168,6 +168,34 @@ def test_gitlab_config_status_configured_when_repository_saved(
         lambda *_a, **_kw: mock_connector,
     )
 
+    api_client.put(f"/api/teams/{team_id}/gitlab/repositories", json=[{"gitlab_project_id": 5}])
+
+    resp = api_client.get(f"/api/teams/{team_id}")
+    assert resp.json()["gitlab_config_status"] == "setup_required"
+
+
+def test_gitlab_config_status_configured_when_member_and_repository_saved(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conn_id = _make_gitlab_connection(session_factory)
+    team_id = _make_team(session_factory, code_connection_id=conn_id)
+
+    mock_connector = _make_mock_connector(
+        get_user_return=MemberRef(provider_user_id="10", username="dev", display_name="Dev User"),
+        get_project_return=RepositoryRef(
+            provider_project_id="5",
+            name="myrepo",
+            path_with_namespace="group/myrepo",
+        ),
+    )
+    monkeypatch.setattr(
+        "em_radar_api.routers.teams.instantiate_connector",
+        lambda *_a, **_kw: mock_connector,
+    )
+
+    api_client.put(f"/api/teams/{team_id}/gitlab/members", json=[{"gitlab_user_id": 10}])
     api_client.put(f"/api/teams/{team_id}/gitlab/repositories", json=[{"gitlab_project_id": 5}])
 
     resp = api_client.get(f"/api/teams/{team_id}")

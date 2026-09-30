@@ -31,6 +31,7 @@ from em_radar_api.team_profiles import (
     BulkMemberResolveResponse,
     GitLabMemberInput,
     GitLabRepositoryInput,
+    GroupSearchResult,
     MemberResolveResult,
     MemberResolveStatus,
     MemberSearchResult,
@@ -48,6 +49,7 @@ from em_radar_core.connectors import (
     ConnectorBase,
     ConnectorConfigError,
     ConnectorError,
+    GroupMemberProvider,
     MemberProvider,
     RepositoryActivity,
     RepositoryActivityProvider,
@@ -73,6 +75,10 @@ _PROJECT_SEARCH_MAX_LIMIT = 50
 _SUGGESTION_DEFAULT_LIMIT = 20
 _SUGGESTION_MAX_LIMIT = 50
 _BULK_RESOLVE_PER_ENTRY_LIMIT = 5
+_GROUP_SEARCH_DEFAULT_LIMIT = 20
+_GROUP_SEARCH_MAX_LIMIT = 50
+_GROUP_MEMBERS_DEFAULT_LIMIT = 50
+_GROUP_MEMBERS_MAX_LIMIT = 100
 
 router = APIRouter()
 
@@ -484,6 +490,100 @@ async def gitlab_project_search(
                 provider_project_id=ref.provider_project_id,
                 name=ref.name,
                 path_with_namespace=ref.path_with_namespace,
+            )
+            for ref in refs
+        ]
+    finally:
+        await connector.close()
+
+
+# ---------------------------------------------------------------------------
+# GitLab group search and group member import
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/teams/{team_id}/gitlab/group-search",
+    response_model=list[GroupSearchResult],
+)
+async def gitlab_group_search(
+    team_id: UUID,
+    q: str = Query(default=""),
+    limit: int = Query(default=_GROUP_SEARCH_DEFAULT_LIMIT, ge=1),
+    page: int = Query(1, ge=1),
+    session: Session = Depends(get_session),
+) -> list[GroupSearchResult]:
+    team_row = session.get(TeamProfileTable, team_id)
+    if team_row is None:
+        raise _team_not_found()
+    connector = _require_gitlab_connector(session, team_row)
+    try:
+        if not isinstance(connector, GroupMemberProvider):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="GitLab connector does not support group member import",
+            )
+        capped = min(limit, _GROUP_SEARCH_MAX_LIMIT)
+        try:
+            refs = await connector.search_groups(q, limit=capped, page=page)
+        except ConnectorAuthError as error:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)
+            ) from error
+        except ConnectorError as error:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)
+            ) from error
+        return [
+            GroupSearchResult(
+                provider_group_id=ref.provider_group_id,
+                name=ref.name,
+                full_path=ref.full_path,
+            )
+            for ref in refs
+        ]
+    finally:
+        await connector.close()
+
+
+@router.get(
+    "/teams/{team_id}/gitlab/group-members",
+    response_model=list[MemberSearchResult],
+)
+async def gitlab_group_members(
+    team_id: UUID,
+    group_id: str = Query(...),
+    limit: int = Query(default=_GROUP_MEMBERS_DEFAULT_LIMIT, ge=1),
+    page: int = Query(1, ge=1),
+    session: Session = Depends(get_session),
+) -> list[MemberSearchResult]:
+    team_row = session.get(TeamProfileTable, team_id)
+    if team_row is None:
+        raise _team_not_found()
+    connector = _require_gitlab_connector(session, team_row)
+    try:
+        if not isinstance(connector, GroupMemberProvider):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="GitLab connector does not support group member import",
+            )
+        capped = min(limit, _GROUP_MEMBERS_MAX_LIMIT)
+        try:
+            refs = await connector.list_group_members(group_id, limit=capped, page=page)
+        except ConnectorAuthError as error:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)
+            ) from error
+        except ConnectorError as error:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)
+            ) from error
+        return [
+            MemberSearchResult(
+                provider_user_id=ref.provider_user_id,
+                username=ref.username,
+                display_name=ref.display_name,
+                avatar_url=ref.avatar_url,
             )
             for ref in refs
         ]
