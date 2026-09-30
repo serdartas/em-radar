@@ -203,7 +203,7 @@ def _gitlab_config_status_from_flags(
 ) -> GitLabConfigStatus:
     if code_connection_id is None:
         return GitLabConfigStatus.NOT_APPLICABLE
-    if has_member or has_repo:
+    if has_member and has_repo:
         return GitLabConfigStatus.CONFIGURED
     return GitLabConfigStatus.SETUP_REQUIRED
 
