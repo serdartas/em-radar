@@ -28,7 +28,7 @@ export interface ConfigHealthWarningProps {
  * link so users can pro-actively check even before any entry becomes stale.
  * Returns null only when no members or repositories are configured at all.
  */
-export function ConfigHealthWarning({ connectionId: _connectionId, teamId }: ConfigHealthWarningProps) {
+export function ConfigHealthWarning({ teamId }: ConfigHealthWarningProps) {
   const queryClient = useQueryClient()
 
   const { data: members = [] } = useQuery({
