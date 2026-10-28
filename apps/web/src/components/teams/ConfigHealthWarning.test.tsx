@@ -174,13 +174,13 @@ describe("ConfigHealthWarning", () => {
     await waitFor(() => expect(verifyCalled).toHaveBeenCalledTimes(1))
   })
 
-  it("remove button calls PUT members with stale entry excluded", async () => {
-    const putCalled = vi.fn()
+  it("remove button calls DELETE on the exact stale member row", async () => {
+    const deleteCalled = vi.fn()
 
     renderWarning([verifiedMember, unavailableMember], [], (url, init) => {
-      if (url.includes("/gitlab/members") && init?.method === "PUT") {
-        putCalled(JSON.parse(init.body as string))
-        return jsonResponse([verifiedMember])
+      if (url.includes(`/gitlab/members/${unavailableMember.id}`) && init?.method === "DELETE") {
+        deleteCalled(url)
+        return new Response(null, { status: 204 })
       }
       return null
     })
@@ -188,8 +188,35 @@ describe("ConfigHealthWarning", () => {
     await screen.findByRole("alert")
     const removeButtons = screen.getAllByRole("button", { name: /remove/i })
     fireEvent.click(removeButtons[0])
-    await waitFor(() => expect(putCalled).toHaveBeenCalledTimes(1))
-    // Only the verified member should remain in the PUT payload.
-    expect(putCalled.mock.calls[0][0]).toEqual([{ gitlab_user_id: 10 }])
+    await waitFor(() => expect(deleteCalled).toHaveBeenCalledTimes(1))
+  })
+
+  it("remove button does not touch other stale entries when removing one", async () => {
+    const deletedIds: string[] = []
+
+    const secondUnavailableMember = {
+      ...unavailableMember,
+      id: "mbr-u2",
+      gitlab_user_id: 88,
+      username: "gone2",
+      display_name: "Gone 2",
+    }
+
+    renderWarning([verifiedMember, unavailableMember, secondUnavailableMember], [], (url, init) => {
+      if (url.match(/\/gitlab\/members\//) && init?.method === "DELETE") {
+        const id = url.split("/").pop()!
+        deletedIds.push(id)
+        return new Response(null, { status: 204 })
+      }
+      return null
+    })
+
+    await screen.findByRole("alert")
+    const removeButtons = screen.getAllByRole("button", { name: /remove/i })
+    // Click Remove on the first stale member only.
+    fireEvent.click(removeButtons[0])
+    await waitFor(() => expect(deletedIds).toHaveLength(1))
+    // Exactly one DELETE should have fired — for the clicked entry only.
+    expect(deletedIds[0]).toBe(unavailableMember.id)
   })
 })

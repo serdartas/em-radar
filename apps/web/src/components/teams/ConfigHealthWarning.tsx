@@ -5,10 +5,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Callout } from "@/components/ui/callout"
 import { apiErrorMessage } from "@/lib/api"
 import {
+  deleteGitLabMember,
+  deleteGitLabRepository,
   listGitLabMembers,
   listGitLabRepositories,
-  replaceGitLabMembers,
-  replaceGitLabRepositories,
   verifyGitLabConfig,
   type TeamGitLabMember,
   type TeamGitLabRepository,
@@ -25,10 +25,9 @@ export interface ConfigHealthWarningProps {
  * Reads from the shared React Query cache for members and repositories (same keys as
  * the pickers). Renders only when UNAVAILABLE or UNVERIFIED rows exist. Provides:
  *  - "Re-verify" — triggers POST verify-config then invalidates the shared queries.
- *  - "Remove" per item — re-PUTs only the VERIFIED rows for the current connection,
- *    permanently dropping the selected stale entry.
+ *  - "Remove" per item — calls DELETE on the specific row without touching other entries.
  */
-export function ConfigHealthWarning({ connectionId, teamId }: ConfigHealthWarningProps) {
+export function ConfigHealthWarning({ connectionId: _connectionId, teamId }: ConfigHealthWarningProps) {
   const queryClient = useQueryClient()
 
   const { data: members = [] } = useQuery({
@@ -56,25 +55,23 @@ export function ConfigHealthWarning({ connectionId, teamId }: ConfigHealthWarnin
     },
   })
 
-  const { isPending: isRemovingMember, mutate: removeMember } = useMutation({
-    mutationFn: (memberId: string) => {
-      const remaining = members
-        .filter((m) => m.id !== memberId && m.verification_status === "verified" && m.connection_id === connectionId)
-        .map((m) => ({ gitlab_user_id: m.gitlab_user_id }))
-      return replaceGitLabMembers(teamId, remaining)
-    },
+  const {
+    isPending: isRemovingMember,
+    mutate: removeMember,
+    error: removeMemberError,
+  } = useMutation({
+    mutationFn: (memberId: string) => deleteGitLabMember(teamId, memberId),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["gitlab-members", teamId] })
     },
   })
 
-  const { isPending: isRemovingRepo, mutate: removeRepo } = useMutation({
-    mutationFn: (repoId: string) => {
-      const remaining = repos
-        .filter((r) => r.id !== repoId && r.verification_status === "verified" && r.connection_id === connectionId)
-        .map((r) => ({ gitlab_project_id: r.gitlab_project_id }))
-      return replaceGitLabRepositories(teamId, remaining)
-    },
+  const {
+    isPending: isRemovingRepo,
+    mutate: removeRepo,
+    error: removeRepoError,
+  } = useMutation({
+    mutationFn: (repoId: string) => deleteGitLabRepository(teamId, repoId),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["gitlab-repositories", teamId] })
     },
@@ -141,6 +138,14 @@ export function ConfigHealthWarning({ connectionId, teamId }: ConfigHealthWarnin
       {verifyError && (
         <p className="mt-2 text-xs text-amber-900" role="alert">
           {apiErrorMessage(verifyError, "Verification failed. Please try again.")}
+        </p>
+      )}
+      {(removeMemberError ?? removeRepoError) && (
+        <p className="mt-2 text-xs text-amber-900" role="alert">
+          {apiErrorMessage(
+            removeMemberError ?? removeRepoError!,
+            "Failed to remove entry. Please try again.",
+          )}
         </p>
       )}
     </Callout>

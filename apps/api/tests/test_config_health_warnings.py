@@ -264,3 +264,115 @@ def test_verify_config_transient_error_leaves_status_unchanged(
 def test_verify_config_returns_404_for_unknown_team(api_client: TestClient) -> None:
     resp = api_client.post(f"/api/teams/{uuid4()}/gitlab/verify-config")
     assert resp.status_code == 404
+
+
+def test_verify_config_connector_instantiation_failure_only_updates_mismatched_rows(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the connector cannot be instantiated, same-connection rows stay unchanged.
+
+    Only entries whose connection_id diverges from the current code_connection_id
+    should be flipped to UNVERIFIED — the same-connection rows must not be touched.
+    """
+    conn_id = _make_gitlab_connection(session_factory)
+    other_conn_id = _make_gitlab_connection(session_factory)
+    team_id = _make_team(session_factory, code_connection_id=conn_id)
+
+    # A verified member on the active connection — must stay VERIFIED.
+    _seed_member(
+        session_factory,
+        team_id,
+        conn_id,
+        gitlab_user_id=10,
+        status=ScopeVerificationStatus.VERIFIED,
+    )
+    # A member from a stale (different) connection — must flip to UNVERIFIED.
+    _seed_member(
+        session_factory,
+        team_id,
+        other_conn_id,
+        gitlab_user_id=99,
+        status=ScopeVerificationStatus.VERIFIED,
+    )
+
+    # Simulate a connector config error so _require_gitlab_connector raises HTTPException.
+    monkeypatch.setattr(
+        "em_radar_api.routers.teams.instantiate_connector",
+        lambda *_a, **_kw: (_ for _ in ()).throw(
+            __import__("fastapi").HTTPException(status_code=422, detail="bad config")
+        ),
+    )
+
+    resp = api_client.post(f"/api/teams/{team_id}/gitlab/verify-config")
+    assert resp.status_code == 200
+    data = resp.json()
+    by_id = {m["gitlab_user_id"]: m for m in data["members"]}
+    assert by_id[10]["verification_status"] == "verified"  # unchanged
+    assert by_id[99]["verification_status"] == "unverified"  # different instance → UNVERIFIED
+
+
+# ---------------------------------------------------------------------------
+# Per-item delete endpoints
+# ---------------------------------------------------------------------------
+
+
+def test_delete_gitlab_member_removes_exactly_one_row(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+) -> None:
+    conn_id = _make_gitlab_connection(session_factory)
+    team_id = _make_team(session_factory, code_connection_id=conn_id)
+    _seed_member(session_factory, team_id, conn_id, gitlab_user_id=10)
+    _seed_member(session_factory, team_id, conn_id, gitlab_user_id=20)
+
+    # Fetch both rows to get their ids.
+    members = api_client.get(f"/api/teams/{team_id}/gitlab/members").json()
+    assert len(members) == 2
+    target_id = next(m["id"] for m in members if m["gitlab_user_id"] == 10)
+
+    resp = api_client.delete(f"/api/teams/{team_id}/gitlab/members/{target_id}")
+    assert resp.status_code == 204
+
+    remaining = api_client.get(f"/api/teams/{team_id}/gitlab/members").json()
+    assert len(remaining) == 1
+    assert remaining[0]["gitlab_user_id"] == 20  # untouched
+
+
+def test_delete_gitlab_repository_removes_exactly_one_row(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+) -> None:
+    conn_id = _make_gitlab_connection(session_factory)
+    team_id = _make_team(session_factory, code_connection_id=conn_id)
+    _seed_repo(session_factory, team_id, conn_id, gitlab_project_id=5)
+    _seed_repo(session_factory, team_id, conn_id, gitlab_project_id=6)
+
+    repos = api_client.get(f"/api/teams/{team_id}/gitlab/repositories").json()
+    assert len(repos) == 2
+    target_id = next(r["id"] for r in repos if r["gitlab_project_id"] == 5)
+
+    resp = api_client.delete(f"/api/teams/{team_id}/gitlab/repositories/{target_id}")
+    assert resp.status_code == 204
+
+    remaining = api_client.get(f"/api/teams/{team_id}/gitlab/repositories").json()
+    assert len(remaining) == 1
+    assert remaining[0]["gitlab_project_id"] == 6  # untouched
+
+
+def test_delete_gitlab_member_returns_404_for_wrong_team(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+) -> None:
+    conn_id = _make_gitlab_connection(session_factory)
+    team_id = _make_team(session_factory, code_connection_id=conn_id)
+    other_team_id = _make_team(session_factory, code_connection_id=conn_id)
+    _seed_member(session_factory, team_id, conn_id, gitlab_user_id=10)
+
+    members = api_client.get(f"/api/teams/{team_id}/gitlab/members").json()
+    member_id = members[0]["id"]
+
+    # Attempting to delete with the wrong team_id must 404.
+    resp = api_client.delete(f"/api/teams/{other_team_id}/gitlab/members/{member_id}")
+    assert resp.status_code == 404
