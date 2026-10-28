@@ -133,14 +133,22 @@ export function GitLabMemberPicker({ teamId, connectionId }: GitLabMemberPickerP
   // Comparing seededConnectionId to connectionId detects a mid-mount connection switch
   // so selectedMembers is never left showing the previous connection's user ids
   // (numeric ids are instance-local and would resolve to unrelated accounts on another instance).
+  //
+  // When the connection is unchanged but savedMembers refetches (e.g. after a config-health
+  // delete), drop any selections that no longer exist in savedMembers so a subsequent PUT
+  // doesn't re-submit a row that was deliberately removed externally.
   useEffect(() => {
-    if (savedMembers !== undefined && seededConnectionId !== connectionId) {
+    if (savedMembers === undefined) return
+    if (seededConnectionId !== connectionId) {
       setSelectedMembers(
         savedMembers
           .filter((m) => m.connection_id === connectionId)
           .map(savedMemberToLocal),
       )
       setSeededConnectionId(connectionId)
+    } else {
+      const savedIds = new Set(savedMembers.map((m) => m.gitlab_user_id))
+      setSelectedMembers((prev) => prev.filter((m) => savedIds.has(m.gitlab_user_id)))
     }
   }, [savedMembers, connectionId, seededConnectionId])
 

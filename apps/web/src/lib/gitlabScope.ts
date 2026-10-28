@@ -361,3 +361,51 @@ export async function getMemberSuggestions(
     `/teams/${teamId}/gitlab/member-suggestions`,
   )
 }
+
+// ---------------------------------------------------------------------------
+// Config health verification (M9-16)
+// ---------------------------------------------------------------------------
+
+/**
+ * Result of an on-demand configuration health verification.
+ *
+ * Contains all stored members and repositories with updated verification_status.
+ * Rows with "unavailable" indicate deleted/archived entities; "unverified" indicates
+ * a connector-instance mismatch (stored id may belong to a different GitLab instance).
+ */
+export interface ConfigHealthReport {
+  members: TeamGitLabMember[]
+  repositories: TeamGitLabRepository[]
+}
+
+/**
+ * Trigger an on-demand health verification for a team's GitLab configuration.
+ *
+ * Re-resolves each stored member and repository against the GitLab connector by
+ * stable id. Deleted users and archived repositories are marked unavailable;
+ * renamed-but-same-id entities are refreshed; entries from a different connector
+ * instance are marked unverified. Returns all rows with updated statuses.
+ */
+export async function verifyGitLabConfig(teamId: string): Promise<ConfigHealthReport> {
+  return apiFetch<ConfigHealthReport>(`/teams/${teamId}/gitlab/verify-config`, {
+    method: "POST",
+  })
+}
+
+/**
+ * Remove exactly one stored GitLab member row regardless of its verification status.
+ * Designed for config-health cleanup: targets only the specified row without
+ * touching other member entries.
+ */
+export async function deleteGitLabMember(teamId: string, memberId: string): Promise<void> {
+  await apiFetch<void>(`/teams/${teamId}/gitlab/members/${memberId}`, { method: "DELETE" })
+}
+
+/**
+ * Remove exactly one stored GitLab repository row regardless of its verification status.
+ * Designed for config-health cleanup: targets only the specified row without
+ * touching other repository entries.
+ */
+export async function deleteGitLabRepository(teamId: string, repoId: string): Promise<void> {
+  await apiFetch<void>(`/teams/${teamId}/gitlab/repositories/${repoId}`, { method: "DELETE" })
+}

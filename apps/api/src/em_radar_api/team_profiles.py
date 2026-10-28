@@ -189,3 +189,15 @@ class MemberSuggestionsResponse(SQLModel):
 
     window_days: int
     suggestions: list[MemberSuggestion]
+
+
+class ConfigHealthReport(SQLModel):
+    """Result of an on-demand configuration health verification.
+
+    Contains all stored members and repositories with their updated verification_status.
+    Rows with UNAVAILABLE indicate deleted/archived entities; UNVERIFIED indicates a
+    connector-instance mismatch (stored id may belong to a different GitLab instance).
+    """
+
+    members: list[TeamGitLabMemberRead]
+    repositories: list[TeamGitLabRepositoryRead]

@@ -30,6 +30,7 @@ from em_radar_api.team_profiles import (
     BulkMemberResolveRequest,
     BulkMemberResolveResponse,
     ConfidenceBand,
+    ConfigHealthReport,
     GitLabMemberInput,
     GitLabRepositoryInput,
     GroupSearchResult,
@@ -841,6 +842,169 @@ async def gitlab_member_suggestions(
         await gitlab_connector.close()
         if jira_connector is not None:
             await jira_connector.close()
+
+
+# ---------------------------------------------------------------------------
+# Config health verification
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/teams/{team_id}/gitlab/verify-config",
+    response_model=ConfigHealthReport,
+)
+async def verify_gitlab_config(
+    team_id: UUID,
+    session: Session = Depends(get_session),
+) -> ConfigHealthReport:
+    """Re-resolve all stored members and repositories against the GitLab connector.
+
+    Entries whose connection_id no longer matches the team's current code_connection_id
+    are marked UNVERIFIED (connector-instance mismatch, §22). Entries from the current
+    connector are re-fetched: deleted users (404) and archived repositories become
+    UNAVAILABLE; renamed-but-same-id entities are refreshed and stay VERIFIED.
+    Transient connector errors leave the existing status unchanged.
+    """
+    team_row = session.get(TeamProfileTable, team_id)
+    if team_row is None:
+        raise _team_not_found()
+
+    member_rows = list_team_gitlab_members(session, team_id)
+    repo_rows = list_team_gitlab_repositories(session, team_id)
+
+    now = datetime.now(UTC)
+    connector: ConnectorBase | None = None
+
+    try:
+        if team_row.code_connection_id is not None:
+            try:
+                connector = _require_gitlab_connector(session, team_row)
+            except HTTPException:
+                pass  # Connector unavailable; only instance-mismatch entries are updated below.
+
+        for member_row in member_rows:
+            if member_row.connection_id != team_row.code_connection_id:
+                member_row.verification_status = ScopeVerificationStatus.UNVERIFIED
+                member_row.updated_at = now
+            elif connector is not None and isinstance(connector, MemberProvider):
+                try:
+                    ref = await connector.get_user(str(member_row.gitlab_user_id))
+                except ConnectorError:
+                    pass  # Transient error; leave current status unchanged.
+                else:
+                    if ref is None:
+                        member_row.verification_status = ScopeVerificationStatus.UNAVAILABLE
+                    else:
+                        member_row.username = ref.username
+                        member_row.display_name = ref.display_name
+                        member_row.verification_status = ScopeVerificationStatus.VERIFIED
+                    member_row.updated_at = now
+
+        for repo_row in repo_rows:
+            if repo_row.connection_id != team_row.code_connection_id:
+                repo_row.verification_status = ScopeVerificationStatus.UNVERIFIED
+                repo_row.updated_at = now
+            elif connector is not None and isinstance(connector, RepositorySearchProvider):
+                try:
+                    ref = await connector.get_project(str(repo_row.gitlab_project_id))
+                except ConnectorError:
+                    pass  # Transient error; leave current status unchanged.
+                else:
+                    if ref is None or ref.is_archived:
+                        repo_row.verification_status = ScopeVerificationStatus.UNAVAILABLE
+                    else:
+                        repo_row.name = ref.name
+                        repo_row.path_with_namespace = ref.path_with_namespace
+                        repo_row.verification_status = ScopeVerificationStatus.VERIFIED
+                    repo_row.updated_at = now
+
+        with write_lock_acquired():
+            for row in member_rows:
+                session.add(row)
+            for row in repo_rows:
+                session.add(row)
+            session.commit()
+
+        for row in member_rows:
+            session.refresh(row)
+        for row in repo_rows:
+            session.refresh(row)
+
+    finally:
+        if connector is not None:
+            await connector.close()
+
+    return ConfigHealthReport(
+        members=[TeamGitLabMemberRead.model_validate(r) for r in member_rows],
+        repositories=[TeamGitLabRepositoryRead.model_validate(r) for r in repo_rows],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Per-item member / repository removal (config-health cleanup)
+# ---------------------------------------------------------------------------
+
+
+@router.delete(
+    "/teams/{team_id}/gitlab/members/{member_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_gitlab_member(
+    team_id: UUID,
+    member_id: UUID,
+    session: Session = Depends(get_write_session),
+) -> Response:
+    """Remove exactly one stored GitLab member row regardless of its verification status.
+
+    Designed for config-health cleanup: removes only the targeted row without
+    re-validating or touching any other member entries.
+    """
+    team_row = session.get(TeamProfileTable, team_id)
+    if team_row is None:
+        raise _team_not_found()
+    row = session.exec(
+        select(TeamGitLabMemberTable).where(
+            TeamGitLabMemberTable.id == member_id,
+            TeamGitLabMemberTable.team_profile_id == team_id,
+        )
+    ).first()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="member not found")
+    with write_lock_acquired():
+        session.delete(row)
+        session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.delete(
+    "/teams/{team_id}/gitlab/repositories/{repo_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_gitlab_repository(
+    team_id: UUID,
+    repo_id: UUID,
+    session: Session = Depends(get_write_session),
+) -> Response:
+    """Remove exactly one stored GitLab repository row regardless of its verification status.
+
+    Designed for config-health cleanup: removes only the targeted row without
+    re-validating or touching any other repository entries.
+    """
+    team_row = session.get(TeamProfileTable, team_id)
+    if team_row is None:
+        raise _team_not_found()
+    row = session.exec(
+        select(TeamGitLabRepositoryTable).where(
+            TeamGitLabRepositoryTable.id == repo_id,
+            TeamGitLabRepositoryTable.team_profile_id == team_id,
+        )
+    ).first()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="repository not found")
+    with write_lock_acquired():
+        session.delete(row)
+        session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 # ---------------------------------------------------------------------------
