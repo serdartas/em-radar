@@ -29,12 +29,16 @@ from em_radar_api.tables import (
 from em_radar_api.team_profiles import (
     BulkMemberResolveRequest,
     BulkMemberResolveResponse,
+    ConfidenceBand,
     GitLabMemberInput,
     GitLabRepositoryInput,
     GroupSearchResult,
+    JiraPersonRef,
     MemberResolveResult,
     MemberResolveStatus,
     MemberSearchResult,
+    MemberSuggestion,
+    MemberSuggestionsResponse,
     ProjectSearchResult,
     RepositoryActivityResult,
     RepositorySuggestionsResponse,
@@ -44,6 +48,7 @@ from em_radar_api.team_profiles import (
     TeamProfileRead,
     TeamProfileUpdate,
 )
+from em_radar_api.source_connections import ConnectorName, SourceConnectionTable
 from em_radar_core.connectors import (
     ConnectorAuthError,
     ConnectorBase,
@@ -68,6 +73,15 @@ except ImportError:
     DISCOVERY_WIDE_WINDOW_DAYS = 180
     DISCOVERY_MIN_CANDIDATES = 3
 
+try:
+    from em_radar_connector_jira.connector import (
+        JIRA_ACTIVITY_MAX_USERS,
+        JIRA_ACTIVITY_WINDOW_DAYS,
+    )
+except ImportError:
+    JIRA_ACTIVITY_WINDOW_DAYS = 90
+    JIRA_ACTIVITY_MAX_USERS = 50
+
 _MEMBER_SEARCH_DEFAULT_LIMIT = 20
 _MEMBER_SEARCH_MAX_LIMIT = 50
 _PROJECT_SEARCH_DEFAULT_LIMIT = 20
@@ -79,6 +93,8 @@ _GROUP_SEARCH_DEFAULT_LIMIT = 20
 _GROUP_SEARCH_MAX_LIMIT = 50
 _GROUP_MEMBERS_DEFAULT_LIMIT = 50
 _GROUP_MEMBERS_MAX_LIMIT = 100
+# Maximum GitLab candidates to search per Jira person for member suggestions.
+_MEMBER_SUGGESTION_GL_LIMIT = 5
 
 router = APIRouter()
 
@@ -673,6 +689,137 @@ async def gitlab_repository_suggestions(
         return RepositorySuggestionsResponse(window_days=window_days, repositories=repositories)
     finally:
         await connector.close()
+
+
+# ---------------------------------------------------------------------------
+# Member suggestions (Jira activity → GitLab user matching, M9-15)
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/teams/{team_id}/gitlab/member-suggestions",
+    response_model=MemberSuggestionsResponse,
+)
+async def gitlab_member_suggestions(
+    team_id: UUID,
+    session: Session = Depends(get_session),
+) -> MemberSuggestionsResponse:
+    team_row = session.get(TeamProfileTable, team_id)
+    if team_row is None:
+        raise _team_not_found()
+
+    # Require a GitLab connection — this endpoint returns GitLab user candidates.
+    if team_row.code_connection_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="team has no GitLab connection configured",
+        )
+
+    # Find the first Jira connection associated with this team.
+    # Teams with no Jira scope gracefully return an empty response.
+    jira_connection_id = None
+    for cid in team_row.connection_ids:
+        conn_row = session.get(SourceConnectionTable, cid)
+        if conn_row is not None and conn_row.connector_name == ConnectorName.JIRA:
+            jira_connection_id = cid
+            break
+
+    if jira_connection_id is None:
+        return MemberSuggestionsResponse(window_days=JIRA_ACTIVITY_WINDOW_DAYS, suggestions=[])
+
+    jira_connector = instantiate_connector(
+        session,
+        jira_connection_id,
+        lambda config: create_connector("jira", config),
+    )
+    if jira_connector is None:
+        return MemberSuggestionsResponse(window_days=JIRA_ACTIVITY_WINDOW_DAYS, suggestions=[])
+
+    gitlab_connector = _require_gitlab_connector(session, team_row)
+
+    try:
+        if not isinstance(gitlab_connector, MemberProvider):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="GitLab connector does not support member search",
+            )
+        if not hasattr(jira_connector, "list_recently_active_users"):
+            return MemberSuggestionsResponse(window_days=JIRA_ACTIVITY_WINDOW_DAYS, suggestions=[])
+
+        now = datetime.now(UTC)
+        since = now - timedelta(days=JIRA_ACTIVITY_WINDOW_DAYS)
+
+        try:
+            jira_people = await jira_connector.list_recently_active_users(
+                since=since, max_users=JIRA_ACTIVITY_MAX_USERS
+            )
+        except ConnectorAuthError as error:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)
+            ) from error
+        except ConnectorError as error:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)
+            ) from error
+
+        suggestions: list[MemberSuggestion] = []
+        for jira_person in jira_people:
+            query = jira_person.display_name or jira_person.email_address or ""
+            if not query:
+                continue
+            try:
+                refs = await gitlab_connector.search_users(query, limit=_MEMBER_SUGGESTION_GL_LIMIT)
+            except ConnectorAuthError as error:
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)
+                ) from error
+            except ConnectorError as error:
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)
+                ) from error
+
+            candidates = [
+                MemberSearchResult(
+                    provider_user_id=ref.provider_user_id,
+                    username=ref.username,
+                    display_name=ref.display_name,
+                    avatar_url=ref.avatar_url,
+                )
+                for ref in refs
+            ]
+
+            person_ref = JiraPersonRef(
+                display_name=jira_person.display_name,
+                email_address=getattr(jira_person, "email_address", None),
+                account_id=getattr(jira_person, "account_id", None),
+            )
+
+            if len(candidates) == 1:
+                suggestions.append(
+                    MemberSuggestion(
+                        jira_person=person_ref,
+                        match=candidates[0],
+                        candidates=[],
+                        confidence=ConfidenceBand.HIGH,
+                    )
+                )
+            else:
+                suggestions.append(
+                    MemberSuggestion(
+                        jira_person=person_ref,
+                        match=None,
+                        candidates=candidates,
+                        confidence=ConfidenceBand.UNCERTAIN,
+                    )
+                )
+
+        return MemberSuggestionsResponse(
+            window_days=JIRA_ACTIVITY_WINDOW_DAYS, suggestions=suggestions
+        )
+    finally:
+        await gitlab_connector.close()
+        if jira_connector is not None:
+            await jira_connector.close()
 
 
 # ---------------------------------------------------------------------------
