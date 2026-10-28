@@ -1236,6 +1236,7 @@ def _repository_ref_from_payload(payload: Mapping[str, object]) -> RepositoryRef
         provider_project_id=str(_required_positive_int(payload, "id")),
         name=_required_str(payload, "name"),
         path_with_namespace=_required_str(payload, "path_with_namespace"),
+        is_archived=_required_bool(payload, "archived"),
     )
 
 

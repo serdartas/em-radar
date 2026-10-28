@@ -361,3 +361,33 @@ export async function getMemberSuggestions(
     `/teams/${teamId}/gitlab/member-suggestions`,
   )
 }
+
+// ---------------------------------------------------------------------------
+// Config health verification (M9-16)
+// ---------------------------------------------------------------------------
+
+/**
+ * Result of an on-demand configuration health verification.
+ *
+ * Contains all stored members and repositories with updated verification_status.
+ * Rows with "unavailable" indicate deleted/archived entities; "unverified" indicates
+ * a connector-instance mismatch (stored id may belong to a different GitLab instance).
+ */
+export interface ConfigHealthReport {
+  members: TeamGitLabMember[]
+  repositories: TeamGitLabRepository[]
+}
+
+/**
+ * Trigger an on-demand health verification for a team's GitLab configuration.
+ *
+ * Re-resolves each stored member and repository against the GitLab connector by
+ * stable id. Deleted users and archived/moved repositories are marked unavailable;
+ * renamed-but-same-id entities are refreshed; entries from a different connector
+ * instance are marked unverified. Returns all rows with updated statuses.
+ */
+export async function verifyGitLabConfig(teamId: string): Promise<ConfigHealthReport> {
+  return apiFetch<ConfigHealthReport>(`/teams/${teamId}/gitlab/verify-config`, {
+    method: "POST",
+  })
+}

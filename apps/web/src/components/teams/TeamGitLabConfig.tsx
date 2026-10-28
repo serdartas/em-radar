@@ -3,6 +3,7 @@
 import type { SourceConnection } from "@/lib/connections"
 import type { TeamProfile } from "@/lib/teams"
 
+import { ConfigHealthWarning } from "@/components/teams/ConfigHealthWarning"
 import { GitLabMemberPicker } from "@/components/teams/GitLabMemberPicker"
 import { GitLabRepositoryPicker } from "@/components/teams/GitLabRepositoryPicker"
 
@@ -47,6 +48,9 @@ export function TeamGitLabConfig({ codeConnections, team }: TeamGitLabConfigProp
         <h3 className="text-sm font-medium text-slate-700">GitLab configuration</h3>
         <span className="text-xs text-slate-400">(optional)</span>
       </div>
+
+      {/* Config-health warnings: shows stale/unverified rows with re-verify and remove actions. */}
+      <ConfigHealthWarning connectionId={codeConnection.id} teamId={team.id} />
       <p className="text-sm text-slate-500">
         Both sections below are optional. You can save the team without configuring GitLab and
         return to set them up later.

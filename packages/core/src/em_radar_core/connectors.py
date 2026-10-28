@@ -237,6 +237,7 @@ class RepositoryRef:
     provider_project_id: str
     name: str
     path_with_namespace: str
+    is_archived: bool = field(default=False, kw_only=True)
 
 
 @dataclass(frozen=True)
