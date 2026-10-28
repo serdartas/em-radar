@@ -339,3 +339,125 @@ def test_team_gitlab_member_and_repository_migration(
     assert "team_gitlab_member" not in tables
     assert "team_gitlab_repository" not in tables
     assert "member_user_keys" in restored_cols  # restored by downgrade server_default
+
+
+def test_provider_id_rename_migration(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """M9-17: f3a4b5c6d7e8 renames gitlab_user_id/gitlab_project_id to provider_user_id/provider_project_id."""
+    database_path = tmp_path / "m9-17.db"
+    monkeypatch.setenv(DATABASE_PATH_ENV, str(database_path))
+    config = Config(REPO_ROOT / "alembic.ini")
+
+    # Bring schema up to d2e3f4a5b6c7 (the revision that created the tables with integer ids).
+    command.upgrade(config, "d2e3f4a5b6c7")
+    engine = create_db_engine(database_path)
+
+    team_id = uuid4()
+    connection_id = uuid4()
+    member_id = uuid4()
+    repo_id = uuid4()
+
+    with engine.begin() as conn:
+        conn.execute(
+            sa.text(
+                "INSERT INTO source_connection (id, connector_name, config, name, created_at)"
+                " VALUES (:id, 'gitlab', '{}', 'GL', '2026-01-01')"
+            ),
+            {"id": connection_id.hex},
+        )
+        conn.execute(
+            sa.text(
+                "INSERT INTO team_profile"
+                " (id, name, connection_ids, scope_ids, signal_config_group_ids,"
+                " working_mode, created_at, updated_at)"
+                " VALUES (:id, 'Eng', '[]', '[]', '[]', 'SCRUM', '2026-01-01', '2026-01-01')"
+            ),
+            {"id": team_id.hex},
+        )
+        conn.execute(
+            sa.text(
+                "INSERT INTO team_gitlab_member"
+                " (id, team_profile_id, connection_id, gitlab_user_id, username,"
+                " verification_status, created_at, updated_at)"
+                " VALUES (:id, :team, :conn, 42, 'alice', 'VERIFIED', '2026-01-01', '2026-01-01')"
+            ),
+            {"id": member_id.hex, "team": team_id.hex, "conn": connection_id.hex},
+        )
+        conn.execute(
+            sa.text(
+                "INSERT INTO team_gitlab_repository"
+                " (id, team_profile_id, connection_id, gitlab_project_id, name,"
+                " path_with_namespace, verification_status, created_at, updated_at)"
+                " VALUES (:id, :team, :conn, 99, 'repo', 'g/repo', 'VERIFIED',"
+                " '2026-01-01', '2026-01-01')"
+            ),
+            {"id": repo_id.hex, "team": team_id.hex, "conn": connection_id.hex},
+        )
+
+    # Apply M9-17 rename migration.
+    command.upgrade(config, "f3a4b5c6d7e8")
+
+    with engine.connect() as conn:
+        member_cols = {
+            row[1]
+            for row in conn.execute(sa.text("PRAGMA table_info(team_gitlab_member)")).fetchall()
+        }
+        repo_cols = {
+            row[1]
+            for row in conn.execute(sa.text("PRAGMA table_info(team_gitlab_repository)")).fetchall()
+        }
+
+    # Old columns must be gone.
+    assert "gitlab_user_id" not in member_cols
+    assert "gitlab_project_id" not in repo_cols
+    # New columns must exist.
+    assert "provider_user_id" in member_cols
+    assert "provider_project_id" in repo_cols
+
+    # Data must be preserved as strings.
+    with engine.connect() as conn:
+        uid = conn.execute(
+            sa.text("SELECT provider_user_id FROM team_gitlab_member WHERE id = :id"),
+            {"id": member_id.hex},
+        ).scalar_one()
+        pid = conn.execute(
+            sa.text("SELECT provider_project_id FROM team_gitlab_repository WHERE id = :id"),
+            {"id": repo_id.hex},
+        ).scalar_one()
+
+    assert uid == "42"
+    assert pid == "99"
+
+    # Unique constraint must reject a duplicate (same team + same provider_user_id).
+    duplicate_member_id = uuid4()
+    with engine.begin() as conn:
+        try:
+            conn.execute(
+                sa.text(
+                    "INSERT INTO team_gitlab_member"
+                    " (id, team_profile_id, connection_id, provider_user_id, username,"
+                    " verification_status, created_at, updated_at)"
+                    " VALUES (:id, :team, :conn, '42', 'dup', 'VERIFIED',"
+                    " '2026-01-01', '2026-01-01')"
+                ),
+                {"id": duplicate_member_id.hex, "team": team_id.hex, "conn": connection_id.hex},
+            )
+            assert False, "expected IntegrityError from duplicate provider_user_id"
+        except Exception:
+            conn.rollback()
+
+    # Downgrade must restore the integer columns.
+    command.downgrade(config, "d2e3f4a5b6c7")
+    with engine.connect() as conn:
+        restored_member_cols = {
+            row[1]
+            for row in conn.execute(sa.text("PRAGMA table_info(team_gitlab_member)")).fetchall()
+        }
+        restored_repo_cols = {
+            row[1]
+            for row in conn.execute(sa.text("PRAGMA table_info(team_gitlab_repository)")).fetchall()
+        }
+
+    assert "gitlab_user_id" in restored_member_cols
+    assert "gitlab_project_id" in restored_repo_cols
+    assert "provider_user_id" not in restored_member_cols
+    assert "provider_project_id" not in restored_repo_cols

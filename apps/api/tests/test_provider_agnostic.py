@@ -335,3 +335,74 @@ def test_repository_suggestions_passes_opaque_ids_to_connector(
     # The stored provider_user_id was passed through verbatim — no int conversion.
     assert len(received_ids) >= 1
     assert received_ids[0] == ["gh_user_abc"]
+
+
+def test_require_code_connector_reads_connector_name_from_db(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_require_code_connector uses the connector_name stored on the connection record.
+
+    Creates a connection whose connector_name is "jira" (not "gitlab"), seeds the team
+    directly, then spies on create_connector to prove the code reads the name from the DB
+    record rather than hardcoding "gitlab".  A hardcoded call would produce ["gitlab"];
+    the fixed code produces ["jira"].
+    """
+    now = datetime.now(UTC)
+
+    # Create a Jira connection — a valid but non-"gitlab" connector_name.
+    jira_conn_id = uuid4()
+    with session_factory() as session:
+        from em_radar_api.source_connections import SourceConnectionTable
+
+        session.add(
+            SourceConnectionTable(
+                id=jira_conn_id,
+                name="Jira (agnostic test)",
+                connector_name=ConnectorName.JIRA,
+                config={},
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        session.commit()
+
+    # Seed the team directly (bypassing team-creation validation which would reject Jira as
+    # a code connection, since the point here is testing _require_code_connector isolation).
+    team_id = uuid4()
+    with session_factory() as session:
+        session.add(
+            TeamProfileTable(
+                id=team_id,
+                name="Agnostic Test Team",
+                working_mode=WorkingMode.SCRUM,
+                connection_ids=[],
+                scope_ids=[],
+                signal_config_group_ids=[],
+                code_connection_id=jira_conn_id,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        session.commit()
+
+    captured: list[str] = []
+
+    import em_radar_api.connector_registry as registry_module
+
+    original_create = registry_module.create_connector
+
+    def spy_create(name: str, config: object) -> object:
+        captured.append(name)
+        return original_create(name, config)
+
+    monkeypatch.setattr("em_radar_api.routers.teams.create_connector", spy_create)
+
+    # Call an endpoint that goes through _require_code_connector.  It will fail (Jira
+    # connector doesn't implement MemberProvider), but create_connector will have been called.
+    api_client.get(f"/api/teams/{team_id}/gitlab/member-search?q=test")
+
+    # create_connector must have been called with "jira" — the value stored in the DB,
+    # not "gitlab" (what the old hardcoded code would have passed).
+    assert captured == ["jira"], f"expected ['jira'] but got {captured}"
