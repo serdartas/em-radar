@@ -40,7 +40,7 @@ const existingMember = {
   id: "mbr-99",
   team_profile_id: teamId,
   connection_id: connectionId,
-  gitlab_user_id: 99,
+  provider_user_id: "99",
   username: "existing",
   display_name: "Existing User",
   verification_status: "verified",
@@ -253,7 +253,7 @@ describe("GitLabGroupImport: only selected candidates added", () => {
       id: "mbr-101",
       team_profile_id: teamId,
       connection_id: connectionId,
-      gitlab_user_id: 101,
+      provider_user_id: "101",
       username: "alice",
       display_name: "Alice",
       verification_status: "verified",
@@ -288,7 +288,7 @@ describe("GitLabGroupImport: only selected candidates added", () => {
     // Click Add selected.
     fireEvent.click(screen.getByRole("button", { name: /Add selected \(1\)/ }))
 
-    // PUT body must contain the existing member (gitlab_user_id: 99) and Alice (101),
+    // PUT body must contain the existing member (provider_user_id: "99") and Alice (101),
     // but not Bob (102).
     await waitFor(() => {
       const putCalls = fetchMock.mock.calls.filter(
@@ -297,10 +297,10 @@ describe("GitLabGroupImport: only selected candidates added", () => {
       expect(putCalls).toHaveLength(1)
       const body = JSON.parse(
         (putCalls[0][1] as RequestInit).body as string,
-      ) as Array<{ gitlab_user_id: number }>
-      expect(body).toContainEqual({ gitlab_user_id: 99 })  // existing member
-      expect(body).toContainEqual({ gitlab_user_id: 101 })  // Alice (checked)
-      expect(body).not.toContainEqual({ gitlab_user_id: 102 })  // Bob (not checked)
+      ) as Array<{ provider_user_id: string }>
+      expect(body).toContainEqual({ provider_user_id: "99" })  // existing member
+      expect(body).toContainEqual({ provider_user_id: "101" })  // Alice (checked)
+      expect(body).not.toContainEqual({ provider_user_id: "102" })  // Bob (not checked)
     })
   })
 })
@@ -311,12 +311,12 @@ describe("GitLabGroupImport: only selected candidates added", () => {
 
 describe("GitLabGroupImport: already-added members are disabled", () => {
   it("group member already in the selection is shown as checked and disabled", async () => {
-    // alice (gitlab_user_id: 101, provider_user_id: "101") is already a member.
+    // alice (provider_user_id: "101", provider_user_id: "101") is already a member.
     const aliceExisting = {
       id: "mbr-101",
       team_profile_id: teamId,
       connection_id: connectionId,
-      gitlab_user_id: 101,
+      provider_user_id: "101",
       username: "alice",
       display_name: "Alice",
       verification_status: "verified",

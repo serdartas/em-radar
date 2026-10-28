@@ -188,7 +188,7 @@ def _seed_gitlab_repo(
     session_factory: sessionmaker[Session],
     team_id: str,
     connection_id: str,
-    gitlab_project_id: int = 1,
+    provider_project_id: str = "1",
 ) -> None:
     """Insert a verified TeamGitLabRepositoryTable row so report scoping includes it."""
     now = datetime.now(UTC)
@@ -197,7 +197,7 @@ def _seed_gitlab_repo(
             TeamGitLabRepositoryTable(
                 team_profile_id=UUID(team_id),
                 connection_id=UUID(connection_id),
-                gitlab_project_id=gitlab_project_id,
+                provider_project_id=provider_project_id,
                 name="my-repo",
                 path_with_namespace="group/my-repo",
                 verification_status=ScopeVerificationStatus.VERIFIED,

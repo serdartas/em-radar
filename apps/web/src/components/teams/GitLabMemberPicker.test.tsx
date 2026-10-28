@@ -36,7 +36,7 @@ const existingMember = {
   id: "mbr-1",
   team_profile_id: teamId,
   connection_id: "conn-1",
-  gitlab_user_id: 101,
+  provider_user_id: "101",
   username: "jsmith",
   display_name: "John Smith",
   verification_status: "verified",
@@ -172,7 +172,7 @@ describe("GitLabMemberPicker: selection", () => {
     // Chip should be visible immediately after selection.
     expect(screen.getByText("John Smith @jsmith")).toBeInTheDocument()
 
-    // PUT must have been sent with the selected member's gitlab_user_id.
+    // PUT must have been sent with the selected member's provider_user_id.
     await waitFor(() => {
       const putCalls = fetchMock.mock.calls.filter(
         (args) => (args[1] as RequestInit | undefined)?.method === "PUT",
@@ -180,8 +180,8 @@ describe("GitLabMemberPicker: selection", () => {
       expect(putCalls).toHaveLength(1)
       const body = JSON.parse(
         (putCalls[0][1] as RequestInit).body as string,
-      ) as Array<{ gitlab_user_id: number }>
-      expect(body).toContainEqual({ gitlab_user_id: 101 })
+      ) as Array<{ provider_user_id: string }>
+      expect(body).toContainEqual({ provider_user_id: "101" })
     })
   })
 })
@@ -284,7 +284,7 @@ describe("GitLabMemberPicker: full replace set", () => {
       id: "mbr-2",
       team_profile_id: teamId,
       connection_id: "conn-1",
-      gitlab_user_id: 102,
+      provider_user_id: "102",
       username: "jdoe",
       display_name: "Jane Doe",
       verification_status: "verified",
@@ -319,10 +319,10 @@ describe("GitLabMemberPicker: full replace set", () => {
       expect(putCalls).toHaveLength(1)
       const body = JSON.parse(
         (putCalls[0][1] as RequestInit).body as string,
-      ) as Array<{ gitlab_user_id: number }>
+      ) as Array<{ provider_user_id: string }>
       expect(body).toHaveLength(2)
-      expect(body).toContainEqual({ gitlab_user_id: 101 })
-      expect(body).toContainEqual({ gitlab_user_id: 102 })
+      expect(body).toContainEqual({ provider_user_id: "101" })
+      expect(body).toContainEqual({ provider_user_id: "102" })
     })
   })
 })
@@ -337,14 +337,14 @@ describe("GitLabMemberPicker: connection filter", () => {
       ...existingMember,
       id: "mbr-stale",
       connection_id: "conn-OTHER",
-      gitlab_user_id: 999,
+      provider_user_id: "999",
       username: "stale",
       display_name: "Stale User",
     }
     const jdoeSaved = {
       ...existingMember,
       id: "mbr-2",
-      gitlab_user_id: 102,
+      provider_user_id: "102",
       username: "jdoe",
       display_name: "Jane Doe",
     }
@@ -373,10 +373,10 @@ describe("GitLabMemberPicker: connection filter", () => {
       expect(putCalls).toHaveLength(1)
       const body = JSON.parse(
         (putCalls[0][1] as RequestInit).body as string,
-      ) as Array<{ gitlab_user_id: number }>
-      expect(body).toContainEqual({ gitlab_user_id: 101 })
-      expect(body).toContainEqual({ gitlab_user_id: 102 })
-      expect(body).not.toContainEqual({ gitlab_user_id: 999 })
+      ) as Array<{ provider_user_id: string }>
+      expect(body).toContainEqual({ provider_user_id: "101" })
+      expect(body).toContainEqual({ provider_user_id: "102" })
+      expect(body).not.toContainEqual({ provider_user_id: "999" })
     })
   })
 })
@@ -472,7 +472,7 @@ describe("GitLabMemberPicker: connection change re-seed", () => {
       id: "mbr-a",
       team_profile_id: teamId,
       connection_id: "conn-A",
-      gitlab_user_id: 201,
+      provider_user_id: "201",
       username: "alice",
       display_name: "Alice",
       verification_status: "verified",
@@ -483,7 +483,7 @@ describe("GitLabMemberPicker: connection change re-seed", () => {
       id: "mbr-b",
       team_profile_id: teamId,
       connection_id: "conn-B",
-      gitlab_user_id: 202,
+      provider_user_id: "202",
       username: "bob",
       display_name: "Bob",
       verification_status: "verified",

@@ -224,7 +224,7 @@ class GroupMemberProvider(Protocol):
 class UserIdentityProvider(Protocol):
     """Connector that can map a provider-native user id to the stable canonical UUID.
 
-    Used by the report runner to resolve team members' gitlab_user_id values to the
+    Used by the report runner to resolve team members' provider_user_id values to the
     same canonical UUIDs that MergeRequest.author_id carries, enabling authored-scope
     MR signal evaluation without any connector import in the evaluator.
     """

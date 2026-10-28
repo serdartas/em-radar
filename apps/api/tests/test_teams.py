@@ -178,7 +178,7 @@ def test_deleting_team_removes_gitlab_member_and_repo_rows(
         member = TeamGitLabMemberTable(
             team_profile_id=team_id,
             connection_id=None,
-            gitlab_user_id=42,
+            provider_user_id="42",
             username="alice",
             created_at=now,
             updated_at=now,
@@ -186,7 +186,7 @@ def test_deleting_team_removes_gitlab_member_and_repo_rows(
         repo = TeamGitLabRepositoryTable(
             team_profile_id=team_id,
             connection_id=None,
-            gitlab_project_id=99,
+            provider_project_id="99",
             name="my-repo",
             path_with_namespace="group/my-repo",
             created_at=now,
@@ -238,7 +238,7 @@ def test_force_deleting_connection_preserves_gitlab_rows_as_unavailable(
         member = TeamGitLabMemberTable(
             team_profile_id=team_id,
             connection_id=connection.id,
-            gitlab_user_id=42,
+            provider_user_id="42",
             username="alice",
             created_at=now,
             updated_at=now,
@@ -246,7 +246,7 @@ def test_force_deleting_connection_preserves_gitlab_rows_as_unavailable(
         repo = TeamGitLabRepositoryTable(
             team_profile_id=team_id,
             connection_id=connection.id,
-            gitlab_project_id=99,
+            provider_project_id="99",
             name="my-repo",
             path_with_namespace="group/my-repo",
             created_at=now,

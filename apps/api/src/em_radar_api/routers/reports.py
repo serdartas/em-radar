@@ -635,14 +635,14 @@ async def _run_team_report(
                 TeamGitLabRepositoryTable.verification_status == ScopeVerificationStatus.VERIFIED,
             )
         ).all()
-        configured_repo_ids = sorted(str(r.gitlab_project_id) for r in configured_repo_rows)
+        configured_repo_ids = sorted(r.provider_project_id for r in configured_repo_rows)
         if not configured_repo_ids:
             partial_data_notes.append(
                 {"source": "code", "reason": "no team-owned repositories configured"}
             )
 
     # Load team's verified members for authored-scope MR signal evaluation.
-    member_gitlab_user_ids: list[str] = []
+    member_provider_user_ids: list[str] = []
     if code_source_selected and team_row.code_connection_id is not None:
         member_rows = session.exec(
             select(TeamGitLabMemberTable).where(
@@ -651,7 +651,7 @@ async def _run_team_report(
                 TeamGitLabMemberTable.verification_status == ScopeVerificationStatus.VERIFIED,
             )
         ).all()
-        member_gitlab_user_ids = [str(m.gitlab_user_id) for m in member_rows]
+        member_provider_user_ids = [m.provider_user_id for m in member_rows]
 
     if code_source_selected and configured_repo_ids and team_row.code_connection_id is not None:
         code_coro = _fetch_code_data(
@@ -659,7 +659,7 @@ async def _run_team_report(
             team_row.code_connection_id,
             mr_window,
             configured_repo_ids,
-            member_gitlab_user_ids,
+            member_provider_user_ids,
         )
     elif code_source_selected:
         # Code signals selected but no repositories configured: return an empty result (not None)
@@ -1099,7 +1099,7 @@ async def _fetch_code_data(
     Only the team's configured verified repositories (``configured_repo_ids``) are fetched;
     scope comes from saved config, never from live activity (§21 determinism).
 
-    ``member_provider_user_ids`` are the team's verified members' GitLab numeric user ids.
+    ``member_provider_user_ids`` are the team's verified members' stable provider_user_id strings.
     When the connector implements ``UserIdentityProvider``, they are mapped to canonical
     UUIDs matching ``MergeRequest.author_id`` and returned in ``team_member_author_ids``.
     """

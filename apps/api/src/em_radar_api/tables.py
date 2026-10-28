@@ -179,7 +179,7 @@ class ReportJobTable(SQLModel, table=True):
 
 class TeamGitLabMemberTable(TeamGitLabMember, table=True):
     __tablename__ = "team_gitlab_member"
-    __table_args__ = (UniqueConstraint("team_profile_id", "gitlab_user_id"),)
+    __table_args__ = (UniqueConstraint("team_profile_id", "provider_user_id"),)
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     team_profile_id: UUID = Field(
@@ -197,7 +197,7 @@ class TeamGitLabMemberTable(TeamGitLabMember, table=True):
 
 class TeamGitLabRepositoryTable(TeamGitLabRepository, table=True):
     __tablename__ = "team_gitlab_repository"
-    __table_args__ = (UniqueConstraint("team_profile_id", "gitlab_project_id"),)
+    __table_args__ = (UniqueConstraint("team_profile_id", "provider_project_id"),)
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     team_profile_id: UUID = Field(

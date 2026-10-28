@@ -25,7 +25,7 @@ export interface TeamGitLabMember {
   id: string
   team_profile_id: string
   connection_id: string | null
-  gitlab_user_id: number
+  provider_user_id: string
   username: string
   display_name: string | null
   verification_status: string
@@ -39,7 +39,7 @@ export interface TeamGitLabMember {
  * Field name matches the backend GitLabMemberInput schema exactly.
  */
 export interface GitLabMemberInput {
-  gitlab_user_id: number
+  provider_user_id: string
 }
 
 // ---------------------------------------------------------------------------
@@ -193,7 +193,7 @@ export interface TeamGitLabRepository {
   id: string
   team_profile_id: string
   connection_id: string | null
-  gitlab_project_id: number
+  provider_project_id: string
   name: string
   path_with_namespace: string
   verification_status: string
@@ -207,7 +207,7 @@ export interface TeamGitLabRepository {
  * Field name matches the backend GitLabRepositoryInput schema exactly.
  */
 export interface GitLabRepositoryInput {
-  gitlab_project_id: number
+  provider_project_id: string
 }
 
 /**

@@ -63,7 +63,7 @@ def _seed_member(
     session_factory: sessionmaker[Session],
     team_id: UUID,
     connection_id: UUID | None,
-    gitlab_user_id: int = 10,
+    provider_user_id: str = "10",
     username: str = "dev",
     display_name: str = "Dev User",
     status: ScopeVerificationStatus = ScopeVerificationStatus.VERIFIED,
@@ -73,7 +73,7 @@ def _seed_member(
         row = TeamGitLabMemberTable(
             team_profile_id=team_id,
             connection_id=connection_id,
-            gitlab_user_id=gitlab_user_id,
+            provider_user_id=provider_user_id,
             username=username,
             display_name=display_name,
             verification_status=status,
@@ -88,7 +88,7 @@ def _seed_repo(
     session_factory: sessionmaker[Session],
     team_id: UUID,
     connection_id: UUID | None,
-    gitlab_project_id: int = 5,
+    provider_project_id: str = "5",
     name: str = "myrepo",
     path_with_namespace: str = "group/myrepo",
     status: ScopeVerificationStatus = ScopeVerificationStatus.VERIFIED,
@@ -98,7 +98,7 @@ def _seed_repo(
         row = TeamGitLabRepositoryTable(
             team_profile_id=team_id,
             connection_id=connection_id,
-            gitlab_project_id=gitlab_project_id,
+            provider_project_id=provider_project_id,
             name=name,
             path_with_namespace=path_with_namespace,
             verification_status=status,
@@ -142,7 +142,7 @@ def test_verify_config_marks_deleted_user_unavailable(
 ) -> None:
     conn_id = _make_gitlab_connection(session_factory)
     team_id = _make_team(session_factory, code_connection_id=conn_id)
-    _seed_member(session_factory, team_id, conn_id, gitlab_user_id=10)
+    _seed_member(session_factory, team_id, conn_id, provider_user_id="10")
 
     # Connector returns None → user deleted on GitLab side.
     mock = _make_mock_connector(get_user_return=None)
@@ -153,7 +153,7 @@ def test_verify_config_marks_deleted_user_unavailable(
     data = resp.json()
     assert len(data["members"]) == 1
     assert data["members"][0]["verification_status"] == "unavailable"
-    assert data["members"][0]["gitlab_user_id"] == 10  # row preserved
+    assert data["members"][0]["provider_user_id"] == "10"  # row preserved
 
 
 def test_verify_config_marks_archived_repo_unavailable(
@@ -163,7 +163,7 @@ def test_verify_config_marks_archived_repo_unavailable(
 ) -> None:
     conn_id = _make_gitlab_connection(session_factory)
     team_id = _make_team(session_factory, code_connection_id=conn_id)
-    _seed_repo(session_factory, team_id, conn_id, gitlab_project_id=5)
+    _seed_repo(session_factory, team_id, conn_id, provider_project_id="5")
 
     # Connector returns an archived repo → should be marked UNAVAILABLE.
     mock = _make_mock_connector(
@@ -181,7 +181,7 @@ def test_verify_config_marks_archived_repo_unavailable(
     data = resp.json()
     assert len(data["repositories"]) == 1
     assert data["repositories"][0]["verification_status"] == "unavailable"
-    assert data["repositories"][0]["gitlab_project_id"] == 5  # row preserved
+    assert data["repositories"][0]["provider_project_id"] == "5"  # row preserved
 
 
 def test_verify_config_refreshes_renamed_entity(
@@ -191,7 +191,7 @@ def test_verify_config_refreshes_renamed_entity(
 ) -> None:
     conn_id = _make_gitlab_connection(session_factory)
     team_id = _make_team(session_factory, code_connection_id=conn_id)
-    _seed_member(session_factory, team_id, conn_id, gitlab_user_id=10, username="oldname")
+    _seed_member(session_factory, team_id, conn_id, provider_user_id="10", username="oldname")
 
     # Connector returns the same id but with a new username → renamed, still VERIFIED.
     mock = _make_mock_connector(
@@ -221,8 +221,8 @@ def test_verify_config_marks_different_instance_unverified(
     team_id = _make_team(session_factory, code_connection_id=conn_id)
 
     # Member was seeded with a DIFFERENT connection_id (other instance).
-    _seed_member(session_factory, team_id, other_conn_id, gitlab_user_id=99)
-    _seed_repo(session_factory, team_id, other_conn_id, gitlab_project_id=88)
+    _seed_member(session_factory, team_id, other_conn_id, provider_user_id="99")
+    _seed_repo(session_factory, team_id, other_conn_id, provider_project_id="88")
 
     mock = _make_mock_connector()
     monkeypatch.setattr("em_radar_api.routers.teams.instantiate_connector", lambda *_a, **_kw: mock)
@@ -248,7 +248,7 @@ def test_verify_config_transient_error_leaves_status_unchanged(
         session_factory,
         team_id,
         conn_id,
-        gitlab_user_id=10,
+        provider_user_id="10",
         status=ScopeVerificationStatus.VERIFIED,
     )
 
@@ -285,7 +285,7 @@ def test_verify_config_connector_instantiation_failure_only_updates_mismatched_r
         session_factory,
         team_id,
         conn_id,
-        gitlab_user_id=10,
+        provider_user_id="10",
         status=ScopeVerificationStatus.VERIFIED,
     )
     # A member from a stale (different) connection — must flip to UNVERIFIED.
@@ -293,7 +293,7 @@ def test_verify_config_connector_instantiation_failure_only_updates_mismatched_r
         session_factory,
         team_id,
         other_conn_id,
-        gitlab_user_id=99,
+        provider_user_id="99",
         status=ScopeVerificationStatus.VERIFIED,
     )
 
@@ -308,9 +308,9 @@ def test_verify_config_connector_instantiation_failure_only_updates_mismatched_r
     resp = api_client.post(f"/api/teams/{team_id}/gitlab/verify-config")
     assert resp.status_code == 200
     data = resp.json()
-    by_id = {m["gitlab_user_id"]: m for m in data["members"]}
-    assert by_id[10]["verification_status"] == "verified"  # unchanged
-    assert by_id[99]["verification_status"] == "unverified"  # different instance → UNVERIFIED
+    by_id = {m["provider_user_id"]: m for m in data["members"]}
+    assert by_id["10"]["verification_status"] == "verified"  # unchanged
+    assert by_id["99"]["verification_status"] == "unverified"  # different instance → UNVERIFIED
 
 
 # ---------------------------------------------------------------------------
@@ -324,20 +324,20 @@ def test_delete_gitlab_member_removes_exactly_one_row(
 ) -> None:
     conn_id = _make_gitlab_connection(session_factory)
     team_id = _make_team(session_factory, code_connection_id=conn_id)
-    _seed_member(session_factory, team_id, conn_id, gitlab_user_id=10)
-    _seed_member(session_factory, team_id, conn_id, gitlab_user_id=20)
+    _seed_member(session_factory, team_id, conn_id, provider_user_id="10")
+    _seed_member(session_factory, team_id, conn_id, provider_user_id="20")
 
     # Fetch both rows to get their ids.
     members = api_client.get(f"/api/teams/{team_id}/gitlab/members").json()
     assert len(members) == 2
-    target_id = next(m["id"] for m in members if m["gitlab_user_id"] == 10)
+    target_id = next(m["id"] for m in members if m["provider_user_id"] == "10")
 
     resp = api_client.delete(f"/api/teams/{team_id}/gitlab/members/{target_id}")
     assert resp.status_code == 204
 
     remaining = api_client.get(f"/api/teams/{team_id}/gitlab/members").json()
     assert len(remaining) == 1
-    assert remaining[0]["gitlab_user_id"] == 20  # untouched
+    assert remaining[0]["provider_user_id"] == "20"  # untouched
 
 
 def test_delete_gitlab_repository_removes_exactly_one_row(
@@ -346,19 +346,19 @@ def test_delete_gitlab_repository_removes_exactly_one_row(
 ) -> None:
     conn_id = _make_gitlab_connection(session_factory)
     team_id = _make_team(session_factory, code_connection_id=conn_id)
-    _seed_repo(session_factory, team_id, conn_id, gitlab_project_id=5)
-    _seed_repo(session_factory, team_id, conn_id, gitlab_project_id=6)
+    _seed_repo(session_factory, team_id, conn_id, provider_project_id="5")
+    _seed_repo(session_factory, team_id, conn_id, provider_project_id="6")
 
     repos = api_client.get(f"/api/teams/{team_id}/gitlab/repositories").json()
     assert len(repos) == 2
-    target_id = next(r["id"] for r in repos if r["gitlab_project_id"] == 5)
+    target_id = next(r["id"] for r in repos if r["provider_project_id"] == "5")
 
     resp = api_client.delete(f"/api/teams/{team_id}/gitlab/repositories/{target_id}")
     assert resp.status_code == 204
 
     remaining = api_client.get(f"/api/teams/{team_id}/gitlab/repositories").json()
     assert len(remaining) == 1
-    assert remaining[0]["gitlab_project_id"] == 6  # untouched
+    assert remaining[0]["provider_project_id"] == "6"  # untouched
 
 
 def test_delete_gitlab_member_returns_404_for_wrong_team(
@@ -368,7 +368,7 @@ def test_delete_gitlab_member_returns_404_for_wrong_team(
     conn_id = _make_gitlab_connection(session_factory)
     team_id = _make_team(session_factory, code_connection_id=conn_id)
     other_team_id = _make_team(session_factory, code_connection_id=conn_id)
-    _seed_member(session_factory, team_id, conn_id, gitlab_user_id=10)
+    _seed_member(session_factory, team_id, conn_id, provider_user_id="10")
 
     members = api_client.get(f"/api/teams/{team_id}/gitlab/members").json()
     member_id = members[0]["id"]

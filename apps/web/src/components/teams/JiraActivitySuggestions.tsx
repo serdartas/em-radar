@@ -13,7 +13,7 @@ import {
 
 /** A member ready to be added — matches the LocalMember shape in GitLabMemberPicker. */
 export interface SuggestedMember {
-  gitlab_user_id: number
+  provider_user_id: string
   username: string
   display_name: string | null
 }
@@ -31,7 +31,7 @@ export interface JiraActivitySuggestionsProps {
 /** Map a GitLabMemberSearchResult to the SuggestedMember shape. */
 function toSuggestedMember(ref: GitLabMemberSearchResult): SuggestedMember {
   return {
-    gitlab_user_id: parseInt(ref.provider_user_id, 10),
+    provider_user_id: ref.provider_user_id,
     username: ref.username,
     display_name: ref.display_name || null,
   }

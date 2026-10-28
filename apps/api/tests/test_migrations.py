@@ -275,6 +275,8 @@ def test_team_gitlab_member_and_repository_migration(
     # Seed a member and a repository row referencing the team and connection (verification_status
     # defaults to VERIFIED via the server_default).
     with engine.begin() as conn:
+        # Insert using the column names that exist at the d2e3f4a5b6c7 revision.
+        # The f3a4b5c6d7e8 migration (M9-17) will rename gitlab_user_id → provider_user_id.
         conn.execute(
             sa.text(
                 "INSERT INTO team_gitlab_member"
