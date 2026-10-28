@@ -130,11 +130,18 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("ConfigHealthWarning", () => {
-  it("renders nothing when all members and repos are verified", async () => {
-    renderWarning([verifiedMember], [verifiedRepo])
+  it("renders nothing when no members or repos are configured at all", async () => {
+    renderWarning([], [])
     await waitFor(() => {
-      expect(screen.queryByRole("alert")).toBeNull()
+      expect(screen.queryByRole("button")).toBeNull()
     })
+  })
+
+  it("renders compact verify button when all entries are verified (no warning callout)", async () => {
+    renderWarning([verifiedMember], [verifiedRepo])
+    const btn = await screen.findByRole("button", { name: /verify config/i })
+    expect(btn).toBeInTheDocument()
+    expect(screen.queryByRole("alert")).toBeNull()
   })
 
   it("renders warning callout when an unavailable member exists", async () => {

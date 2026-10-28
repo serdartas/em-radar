@@ -23,9 +23,10 @@ export interface ConfigHealthWarningProps {
  * Non-blocking config-health callout (§22, §17) surfacing stale GitLab entries.
  *
  * Reads from the shared React Query cache for members and repositories (same keys as
- * the pickers). Renders only when UNAVAILABLE or UNVERIFIED rows exist. Provides:
- *  - "Re-verify" — triggers POST verify-config then invalidates the shared queries.
- *  - "Remove" per item — calls DELETE on the specific row without touching other entries.
+ * the pickers). When stale entries exist, renders an amber warning callout with per-item
+ * Remove and Re-verify. When all entries are VERIFIED, renders a compact "Verify config"
+ * link so users can pro-actively check even before any entry becomes stale.
+ * Returns null only when no members or repositories are configured at all.
  */
 export function ConfigHealthWarning({ connectionId: _connectionId, teamId }: ConfigHealthWarningProps) {
   const queryClient = useQueryClient()
@@ -40,12 +41,16 @@ export function ConfigHealthWarning({ connectionId: _connectionId, teamId }: Con
     queryFn: () => listGitLabRepositories(teamId),
   })
 
+  const hasAnyEntries = members.length > 0 || repos.length > 0
+
   const staleMembers = members.filter(
     (m) => m.verification_status === "unavailable" || m.verification_status === "unverified",
   )
   const staleRepos = repos.filter(
     (r) => r.verification_status === "unavailable" || r.verification_status === "unverified",
   )
+
+  const hasStale = staleMembers.length > 0 || staleRepos.length > 0
 
   const { isPending: isVerifying, mutate: runVerify, error: verifyError } = useMutation({
     mutationFn: () => verifyGitLabConfig(teamId),
@@ -77,11 +82,32 @@ export function ConfigHealthWarning({ connectionId: _connectionId, teamId }: Con
     },
   })
 
-  if (staleMembers.length === 0 && staleRepos.length === 0) {
+  if (!hasAnyEntries) {
     return null
   }
 
   const isBusy = isVerifying || isRemovingMember || isRemovingRepo
+
+  // No stale entries: render a compact link so users can still trigger verification.
+  if (!hasStale) {
+    return (
+      <div className="flex items-center gap-2 text-xs text-slate-500">
+        <button
+          className="underline hover:no-underline disabled:cursor-not-allowed disabled:opacity-50"
+          disabled={isVerifying}
+          onClick={() => runVerify()}
+          type="button"
+        >
+          {isVerifying ? "Verifying…" : "Verify config"}
+        </button>
+        {verifyError && (
+          <span className="text-red-600">
+            {apiErrorMessage(verifyError, "Verification failed.")}
+          </span>
+        )}
+      </div>
+    )
+  }
 
   return (
     <Callout role="alert" title="Configuration health warning" variant="warning">

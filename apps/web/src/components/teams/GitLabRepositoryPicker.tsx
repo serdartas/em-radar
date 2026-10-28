@@ -157,12 +157,20 @@ export function GitLabRepositoryPicker({ connectionId, teamId }: GitLabRepositor
   // Comparing seededConnectionId to connectionId detects a mid-mount connection switch
   // so selectedRepos is never left showing the previous connection's project ids
   // (numeric ids are instance-local and would resolve to wrong projects on another instance).
+  //
+  // When the connection is unchanged but savedRepos refetches (e.g. after a config-health
+  // delete), drop any selections that no longer exist in savedRepos so a subsequent PUT
+  // doesn't re-submit a row that was deliberately removed externally.
   useEffect(() => {
-    if (savedRepos !== undefined && seededConnectionId !== connectionId) {
+    if (savedRepos === undefined) return
+    if (seededConnectionId !== connectionId) {
       setSelectedRepos(
         savedRepos.filter((r) => r.connection_id === connectionId).map(savedRepoToLocal),
       )
       setSeededConnectionId(connectionId)
+    } else {
+      const savedIds = new Set(savedRepos.map((r) => r.gitlab_project_id))
+      setSelectedRepos((prev) => prev.filter((r) => savedIds.has(r.gitlab_project_id)))
     }
   }, [savedRepos, connectionId, seededConnectionId])
 
