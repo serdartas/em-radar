@@ -9,7 +9,9 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import sessionmaker
 from sqlmodel import Session
 
+from em_radar_api.repositories.scope_definitions import create_scope_definition
 from em_radar_api.repositories.source_connections import create_source_connection
+from em_radar_api.scope_definitions import ScopeDefinitionCreate, ScopeType
 from em_radar_api.source_connections import ConnectorName, SourceConnectionCreate
 from em_radar_api.tables import TeamProfileTable
 from em_radar_core.connectors import ConnectorAuthError, MemberRef
@@ -405,6 +407,69 @@ def test_member_suggestions_skips_jira_person_with_empty_display_name(
     assert data["suggestions"] == []
     # GitLab search must not have been called for a nameless Jira person.
     mock_gitlab.search_users.assert_not_awaited()
+
+
+def _make_jira_project_scope(
+    session_factory: sessionmaker[Session],
+    jira_connection_id: UUID,
+    project_key: str,
+) -> UUID:
+    with session_factory() as session:
+        scope = create_scope_definition(
+            session,
+            ScopeDefinitionCreate(
+                connection_id=jira_connection_id,
+                name=f"Project {project_key}",
+                scope_type=ScopeType.PROJECT,
+                external_ref={"key": project_key, "id": "10000"},
+                capabilities=["statuses"],
+            ),
+        )
+    return scope.id
+
+
+def test_member_suggestions_passes_project_keys_from_scope(
+    api_client: TestClient,
+    session_factory: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Project keys from the team's Jira project scopes are forwarded to list_recently_active_users."""
+    gl_id = _make_gitlab_connection(session_factory)
+    jira_id = _make_jira_connection(session_factory)
+    scope_id = _make_jira_project_scope(session_factory, jira_id, "ENG")
+    now = datetime.now(UTC)
+    with session_factory() as session:
+        team = TeamProfileTable(
+            name=f"Team {uuid4().hex[:8]}",
+            working_mode=WorkingMode.SCRUM,
+            connection_ids=[jira_id],
+            scope_ids=[scope_id],
+            signal_config_group_ids=[],
+            code_connection_id=gl_id,
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(team)
+        session.commit()
+        session.refresh(team)
+        team_id = team.id
+
+    mock_jira = _make_mock_jira_connector(recently_active=[])
+    mock_gitlab = _make_mock_gitlab_connector()
+
+    def fake_instantiate(session: object, cid: UUID, factory: object) -> object:
+        if cid == jira_id:
+            return mock_jira
+        return mock_gitlab
+
+    monkeypatch.setattr("em_radar_api.routers.teams.instantiate_connector", fake_instantiate)
+
+    resp = api_client.get(f"/api/teams/{team_id}/gitlab/member-suggestions")
+    assert resp.status_code == 200
+    # The connector must have been called with the team's project key.
+    mock_jira.list_recently_active_users.assert_awaited_once()
+    call_kwargs = mock_jira.list_recently_active_users.call_args.kwargs
+    assert call_kwargs.get("project_keys") == ["ENG"]
 
 
 def test_member_suggestions_uses_first_jira_connection(

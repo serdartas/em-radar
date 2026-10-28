@@ -461,19 +461,31 @@ class JiraConnector:
                 yield transition
 
     async def list_recently_active_users(
-        self, *, since: datetime, max_users: int = JIRA_ACTIVITY_MAX_USERS
+        self,
+        *,
+        since: datetime,
+        max_users: int = JIRA_ACTIVITY_MAX_USERS,
+        project_keys: list[str] | None = None,
     ) -> list[JiraPersonRef]:
         """Return recently active Jira users from issues updated at or after `since`.
 
         Scans assignees and reporters of recently updated issues. Deduplication is by
         account_id when present (Jira Cloud), falling back to displayName (Jira Server).
         Results are capped at `max_users`.
+
+        Pass `project_keys` to restrict the search to the team's configured Jira projects.
+        Without it the search covers all issues visible to the credential, which on shared
+        instances can exhaust the cap with users from unrelated teams.
         """
         max_users = max(1, max_users)
         seen_keys: set[str] = set()
         results: list[JiraPersonRef] = []
         since_str = since.strftime("%Y-%m-%d")
-        jql = f'updated >= "{since_str}" ORDER BY updated DESC'
+        if project_keys:
+            project_list = ", ".join(f'"{k}"' for k in project_keys)
+            jql = f'project in ({project_list}) AND updated >= "{since_str}" ORDER BY updated DESC'
+        else:
+            jql = f'updated >= "{since_str}" ORDER BY updated DESC'
 
         async for payload in self._request_paginated_issues(
             params={"jql": jql, "fields": "assignee,reporter"}

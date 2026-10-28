@@ -48,6 +48,7 @@ from em_radar_api.team_profiles import (
     TeamProfileRead,
     TeamProfileUpdate,
 )
+from em_radar_api.scope_definitions import ScopeDefinitionTable, ScopeType
 from em_radar_api.source_connections import ConnectorName, SourceConnectionTable
 from em_radar_core.connectors import (
     ConnectorAuthError,
@@ -749,9 +750,29 @@ async def gitlab_member_suggestions(
         now = datetime.now(UTC)
         since = now - timedelta(days=JIRA_ACTIVITY_WINDOW_DAYS)
 
+        # Collect project keys from the team's Jira project scopes so the JQL
+        # is restricted to issues the team actually owns. Without this filter,
+        # a shared Jira credential would search all visible issues and could
+        # exhaust the user cap with people from unrelated teams.
+        jira_project_keys: list[str] = []
+        if team_row.scope_ids:
+            scopes = session.exec(
+                select(ScopeDefinitionTable).where(ScopeDefinitionTable.id.in_(team_row.scope_ids))
+            ).all()
+            for scope in scopes:
+                if (
+                    scope.connection_id == jira_connection_id
+                    and scope.scope_type is ScopeType.PROJECT
+                ):
+                    key = scope.external_ref.get("key")
+                    if key:
+                        jira_project_keys.append(str(key))
+
         try:
             jira_people = await jira_connector.list_recently_active_users(
-                since=since, max_users=JIRA_ACTIVITY_MAX_USERS
+                since=since,
+                max_users=JIRA_ACTIVITY_MAX_USERS,
+                project_keys=jira_project_keys or None,
             )
         except ConnectorAuthError as error:
             raise HTTPException(

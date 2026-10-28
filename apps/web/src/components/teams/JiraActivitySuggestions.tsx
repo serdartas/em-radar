@@ -144,6 +144,11 @@ function SuggestionRow({
   )
 }
 
+/** Stable identity key for a suggestion — Jira account_id when available, else display_name. */
+function suggestionKey(s: MemberSuggestion): string {
+  return s.jira_person.account_id ?? s.jira_person.display_name ?? ""
+}
+
 /**
  * Panel that fetches Jira-activity-based GitLab member suggestions and lets the
  * user confirm which ones to add. Only confirmed suggestions are passed to `onAdd`
@@ -158,11 +163,13 @@ export function JiraActivitySuggestions({
   isSaving,
   onAdd,
 }: JiraActivitySuggestionsProps) {
-  // Track confirmed state per suggestion index.
-  const [confirmed, setConfirmed] = useState<Set<number>>(new Set())
-  // Track the user's candidate choice for uncertain suggestions (index → ref).
+  // Track confirmed state by stable Jira identity key (not array index) so a
+  // background refetch that reorders or shrinks the list cannot cause a different
+  // user to be added than the one the human confirmed.
+  const [confirmed, setConfirmed] = useState<Set<string>>(new Set())
+  // Track the user's candidate choice for uncertain suggestions (stable key → ref).
   const [candidateSelections, setCandidateSelections] = useState<
-    Map<number, GitLabMemberSearchResult>
+    Map<string, GitLabMemberSearchResult>
   >(new Map())
 
   const {
@@ -175,32 +182,32 @@ export function JiraActivitySuggestions({
     queryFn: () => getMemberSuggestions(teamId),
   })
 
-  function toggleConfirm(idx: number) {
+  function toggleConfirm(key: string) {
     setConfirmed((prev) => {
       const next = new Set(prev)
-      if (next.has(idx)) {
-        next.delete(idx)
+      if (next.has(key)) {
+        next.delete(key)
       } else {
-        next.add(idx)
+        next.add(key)
       }
       return next
     })
   }
 
-  function selectCandidate(idx: number, ref: GitLabMemberSearchResult | null) {
+  function selectCandidate(key: string, ref: GitLabMemberSearchResult | null) {
     setCandidateSelections((prev) => {
       const next = new Map(prev)
       if (ref === null) {
-        next.delete(idx)
+        next.delete(key)
       } else {
-        next.set(idx, ref)
+        next.set(key, ref)
       }
       return next
     })
     // Deconfirm when the selection changes so the user must re-confirm.
     setConfirmed((prev) => {
       const next = new Set(prev)
-      next.delete(idx)
+      next.delete(key)
       return next
     })
   }
@@ -208,11 +215,12 @@ export function JiraActivitySuggestions({
   function handleAddConfirmed() {
     if (isSaving || !data) return
     const toAdd: SuggestedMember[] = []
-    for (const idx of confirmed) {
-      const s = data.suggestions[idx]
+    for (const key of confirmed) {
+      // Look up by stable identity — if the suggestion disappeared in a refetch, skip it.
+      const s = data.suggestions.find((s) => suggestionKey(s) === key)
       if (s === undefined) continue
       const ref =
-        s.confidence === "high" ? s.match : (candidateSelections.get(idx) ?? null)
+        s.confidence === "high" ? s.match : (candidateSelections.get(key) ?? null)
       if (ref === null) continue
       const id = parseInt(ref.provider_user_id, 10)
       if (isNaN(id) || selectedIds.has(ref.provider_user_id)) continue
@@ -253,20 +261,21 @@ export function JiraActivitySuggestions({
         suggestions to add them as members.
       </p>
       <ul aria-label="Jira activity suggestions" className="space-y-2">
-        {data.suggestions.map((s, idx) => {
+        {data.suggestions.map((s) => {
+          const key = suggestionKey(s)
           const effectiveRef =
-            s.confidence === "high" ? s.match : (candidateSelections.get(idx) ?? null)
+            s.confidence === "high" ? s.match : (candidateSelections.get(key) ?? null)
           const alreadyAdded =
             effectiveRef !== null && selectedIds.has(effectiveRef.provider_user_id)
           return (
             <SuggestionRow
               alreadyAdded={alreadyAdded}
-              confirmed={confirmed.has(idx)}
+              confirmed={confirmed.has(key)}
               isSaving={isSaving}
-              key={idx}
-              onSelectCandidate={(ref) => selectCandidate(idx, ref)}
-              onToggleConfirm={() => toggleConfirm(idx)}
-              selectedCandidate={candidateSelections.get(idx) ?? null}
+              key={key}
+              onSelectCandidate={(ref) => selectCandidate(key, ref)}
+              onToggleConfirm={() => toggleConfirm(key)}
+              selectedCandidate={candidateSelections.get(key) ?? null}
               suggestion={s}
             />
           )
