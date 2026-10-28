@@ -4,6 +4,10 @@ import { useEffect, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 
 import { BulkMemberPaste, type ResolvedMember } from "@/components/teams/BulkMemberPaste"
+import {
+  JiraActivitySuggestions,
+  type SuggestedMember,
+} from "@/components/teams/JiraActivitySuggestions"
 import { Combobox, type ComboboxOption } from "@/components/ui/combobox"
 import { apiErrorMessage } from "@/lib/api"
 import {
@@ -86,6 +90,9 @@ export function GitLabMemberPicker({ teamId, connectionId }: GitLabMemberPickerP
 
   // Controls visibility of the bulk paste panel.
   const [showPastePanel, setShowPastePanel] = useState(false)
+
+  // Controls visibility of the Jira suggestions panel.
+  const [showSuggestPanel, setShowSuggestPanel] = useState(false)
 
   // Controls visibility of the group import panel.
   const [showGroupPanel, setShowGroupPanel] = useState(false)
@@ -269,6 +276,17 @@ export function GitLabMemberPicker({ teamId, connectionId }: GitLabMemberPickerP
     setShowPastePanel(false)
   }
 
+  function handleSuggestionsAdd(newMembers: SuggestedMember[]) {
+    if (isSaving || newMembers.length === 0) return
+    const existingIds = new Set(selectedMembers.map((m) => m.gitlab_user_id))
+    const fresh = newMembers.filter((m) => !existingIds.has(m.gitlab_user_id))
+    if (fresh.length === 0) return
+    const snapshot = [...selectedMembers]
+    const merged = [...selectedMembers, ...fresh]
+    setSelectedMembers(merged)
+    persistMembers({ members: merged, snapshot })
+  }
+
   function handleGroupSelect(value: string) {
     const group = groupSearchResults.find((g) => g.provider_group_id === value)
     if (!group) return
@@ -372,6 +390,16 @@ export function GitLabMemberPicker({ teamId, connectionId }: GitLabMemberPickerP
         >
           Import from group
         </button>
+        <button
+          aria-expanded={showSuggestPanel}
+          aria-label="Suggest members from Jira activity"
+          className="shrink-0 rounded-md border px-3 py-1.5 text-sm font-medium disabled:opacity-50"
+          disabled={isSaving}
+          onClick={() => setShowSuggestPanel((v) => !v)}
+          type="button"
+        >
+          Suggest from Jira
+        </button>
       </div>
       {showPastePanel && (
         <div className="rounded-md border p-3">
@@ -448,6 +476,17 @@ export function GitLabMemberPicker({ teamId, connectionId }: GitLabMemberPickerP
               )}
             </div>
           )}
+        </div>
+      )}
+      {showSuggestPanel && (
+        <div className="rounded-md border p-3">
+          <p className="mb-2 text-sm font-medium">Suggested GitLab members</p>
+          <JiraActivitySuggestions
+            isSaving={isSaving}
+            onAdd={handleSuggestionsAdd}
+            selectedIds={selectedIds}
+            teamId={teamId}
+          />
         </div>
       )}
       {mutationError && (

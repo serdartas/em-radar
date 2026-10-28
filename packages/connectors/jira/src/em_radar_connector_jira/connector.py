@@ -7,6 +7,7 @@ import hashlib
 import json
 import time
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import ClassVar, Literal, cast
 from uuid import UUID, uuid5
@@ -50,6 +51,10 @@ from em_radar_core.models import (
 
 CLIENT_FACTORY: Callable[..., httpx.AsyncClient] = httpx.AsyncClient
 PAGE_SIZE = 50
+# Default window for recently-active-user discovery (used by the member-suggestions endpoint).
+JIRA_ACTIVITY_WINDOW_DAYS: int = 90
+# Maximum number of unique Jira users returned by list_recently_active_users.
+JIRA_ACTIVITY_MAX_USERS: int = 50
 # 5-minute TTL keeps field metadata reasonably fresh without repeated Jira round-trips.
 _FIELD_CACHE_TTL = 300.0
 _field_discovery_cache: dict[str, tuple[list["JiraFieldInfo"], float]] = {}
@@ -76,6 +81,15 @@ _SYSTEM_ISSUE_FIELDS = (
     "duedate",
     _SPRINT_FIELD,
 )
+
+
+@dataclass(frozen=True)
+class JiraPersonRef:
+    """A Jira user encountered as assignee or reporter on a recently updated issue."""
+
+    display_name: str
+    email_address: str | None = None
+    account_id: str | None = None
 
 
 class JiraFieldMappingConfig(BaseModel):
@@ -446,6 +460,54 @@ class JiraConnector:
             for transition in _transitions_from_changelog(issue_key, histories, status_categories):
                 yield transition
 
+    async def list_recently_active_users(
+        self,
+        *,
+        since: datetime,
+        max_users: int = JIRA_ACTIVITY_MAX_USERS,
+        project_keys: list[str] | None = None,
+    ) -> list[JiraPersonRef]:
+        """Return recently active Jira users from issues updated at or after `since`.
+
+        Scans assignees and reporters of recently updated issues. Deduplication is by
+        account_id when present (Jira Cloud), falling back to displayName (Jira Server).
+        Results are capped at `max_users`.
+
+        Pass `project_keys` to restrict the search to the team's configured Jira projects.
+        Without it the search covers all issues visible to the credential, which on shared
+        instances can exhaust the cap with users from unrelated teams.
+        """
+        max_users = max(1, max_users)
+        seen_keys: set[str] = set()
+        results: list[JiraPersonRef] = []
+        since_str = since.strftime("%Y-%m-%d")
+        if project_keys:
+            project_list = ", ".join(f'"{k}"' for k in project_keys)
+            jql = f'project in ({project_list}) AND updated >= "{since_str}" ORDER BY updated DESC'
+        else:
+            jql = f'updated >= "{since_str}" ORDER BY updated DESC'
+
+        async for payload in self._request_paginated_issues(
+            params={"jql": jql, "fields": "assignee,reporter"}
+        ):
+            if len(results) >= max_users:
+                break
+            fields = payload.get("fields")
+            if not isinstance(fields, Mapping):
+                continue
+            for field_key in ("assignee", "reporter"):
+                user = fields.get(field_key)
+                if not isinstance(user, Mapping):
+                    continue
+                person = _jira_person_from_user_payload(user)
+                dedup_key = person.account_id or person.display_name
+                if dedup_key and dedup_key not in seen_keys:
+                    seen_keys.add(dedup_key)
+                    results.append(person)
+                    if len(results) >= max_users:
+                        break
+        return results
+
     async def close(self) -> None:
         await self._client.aclose()
 
@@ -623,6 +685,18 @@ class JiraConnector:
             if name is not None:
                 categories[_status_key(name)] = category
         return categories
+
+
+def _jira_person_from_user_payload(user: Mapping[str, object]) -> JiraPersonRef:
+    """Build a JiraPersonRef from a Jira user sub-object (assignee or reporter field)."""
+    display_name = _optional_str(user, "displayName") or _optional_str(user, "name") or ""
+    email_address = _optional_str(user, "emailAddress")
+    account_id = _optional_str(user, "accountId")
+    return JiraPersonRef(
+        display_name=display_name,
+        email_address=email_address,
+        account_id=account_id,
+    )
 
 
 def _authorization_header(config: JiraConnectorConfig) -> str:

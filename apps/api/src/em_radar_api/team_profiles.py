@@ -151,3 +151,41 @@ class RepositorySuggestionsResponse(SQLModel):
 
     window_days: int
     repositories: list[RepositoryActivityResult]
+
+
+# ---------------------------------------------------------------------------
+# Member suggestions (M9-15: Jira activity with confidence scoring)
+# ---------------------------------------------------------------------------
+
+
+class ConfidenceBand(StrEnum):
+    HIGH = "high"
+    UNCERTAIN = "uncertain"
+
+
+class JiraPersonRef(SQLModel):
+    """A Jira user encountered as assignee or reporter on a recently updated issue."""
+
+    display_name: str
+    email_address: str | None = None
+    account_id: str | None = None
+
+
+class MemberSuggestion(SQLModel):
+    """One Jira person with their GitLab match candidates and confidence score."""
+
+    jira_person: JiraPersonRef
+    match: MemberSearchResult | None = None
+    candidates: list[MemberSearchResult] = Field(default_factory=list)
+    confidence: ConfidenceBand
+
+
+class MemberSuggestionsResponse(SQLModel):
+    """Response envelope for the member-suggestions endpoint.
+
+    window_days is the Jira activity window used. suggestions is the list of
+    Jira-active people with their best GitLab match candidates.
+    """
+
+    window_days: int
+    suggestions: list[MemberSuggestion]

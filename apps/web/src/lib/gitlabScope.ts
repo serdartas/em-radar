@@ -305,3 +305,59 @@ export async function getRepositorySuggestions(
     `/teams/${teamId}/gitlab/repository-suggestions${qs ? `?${qs}` : ""}`,
   )
 }
+
+// ---------------------------------------------------------------------------
+// Member suggestions (M9-15: Jira activity with confidence scoring)
+// ---------------------------------------------------------------------------
+
+/**
+ * A Jira user encountered as assignee or reporter on a recently updated issue.
+ * Field names match the backend JiraPersonRef schema exactly.
+ */
+export interface JiraPersonRef {
+  display_name: string
+  email_address: string | null
+  account_id: string | null
+}
+
+/**
+ * Confidence band for a member suggestion.
+ *
+ * - high: exactly one GitLab user matched the Jira person's name.
+ * - uncertain: zero or multiple candidates; requires explicit selection.
+ */
+export type ConfidenceBand = "high" | "uncertain"
+
+/**
+ * One suggestion: a Jira person with their best GitLab match candidates and a
+ * confidence score. Field names match the backend MemberSuggestion schema exactly.
+ */
+export interface MemberSuggestion {
+  jira_person: JiraPersonRef
+  match: GitLabMemberSearchResult | null
+  candidates: GitLabMemberSearchResult[]
+  confidence: ConfidenceBand
+}
+
+/**
+ * Response envelope from the member-suggestions endpoint
+ * (GET /api/teams/{teamId}/gitlab/member-suggestions).
+ */
+export interface MemberSuggestionsResponse {
+  window_days: number
+  suggestions: MemberSuggestion[]
+}
+
+/**
+ * Fetch member suggestions derived from Jira activity for the team. Returns a
+ * list of Jira-active people with their best GitLab match candidates and
+ * confidence scores. Returns an empty suggestion list when the team has no Jira
+ * scope configured.
+ */
+export async function getMemberSuggestions(
+  teamId: string,
+): Promise<MemberSuggestionsResponse> {
+  return apiFetch<MemberSuggestionsResponse>(
+    `/teams/${teamId}/gitlab/member-suggestions`,
+  )
+}
