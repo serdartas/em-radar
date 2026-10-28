@@ -3,7 +3,7 @@
 // M9-15: Member suggestions from Jira activity with confidence scoring.
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { GitLabMemberPicker } from "@/components/teams/GitLabMemberPicker"
@@ -69,18 +69,6 @@ function suggestionsResponse(
   suggestions: typeof highConfidenceSuggestion[] | typeof uncertainSuggestion[] = [],
 ) {
   return { window_days: 90, suggestions }
-}
-
-const existingMember = {
-  id: "mbr-99",
-  team_profile_id: teamId,
-  connection_id: connectionId,
-  gitlab_user_id: 99,
-  username: "existing",
-  display_name: "Existing User",
-  verification_status: "verified",
-  created_at: "2026-01-01T00:00:00Z",
-  updated_at: "2026-01-01T00:00:00Z",
 }
 
 // ---------------------------------------------------------------------------
