@@ -50,7 +50,7 @@ const savedRepo201 = {
   id: "repo-1",
   team_profile_id: teamId,
   connection_id: connectionId,
-  gitlab_project_id: 201,
+  provider_project_id: "201",
   name: "frontend",
   path_with_namespace: "acme/frontend",
   verification_status: "verified",
@@ -227,7 +227,7 @@ describe("GitLabRepositoryPicker: explicit confirmation", () => {
     expect(checkbox).not.toBeChecked()
   })
 
-  it("confirming a suggestion sends PUT containing its gitlab_project_id", async () => {
+  it("confirming a suggestion sends PUT containing its provider_project_id", async () => {
     const fetchMock = mockApi({
       suggestions: suggestionsData,
       putResponse: [savedRepo201],
@@ -239,7 +239,7 @@ describe("GitLabRepositoryPicker: explicit confirmation", () => {
     })
     fireEvent.click(checkbox)
 
-    // PUT must have been sent with the confirmed repo's gitlab_project_id.
+    // PUT must have been sent with the confirmed repo's provider_project_id.
     await waitFor(() => {
       const putCalls = fetchMock.mock.calls.filter(
         (args) => (args[1] as RequestInit | undefined)?.method === "PUT",
@@ -247,8 +247,8 @@ describe("GitLabRepositoryPicker: explicit confirmation", () => {
       expect(putCalls).toHaveLength(1)
       const body = JSON.parse(
         (putCalls[0][1] as RequestInit).body as string,
-      ) as Array<{ gitlab_project_id: number }>
-      expect(body).toContainEqual({ gitlab_project_id: 201 })
+      ) as Array<{ provider_project_id: string }>
+      expect(body).toContainEqual({ provider_project_id: "201" })
     })
   })
 
@@ -318,7 +318,7 @@ describe("GitLabRepositoryPicker: add-repository autocomplete", () => {
       id: "repo-3",
       team_profile_id: teamId,
       connection_id: connectionId,
-      gitlab_project_id: 301,
+      provider_project_id: "301",
       name: "backend",
       path_with_namespace: "acme/backend",
       verification_status: "verified",
@@ -341,7 +341,7 @@ describe("GitLabRepositoryPicker: add-repository autocomplete", () => {
     await screen.findByRole("list", { name: "Confirmed repositories" })
     expect(screen.getByRole("button", { name: /Remove backend/ })).toBeInTheDocument()
 
-    // PUT must have been sent with the selected repo's gitlab_project_id.
+    // PUT must have been sent with the selected repo's provider_project_id.
     await waitFor(() => {
       const putCalls = fetchMock.mock.calls.filter(
         (args) => (args[1] as RequestInit | undefined)?.method === "PUT",
@@ -349,8 +349,8 @@ describe("GitLabRepositoryPicker: add-repository autocomplete", () => {
       expect(putCalls).toHaveLength(1)
       const body = JSON.parse(
         (putCalls[0][1] as RequestInit).body as string,
-      ) as Array<{ gitlab_project_id: number }>
-      expect(body).toContainEqual({ gitlab_project_id: 301 })
+      ) as Array<{ provider_project_id: string }>
+      expect(body).toContainEqual({ provider_project_id: "301" })
     })
   })
 
@@ -418,7 +418,7 @@ describe("GitLabRepositoryPicker: full replace set", () => {
     const savedRepo202 = {
       ...savedRepo201,
       id: "repo-2",
-      gitlab_project_id: 202,
+      provider_project_id: "202",
       name: "utils",
       path_with_namespace: "acme/utils",
     }
@@ -446,10 +446,10 @@ describe("GitLabRepositoryPicker: full replace set", () => {
       expect(putCalls).toHaveLength(1)
       const body = JSON.parse(
         (putCalls[0][1] as RequestInit).body as string,
-      ) as Array<{ gitlab_project_id: number }>
+      ) as Array<{ provider_project_id: string }>
       expect(body).toHaveLength(2)
-      expect(body).toContainEqual({ gitlab_project_id: 201 })
-      expect(body).toContainEqual({ gitlab_project_id: 202 })
+      expect(body).toContainEqual({ provider_project_id: "201" })
+      expect(body).toContainEqual({ provider_project_id: "202" })
     })
   })
 })
@@ -464,7 +464,7 @@ describe("GitLabRepositoryPicker: connection filter", () => {
       ...savedRepo201,
       id: "repo-stale",
       connection_id: "conn-OTHER",
-      gitlab_project_id: 999,
+      provider_project_id: "999",
       name: "stale-project",
       path_with_namespace: "acme/stale-project",
     }
@@ -472,7 +472,7 @@ describe("GitLabRepositoryPicker: connection filter", () => {
       id: "repo-3",
       team_profile_id: teamId,
       connection_id: connectionId,
-      gitlab_project_id: 301,
+      provider_project_id: "301",
       name: "backend",
       path_with_namespace: "acme/backend",
       verification_status: "verified",
@@ -503,10 +503,10 @@ describe("GitLabRepositoryPicker: connection filter", () => {
       expect(putCalls).toHaveLength(1)
       const body = JSON.parse(
         (putCalls[0][1] as RequestInit).body as string,
-      ) as Array<{ gitlab_project_id: number }>
-      expect(body).toContainEqual({ gitlab_project_id: 201 })
-      expect(body).toContainEqual({ gitlab_project_id: 301 })
-      expect(body).not.toContainEqual({ gitlab_project_id: 999 })
+      ) as Array<{ provider_project_id: string }>
+      expect(body).toContainEqual({ provider_project_id: "201" })
+      expect(body).toContainEqual({ provider_project_id: "301" })
+      expect(body).not.toContainEqual({ provider_project_id: "999" })
     })
   })
 })
@@ -615,7 +615,7 @@ describe("GitLabRepositoryPicker: connection change re-seed", () => {
       id: "repo-a",
       team_profile_id: teamId,
       connection_id: "conn-A",
-      gitlab_project_id: 101,
+      provider_project_id: "101",
       name: "repo-alpha",
       path_with_namespace: "acme/repo-alpha",
       verification_status: "verified",
@@ -626,7 +626,7 @@ describe("GitLabRepositoryPicker: connection change re-seed", () => {
       id: "repo-b",
       team_profile_id: teamId,
       connection_id: "conn-B",
-      gitlab_project_id: 202,
+      provider_project_id: "202",
       name: "repo-beta",
       path_with_namespace: "acme/repo-beta",
       verification_status: "verified",

@@ -20,7 +20,7 @@ const aliceMember = {
   id: "mbr-10",
   team_profile_id: teamId,
   connection_id: connectionId,
-  gitlab_user_id: 10,
+  provider_user_id: "10",
   username: "alice",
   display_name: "Alice",
   verification_status: "verified",
@@ -239,13 +239,13 @@ describe("BulkMemberPaste: only confirmed matches saved", () => {
       expect(putCalls).toHaveLength(1)
       const body = JSON.parse(
         (putCalls[0][1] as RequestInit).body as string,
-      ) as Array<{ gitlab_user_id: number }>
-      // alice (matched, provider_user_id "10" -> gitlab_user_id 10)
-      expect(body).toContainEqual({ gitlab_user_id: 10 })
-      // bsmith (chosen ambiguous, provider_user_id "20" -> gitlab_user_id 20)
-      expect(body).toContainEqual({ gitlab_user_id: 20 })
+      ) as Array<{ provider_user_id: string }>
+      // alice (matched, provider_user_id "10" -> provider_user_id 10)
+      expect(body).toContainEqual({ provider_user_id: "10" })
+      // bsmith (chosen ambiguous, provider_user_id "20" -> provider_user_id 20)
+      expect(body).toContainEqual({ provider_user_id: "20" })
       // unknown-person (unmatched) must NOT be present.
-      expect(body).not.toContainEqual({ gitlab_user_id: 21 })
+      expect(body).not.toContainEqual({ provider_user_id: "21" })
     })
   })
 })
@@ -305,7 +305,7 @@ describe("BulkMemberPaste: bulk add unions with existing selection", () => {
       id: "mbr-101",
       team_profile_id: teamId,
       connection_id: connectionId,
-      gitlab_user_id: 101,
+      provider_user_id: "101",
       username: "jsmith",
       display_name: "John Smith",
       verification_status: "verified",
@@ -354,9 +354,9 @@ describe("BulkMemberPaste: bulk add unions with existing selection", () => {
       expect(putCalls).toHaveLength(1)
       const body = JSON.parse(
         (putCalls[0][1] as RequestInit).body as string,
-      ) as Array<{ gitlab_user_id: number }>
-      expect(body).toContainEqual({ gitlab_user_id: 101 }) // jsmith
-      expect(body).toContainEqual({ gitlab_user_id: 10 }) // alice
+      ) as Array<{ provider_user_id: string }>
+      expect(body).toContainEqual({ provider_user_id: "101" }) // jsmith
+      expect(body).toContainEqual({ provider_user_id: "10" }) // alice
     })
   })
 })

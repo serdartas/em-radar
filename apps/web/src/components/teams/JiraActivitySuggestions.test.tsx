@@ -250,9 +250,9 @@ describe("JiraActivitySuggestions: high-confidence suggestion", () => {
     fireEvent.click(addBtn)
 
     expect(onAdd).toHaveBeenCalledOnce()
-    const called = onAdd.mock.calls[0][0] as { gitlab_user_id: number; username: string }[]
+    const called = onAdd.mock.calls[0][0] as { provider_user_id: string; username: string }[]
     expect(called).toHaveLength(1)
-    expect(called[0].gitlab_user_id).toBe(42)
+    expect(called[0].provider_user_id).toBe("42")
     expect(called[0].username).toBe("alice.smith")
   })
 
@@ -321,8 +321,8 @@ describe("JiraActivitySuggestions: uncertain suggestion", () => {
     fireEvent.click(addBtn)
 
     expect(onAdd).toHaveBeenCalledOnce()
-    const called = onAdd.mock.calls[0][0] as { gitlab_user_id: number; username: string }[]
-    expect(called[0].gitlab_user_id).toBe(10)
+    const called = onAdd.mock.calls[0][0] as { provider_user_id: string; username: string }[]
+    expect(called[0].provider_user_id).toBe("10")
     expect(called[0].username).toBe("bob.j")
   })
 })
@@ -385,10 +385,10 @@ describe("JiraActivitySuggestions: mixed confidence list", () => {
     fireEvent.click(addBtn)
 
     expect(onAdd).toHaveBeenCalledOnce()
-    const called = onAdd.mock.calls[0][0] as { gitlab_user_id: number }[]
+    const called = onAdd.mock.calls[0][0] as { provider_user_id: string }[]
     expect(called).toHaveLength(2)
-    const ids = called.map((m) => m.gitlab_user_id)
-    expect(ids).toContain(42)
-    expect(ids).toContain(10)
+    const ids = called.map((m) => m.provider_user_id)
+    expect(ids).toContain("42")
+    expect(ids).toContain("10")
   })
 })

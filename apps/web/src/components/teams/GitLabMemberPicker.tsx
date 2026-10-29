@@ -24,7 +24,7 @@ import {
 /** In-memory representation of a selected member — normalises the two
  *  source shapes (search result vs. saved member) into one. */
 interface LocalMember {
-  gitlab_user_id: number
+  provider_user_id: string
   username: string
   display_name: string | null
 }
@@ -48,7 +48,7 @@ function memberLabel(m: { username: string; display_name: string | null }): stri
 
 function savedMemberToLocal(m: TeamGitLabMember): LocalMember {
   return {
-    gitlab_user_id: m.gitlab_user_id,
+    provider_user_id: m.provider_user_id,
     username: m.username,
     display_name: m.display_name,
   }
@@ -147,8 +147,8 @@ export function GitLabMemberPicker({ teamId, connectionId }: GitLabMemberPickerP
       )
       setSeededConnectionId(connectionId)
     } else {
-      const savedIds = new Set(savedMembers.map((m) => m.gitlab_user_id))
-      setSelectedMembers((prev) => prev.filter((m) => savedIds.has(m.gitlab_user_id)))
+      const savedIds = new Set(savedMembers.map((m) => m.provider_user_id))
+      setSelectedMembers((prev) => prev.filter((m) => savedIds.has(m.provider_user_id)))
     }
   }, [savedMembers, connectionId, seededConnectionId])
 
@@ -190,7 +190,7 @@ export function GitLabMemberPicker({ teamId, connectionId }: GitLabMemberPickerP
     mutationFn: ({ members }) =>
       replaceGitLabMembers(
         teamId,
-        members.map((m) => ({ gitlab_user_id: m.gitlab_user_id })),
+        members.map((m) => ({ provider_user_id: m.provider_user_id })),
       ),
     onSuccess: (data) => {
       // Reconcile from the authoritative response so server normalisation and
@@ -216,7 +216,7 @@ export function GitLabMemberPicker({ teamId, connectionId }: GitLabMemberPickerP
   })
 
   // Build combobox options from search results, excluding already-selected members.
-  const selectedIds = new Set(selectedMembers.map((m) => String(m.gitlab_user_id)))
+  const selectedIds = new Set(selectedMembers.map((m) => m.provider_user_id))
   const options: ComboboxOption[] = searchResults
     .filter((r) => !selectedIds.has(r.provider_user_id))
     .map((r) => ({
@@ -242,12 +242,10 @@ export function GitLabMemberPicker({ teamId, connectionId }: GitLabMemberPickerP
     const result = searchResults.find((r) => r.provider_user_id === value)
     if (!result) return
 
-    const gitlabUserId = parseInt(value, 10)
-    if (isNaN(gitlabUserId)) return
-    if (selectedIds.has(String(gitlabUserId))) return
+    if (selectedIds.has(value)) return
 
     const newMember: LocalMember = {
-      gitlab_user_id: gitlabUserId,
+      provider_user_id: value,
       username: result.username,
       display_name: result.display_name || null,
     }
@@ -264,18 +262,18 @@ export function GitLabMemberPicker({ teamId, connectionId }: GitLabMemberPickerP
     setComboboxKey((k) => k + 1)
   }
 
-  function handleRemove(gitlabUserId: number) {
+  function handleRemove(providerUserId: string) {
     if (isSaving) return
     const snapshot = [...selectedMembers]
-    const newMembers = selectedMembers.filter((m) => m.gitlab_user_id !== gitlabUserId)
+    const newMembers = selectedMembers.filter((m) => m.provider_user_id !== providerUserId)
     setSelectedMembers(newMembers)
     persistMembers({ members: newMembers, snapshot })
   }
 
   function handleBulkAdd(newMembers: ResolvedMember[]) {
     if (isSaving || newMembers.length === 0) return
-    const existingIds = new Set(selectedMembers.map((m) => m.gitlab_user_id))
-    const fresh = newMembers.filter((m) => !existingIds.has(m.gitlab_user_id))
+    const existingIds = new Set(selectedMembers.map((m) => m.provider_user_id))
+    const fresh = newMembers.filter((m) => !existingIds.has(m.provider_user_id))
     if (fresh.length === 0) return
     const snapshot = [...selectedMembers]
     const merged = [...selectedMembers, ...fresh]
@@ -286,8 +284,8 @@ export function GitLabMemberPicker({ teamId, connectionId }: GitLabMemberPickerP
 
   function handleSuggestionsAdd(newMembers: SuggestedMember[]) {
     if (isSaving || newMembers.length === 0) return
-    const existingIds = new Set(selectedMembers.map((m) => m.gitlab_user_id))
-    const fresh = newMembers.filter((m) => !existingIds.has(m.gitlab_user_id))
+    const existingIds = new Set(selectedMembers.map((m) => m.provider_user_id))
+    const fresh = newMembers.filter((m) => !existingIds.has(m.provider_user_id))
     if (fresh.length === 0) return
     const snapshot = [...selectedMembers]
     const merged = [...selectedMembers, ...fresh]
@@ -319,14 +317,13 @@ export function GitLabMemberPicker({ teamId, connectionId }: GitLabMemberPickerP
 
   function handleAddGroupMembers() {
     if (isSaving) return
-    const existingIds = new Set(selectedMembers.map((m) => m.gitlab_user_id))
+    const existingIds = new Set(selectedMembers.map((m) => m.provider_user_id))
     const toAdd: LocalMember[] = []
     for (const m of groupMembers) {
       if (!checkedCandidates.has(m.provider_user_id)) continue
-      const id = parseInt(m.provider_user_id, 10)
-      if (isNaN(id) || existingIds.has(id)) continue
+      if (existingIds.has(m.provider_user_id)) continue
       toAdd.push({
-        gitlab_user_id: id,
+        provider_user_id: m.provider_user_id,
         username: m.username,
         display_name: m.display_name || null,
       })
@@ -506,7 +503,7 @@ export function GitLabMemberPicker({ teamId, connectionId }: GitLabMemberPickerP
         <ul aria-label="Selected GitLab members" className="space-y-1">
           {selectedMembers.map((m) => (
             <li
-              key={m.gitlab_user_id}
+              key={m.provider_user_id}
               className="flex items-center justify-between rounded-md border px-3 py-1.5 text-sm"
             >
               <span>{memberLabel(m)}</span>
@@ -514,7 +511,7 @@ export function GitLabMemberPicker({ teamId, connectionId }: GitLabMemberPickerP
                 aria-label={`Remove ${m.display_name ?? m.username}`}
                 className="ml-2 text-slate-400 hover:text-slate-700 disabled:opacity-50"
                 disabled={isSaving}
-                onClick={() => handleRemove(m.gitlab_user_id)}
+                onClick={() => handleRemove(m.provider_user_id)}
                 type="button"
               >
                 &times;

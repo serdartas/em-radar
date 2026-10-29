@@ -22,6 +22,7 @@ If you can implement the interfaces in §6 and register your connector per §11,
 - **Provider.** A capability mixin (e.g. `WorkItemProvider`, `MergeRequestProvider`). A connector declares which providers it implements.
 - **Capability.** A boolean flag describing what the connector can do. Used by the engine to decide which signals to evaluate for which sources.
 - **Normalization.** Transformation from source-specific payloads into [canonical models](./05-data-model.md). All normalization happens inside the connector.
+- **Stable provider id.** Both `provider_user_id` (on `MemberRef`) and `provider_project_id` (on `RepositoryRef`) are opaque, stable, provider-assigned strings scoped to one connector instance. They are the keys stored in the team-scope tables and passed back verbatim to connector methods (`get_user`, `get_project`, `discover_repositories_by_activity`). A connector must never change these values for the same entity between calls. The same numeric id from two different GitLab instances, or a GitHub node ID vs a GitLab integer, are all valid distinct strings — the engine never interprets them.
 
 ## 3. Connector Lifecycle
 
@@ -270,29 +271,6 @@ The team does not persist a repository selection in MVP. At report time, the run
 repository accessible through the team's whole code connection and supplies those IDs to
 `MergeRequestScope`.
 
-`search_projects`, `get_project`, and `discover_repositories_by_activity` support team setup (M9):
-the UI can search repositories by name, resolve a single repository, or discover the repositories a
-set of team members have contributed to within a window. They return lightweight repository
-references rather than full `Repository` payloads.
-
-```python
-@dataclass(frozen=True)
-class RepositoryRef:
-    provider_project_id: str        # stable, provider-assigned identifier
-    name: str
-    path_with_namespace: str
-
-@dataclass(frozen=True)
-class RepositoryActivity(RepositoryRef):
-    contributing_member_count: int
-    merge_request_count: int
-    last_activity_at: datetime
-```
-
-`discover_repositories_by_activity` takes the provider-side user IDs returned by the
-`MemberProvider` (§6.7), so member discovery and repository discovery compose without leaking
-source-specific identifiers into the engine.
-
 ### 6.4 `ReviewProvider` (optional)
 
 ```python
@@ -335,7 +313,6 @@ class CommentProvider(Protocol):
 class MemberProvider(Protocol):
     async def search_users(self, query: str, *, limit: int) -> list[MemberRef]: ...
     async def get_user(self, provider_user_id: str) -> MemberRef | None: ...
-    async def list_group_members(self, group_id: str, *, limit: int) -> list[MemberRef]: ...
 ```
 
 `MemberRef`:
@@ -343,24 +320,97 @@ class MemberProvider(Protocol):
 ```python
 @dataclass(frozen=True)
 class MemberRef:
-    provider_user_id: str           # stable, provider-assigned identifier
+    provider_user_id: str           # stable, opaque, provider-assigned identifier (see §2)
     username: str
     display_name: str
     avatar_url: str | None = None
 ```
 
 Connectors that can resolve people set `provides_members=True`. `search_users` backs member search
-during team setup (M9), `get_user` resolves a single member by stable ID, and `list_group_members`
-enumerates the members of a provider group so a whole team can be added at once. The stable
-`provider_user_id` is the key later passed to `discover_repositories_by_activity` (§6.3).
+during team setup, `get_user` resolves a single member by its stable `provider_user_id`. The stable
+`provider_user_id` string is stored in the team-scope table and passed verbatim to
+`RepositoryActivityProvider.discover_repositories_by_activity` (§6.10).
 
-All member and repository discovery methods (§6.3 and §6.7) are **server-side** — the source system
-performs the search or enumeration — and are **paginated or limited** via the `limit` argument. They
-must respect the connector token's permissions: entities the token cannot access are omitted and
-handled gracefully, never treated as nonexistent or surfaced as errors. These methods must never
-require downloading the whole instance to answer a query. They form the shared discovery contract
-that both the GitLab connector and a future GitHub connector implement identically, keeping team
-setup provider-agnostic.
+### 6.8 `GroupMemberProvider` (optional)
+
+```python
+class GroupMemberProvider(Protocol):
+    async def search_groups(self, query: str, *, limit: int) -> list[GroupRef]: ...
+    async def list_group_members(self, group_id_or_path: str, *, limit: int) -> list[MemberRef]: ...
+```
+
+`GroupRef`:
+
+```python
+@dataclass(frozen=True)
+class GroupRef:
+    provider_group_id: str
+    name: str
+    full_path: str
+```
+
+Connectors that expose group/org concepts implement `GroupMemberProvider`. The UI offers "import candidates from group" — the group's users become candidates the user explicitly confirms (never auto-added).
+
+### 6.9 `RepositorySearchProvider` (optional)
+
+```python
+class RepositorySearchProvider(Protocol):
+    async def search_projects(self, query: str, *, limit: int) -> list[RepositoryRef]: ...
+    async def get_project(self, provider_project_id: str) -> RepositoryRef | None: ...
+```
+
+`RepositoryRef` (shared with §6.10 and §6.11):
+
+```python
+@dataclass(frozen=True)
+class RepositoryRef:
+    provider_project_id: str        # stable, opaque, provider-assigned identifier (see §2)
+    name: str
+    path_with_namespace: str
+    is_archived: bool = False       # True when the repository is read-only/archived
+```
+
+Backs repository search and single-project lookup during team setup. `search_projects` backs the search autocomplete; `get_project` validates and refreshes a single repository by its stable `provider_project_id`.
+
+### 6.10 `RepositoryActivityProvider` (optional)
+
+```python
+class RepositoryActivityProvider(Protocol):
+    async def discover_repositories_by_activity(
+        self,
+        member_provider_user_ids: list[str],
+        *,
+        since: datetime,
+        limit: int,
+    ) -> list[RepositoryActivity]: ...
+```
+
+`RepositoryActivity`:
+
+```python
+@dataclass(frozen=True)
+class RepositoryActivity(RepositoryRef):
+    contributing_member_count: int
+    merge_request_count: int
+    last_activity_at: datetime
+```
+
+Accepts the same `provider_user_id` strings that `MemberProvider.get_user` returns, so member discovery and repository discovery compose without any provider-specific conversion inside the engine. Results are ranked strongest-first by the caller.
+
+### 6.11 `UserIdentityProvider` (optional)
+
+```python
+class UserIdentityProvider(Protocol):
+    def canonical_user_id(self, provider_user_id: str) -> UUID: ...
+```
+
+Maps a stored `provider_user_id` to the canonical `UUID` that `MergeRequest.author_id` carries. The report runner calls this when evaluating authored-scope MR signals (team-authored activity) so the evaluator never imports from a connector and the signal engine stays source-agnostic.
+
+---
+
+All discovery methods (§6.7–§6.10) are **server-side** — the source performs the search or enumeration — and are **paginated or limited** via the `limit` argument. They must respect the connector token's permissions: entities the token cannot access are omitted, never treated as nonexistent or surfaced as errors. These methods must never require downloading the whole instance to answer a query.
+
+§6.7–§6.11 together form the shared team-scope discovery contract. Both the GitLab connector and a future GitHub connector implement them identically, with no provider-specific logic in the engine. This is the abstraction that makes team member and repository scope provider-agnostic (§2 principle 7, §26).
 
 ## 7. Authentication
 

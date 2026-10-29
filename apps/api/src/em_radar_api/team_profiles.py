@@ -62,7 +62,7 @@ class TeamGitLabMemberRead(SQLModel):
     id: UUID
     team_profile_id: UUID
     connection_id: UUID | None
-    gitlab_user_id: int
+    provider_user_id: str
     username: str
     display_name: str | None
     verification_status: ScopeVerificationStatus
@@ -74,7 +74,7 @@ class TeamGitLabRepositoryRead(SQLModel):
     id: UUID
     team_profile_id: UUID
     connection_id: UUID | None
-    gitlab_project_id: int
+    provider_project_id: str
     name: str
     path_with_namespace: str
     verification_status: ScopeVerificationStatus
@@ -83,11 +83,11 @@ class TeamGitLabRepositoryRead(SQLModel):
 
 
 class GitLabMemberInput(SQLModel):
-    gitlab_user_id: int
+    provider_user_id: str
 
 
 class GitLabRepositoryInput(SQLModel):
-    gitlab_project_id: int
+    provider_project_id: str
 
 
 class MemberSearchResult(SQLModel):

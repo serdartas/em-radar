@@ -30,7 +30,7 @@ const DISCOVERY_DEFAULT_WINDOW_DAYS = 90
 /** In-memory representation of a confirmed repository — normalises the two
  *  source shapes (search result vs. saved repository) into one. */
 interface LocalRepo {
-  gitlab_project_id: number
+  provider_project_id: string
   name: string
   path_with_namespace: string
 }
@@ -50,7 +50,7 @@ export interface GitLabRepositoryPickerProps {
 
 function savedRepoToLocal(r: TeamGitLabRepository): LocalRepo {
   return {
-    gitlab_project_id: r.gitlab_project_id,
+    provider_project_id: r.provider_project_id,
     name: r.name,
     path_with_namespace: r.path_with_namespace,
   }
@@ -169,8 +169,8 @@ export function GitLabRepositoryPicker({ connectionId, teamId }: GitLabRepositor
       )
       setSeededConnectionId(connectionId)
     } else {
-      const savedIds = new Set(savedRepos.map((r) => r.gitlab_project_id))
-      setSelectedRepos((prev) => prev.filter((r) => savedIds.has(r.gitlab_project_id)))
+      const savedIds = new Set(savedRepos.map((r) => r.provider_project_id))
+      setSelectedRepos((prev) => prev.filter((r) => savedIds.has(r.provider_project_id)))
     }
   }, [savedRepos, connectionId, seededConnectionId])
 
@@ -206,7 +206,7 @@ export function GitLabRepositoryPicker({ connectionId, teamId }: GitLabRepositor
     mutationFn: ({ repos }) =>
       replaceGitLabRepositories(
         teamId,
-        repos.map((r) => ({ gitlab_project_id: r.gitlab_project_id })),
+        repos.map((r) => ({ provider_project_id: r.provider_project_id })),
       ),
     onError: (err, { snapshot }) => {
       // Roll back the optimistic update so a failed write never looks successful.
@@ -239,7 +239,7 @@ export function GitLabRepositoryPicker({ connectionId, teamId }: GitLabRepositor
     )
   }
 
-  const selectedIds = new Set(selectedRepos.map((r) => String(r.gitlab_project_id)))
+  const selectedIds = new Set(selectedRepos.map((r) => r.provider_project_id))
 
   // Exclude already-confirmed repos from suggestions so they do not appear as checkboxes.
   const unconfirmedSuggestions = suggestions.filter(
@@ -269,10 +269,9 @@ export function GitLabRepositoryPicker({ connectionId, teamId }: GitLabRepositor
   function handleConfirmSuggestion(suggestion: RepositoryActivityResult) {
     // Serialize writes: ignore edits while a replace PUT is in flight.
     if (isSaving) return
-    const projectId = parseInt(suggestion.provider_project_id, 10)
-    if (isNaN(projectId) || selectedIds.has(suggestion.provider_project_id)) return
+    if (selectedIds.has(suggestion.provider_project_id)) return
     addRepo({
-      gitlab_project_id: projectId,
+      provider_project_id: suggestion.provider_project_id,
       name: suggestion.name,
       path_with_namespace: suggestion.path_with_namespace,
     })
@@ -286,10 +285,9 @@ export function GitLabRepositoryPicker({ connectionId, teamId }: GitLabRepositor
     // to a known result to guard against unexpected calls.
     const result = searchResults.find((r) => r.provider_project_id === value)
     if (!result) return
-    const projectId = parseInt(value, 10)
-    if (isNaN(projectId) || selectedIds.has(value)) return
+    if (selectedIds.has(value)) return
     addRepo({
-      gitlab_project_id: projectId,
+      provider_project_id: value,
       name: result.name,
       path_with_namespace: result.path_with_namespace,
     })
@@ -299,10 +297,10 @@ export function GitLabRepositoryPicker({ connectionId, teamId }: GitLabRepositor
     setComboboxKey((k) => k + 1)
   }
 
-  function handleRemove(projectId: number) {
+  function handleRemove(projectId: string) {
     if (isSaving) return
     const snapshot = [...selectedRepos]
-    const newRepos = selectedRepos.filter((r) => r.gitlab_project_id !== projectId)
+    const newRepos = selectedRepos.filter((r) => r.provider_project_id !== projectId)
     setSelectedRepos(newRepos)
     persistRepos({ repos: newRepos, snapshot })
   }
@@ -314,7 +312,7 @@ export function GitLabRepositoryPicker({ connectionId, teamId }: GitLabRepositor
         <ul aria-label="Confirmed repositories" className="space-y-1">
           {selectedRepos.map((r) => (
             <li
-              key={r.gitlab_project_id}
+              key={r.provider_project_id}
               className="flex items-center justify-between rounded-md border px-3 py-1.5 text-sm"
             >
               <span>
@@ -325,7 +323,7 @@ export function GitLabRepositoryPicker({ connectionId, teamId }: GitLabRepositor
                 aria-label={`Remove ${r.name}`}
                 className="ml-2 text-slate-400 hover:text-slate-700 disabled:opacity-50"
                 disabled={isSaving}
-                onClick={() => handleRemove(r.gitlab_project_id)}
+                onClick={() => handleRemove(r.provider_project_id)}
                 type="button"
               >
                 &times;

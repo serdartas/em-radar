@@ -10,7 +10,7 @@ import {
 } from "@/lib/gitlabScope"
 
 export interface ResolvedMember {
-  gitlab_user_id: number
+  provider_user_id: string
   username: string
   display_name: string | null
 }
@@ -27,10 +27,8 @@ export interface BulkMemberPasteProps {
   onAdd: (members: ResolvedMember[]) => void
 }
 
-function toResolved(r: GitLabMemberSearchResult): ResolvedMember | null {
-  const id = parseInt(r.provider_user_id, 10)
-  if (isNaN(id)) return null
-  return { gitlab_user_id: id, username: r.username, display_name: r.display_name || null }
+function toResolved(r: GitLabMemberSearchResult): ResolvedMember {
+  return { provider_user_id: r.provider_user_id, username: r.username, display_name: r.display_name || null }
 }
 
 function parseEntries(raw: string): string[] {
@@ -113,8 +111,7 @@ export function BulkMemberPaste({ teamId, disabled, onAdd }: BulkMemberPasteProp
       const source =
         r.status === "matched" ? r.match : r.status === "ambiguous" ? choices[index] : null
       if (!source) return
-      const member = toResolved(source)
-      if (member) confirmed.push(member)
+      confirmed.push(toResolved(source))
     })
     return confirmed
   }

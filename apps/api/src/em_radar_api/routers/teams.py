@@ -182,17 +182,17 @@ async def replace_gitlab_members(
     team_row = session.get(TeamProfileTable, team_id)
     if team_row is None:
         raise _team_not_found()
-    connector = _require_gitlab_connector(session, team_row)
+    connector = _require_code_connector(session, team_row)
     try:
         if not isinstance(connector, MemberProvider):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="GitLab connector does not support member lookup",
+                detail="Code connector does not support member lookup",
             )
-        resolved: list[tuple[int, str, str | None]] = []
+        resolved: list[tuple[str, str, str | None]] = []
         for item in body:
             try:
-                ref = await connector.get_user(str(item.gitlab_user_id))
+                ref = await connector.get_user(item.provider_user_id)
             except ConnectorAuthError as error:
                 raise HTTPException(
                     status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)
@@ -204,12 +204,12 @@ async def replace_gitlab_members(
             if ref is None:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                    detail=f"GitLab user id {item.gitlab_user_id} not found",
+                    detail=f"Provider user id {item.provider_user_id} not found",
                 )
-            resolved.append((item.gitlab_user_id, ref.username, ref.display_name))
+            resolved.append((item.provider_user_id, ref.username, ref.display_name))
         # De-duplicate by stable id (keep first occurrence) so a repeated id in the request
-        # cannot violate the (team, gitlab_user_id) unique constraint.
-        deduped: dict[int, tuple[int, str, str | None]] = {}
+        # cannot violate the (team, provider_user_id) unique constraint.
+        deduped: dict[str, tuple[str, str, str | None]] = {}
         for entry in resolved:
             deduped.setdefault(entry[0], entry)
         now = datetime.now(UTC)
@@ -224,11 +224,11 @@ async def replace_gitlab_members(
             # set does not collide with the not-yet-flushed delete under the unique constraint.
             session.flush()
             result_rows: list[TeamGitLabMemberTable] = []
-            for gitlab_user_id, username, display_name in deduped.values():
+            for provider_user_id, username, display_name in deduped.values():
                 row = TeamGitLabMemberTable(
                     team_profile_id=team_id,
                     connection_id=team_row.code_connection_id,
-                    gitlab_user_id=gitlab_user_id,
+                    provider_user_id=provider_user_id,
                     username=username,
                     display_name=display_name,
                     verification_status=ScopeVerificationStatus.VERIFIED,
@@ -277,17 +277,17 @@ async def replace_gitlab_repositories(
     team_row = session.get(TeamProfileTable, team_id)
     if team_row is None:
         raise _team_not_found()
-    connector = _require_gitlab_connector(session, team_row)
+    connector = _require_code_connector(session, team_row)
     try:
         if not isinstance(connector, RepositorySearchProvider):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="GitLab connector does not support project lookup",
+                detail="Code connector does not support project lookup",
             )
-        resolved: list[tuple[int, str, str]] = []
+        resolved: list[tuple[str, str, str]] = []
         for item in body:
             try:
-                ref = await connector.get_project(str(item.gitlab_project_id))
+                ref = await connector.get_project(item.provider_project_id)
             except ConnectorAuthError as error:
                 raise HTTPException(
                     status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)
@@ -299,12 +299,12 @@ async def replace_gitlab_repositories(
             if ref is None:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                    detail=f"GitLab project id {item.gitlab_project_id} not found",
+                    detail=f"Provider project id {item.provider_project_id} not found",
                 )
-            resolved.append((item.gitlab_project_id, ref.name, ref.path_with_namespace))
+            resolved.append((item.provider_project_id, ref.name, ref.path_with_namespace))
         # De-duplicate by stable id (keep first occurrence) so a repeated id in the request
-        # cannot violate the (team, gitlab_project_id) unique constraint.
-        deduped: dict[int, tuple[int, str, str]] = {}
+        # cannot violate the (team, provider_project_id) unique constraint.
+        deduped: dict[str, tuple[str, str, str]] = {}
         for entry in resolved:
             deduped.setdefault(entry[0], entry)
         now = datetime.now(UTC)
@@ -319,11 +319,11 @@ async def replace_gitlab_repositories(
             # set does not collide with the not-yet-flushed delete under the unique constraint.
             session.flush()
             result_rows: list[TeamGitLabRepositoryTable] = []
-            for gitlab_project_id, name, path_with_namespace in deduped.values():
+            for provider_project_id, name, path_with_namespace in deduped.values():
                 row = TeamGitLabRepositoryTable(
                     team_profile_id=team_id,
                     connection_id=team_row.code_connection_id,
-                    gitlab_project_id=gitlab_project_id,
+                    provider_project_id=provider_project_id,
                     name=name,
                     path_with_namespace=path_with_namespace,
                     verification_status=ScopeVerificationStatus.VERIFIED,
@@ -359,12 +359,12 @@ async def gitlab_member_search(
     team_row = session.get(TeamProfileTable, team_id)
     if team_row is None:
         raise _team_not_found()
-    connector = _require_gitlab_connector(session, team_row)
+    connector = _require_code_connector(session, team_row)
     try:
         if not isinstance(connector, MemberProvider):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="GitLab connector does not support member search",
+                detail="Code connector does not support member search",
             )
         capped = min(limit, _MEMBER_SEARCH_MAX_LIMIT)
         try:
@@ -407,12 +407,12 @@ async def gitlab_member_bulk_resolve(
     team_row = session.get(TeamProfileTable, team_id)
     if team_row is None:
         raise _team_not_found()
-    connector = _require_gitlab_connector(session, team_row)
+    connector = _require_code_connector(session, team_row)
     try:
         if not isinstance(connector, MemberProvider):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="GitLab connector does not support member search",
+                detail="Code connector does not support member search",
             )
         results: list[MemberResolveResult] = []
         for entry in body.entries:
@@ -485,7 +485,7 @@ async def gitlab_project_search(
     team_row = session.get(TeamProfileTable, team_id)
     if team_row is None:
         raise _team_not_found()
-    connector = _require_gitlab_connector(session, team_row)
+    connector = _require_code_connector(session, team_row)
     try:
         if not isinstance(connector, RepositorySearchProvider):
             raise HTTPException(
@@ -534,7 +534,7 @@ async def gitlab_group_search(
     team_row = session.get(TeamProfileTable, team_id)
     if team_row is None:
         raise _team_not_found()
-    connector = _require_gitlab_connector(session, team_row)
+    connector = _require_code_connector(session, team_row)
     try:
         if not isinstance(connector, GroupMemberProvider):
             raise HTTPException(
@@ -578,7 +578,7 @@ async def gitlab_group_members(
     team_row = session.get(TeamProfileTable, team_id)
     if team_row is None:
         raise _team_not_found()
-    connector = _require_gitlab_connector(session, team_row)
+    connector = _require_code_connector(session, team_row)
     try:
         if not isinstance(connector, GroupMemberProvider):
             raise HTTPException(
@@ -644,18 +644,18 @@ async def gitlab_repository_suggestions(
         return RepositorySuggestionsResponse(
             window_days=DISCOVERY_DEFAULT_WINDOW_DAYS, repositories=[]
         )
-    connector = _require_gitlab_connector(session, team_row)
+    connector = _require_code_connector(session, team_row)
     try:
         if not isinstance(connector, RepositoryActivityProvider):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="GitLab connector does not support repository discovery",
+                detail="Code connector does not support repository discovery",
             )
         capped = min(limit, _SUGGESTION_MAX_LIMIT)
         # Fetch at least the widening threshold so a small caller limit cannot force a needless
         # widen (the connector caps its output at the requested limit); slice to `capped` after.
         discover_limit = max(capped, DISCOVERY_MIN_CANDIDATES)
-        member_ids = [str(m.gitlab_user_id) for m in saved_members]
+        member_ids = [m.provider_user_id for m in saved_members]
         now = datetime.now(UTC)
 
         async def _discover(window: int) -> list[RepositoryActivity]:
@@ -737,13 +737,13 @@ async def gitlab_member_suggestions(
     if jira_connector is None:
         return MemberSuggestionsResponse(window_days=JIRA_ACTIVITY_WINDOW_DAYS, suggestions=[])
 
-    gitlab_connector = _require_gitlab_connector(session, team_row)
+    gitlab_connector = _require_code_connector(session, team_row)
 
     try:
         if not isinstance(gitlab_connector, MemberProvider):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="GitLab connector does not support member search",
+                detail="Code connector does not support member search",
             )
         if not hasattr(jira_connector, "list_recently_active_users"):
             return MemberSuggestionsResponse(window_days=JIRA_ACTIVITY_WINDOW_DAYS, suggestions=[])
@@ -878,7 +878,7 @@ async def verify_gitlab_config(
     try:
         if team_row.code_connection_id is not None:
             try:
-                connector = _require_gitlab_connector(session, team_row)
+                connector = _require_code_connector(session, team_row)
             except HTTPException:
                 pass  # Connector unavailable; only instance-mismatch entries are updated below.
 
@@ -888,7 +888,7 @@ async def verify_gitlab_config(
                 member_row.updated_at = now
             elif connector is not None and isinstance(connector, MemberProvider):
                 try:
-                    ref = await connector.get_user(str(member_row.gitlab_user_id))
+                    ref = await connector.get_user(member_row.provider_user_id)
                 except ConnectorError:
                     pass  # Transient error; leave current status unchanged.
                 else:
@@ -906,7 +906,7 @@ async def verify_gitlab_config(
                 repo_row.updated_at = now
             elif connector is not None and isinstance(connector, RepositorySearchProvider):
                 try:
-                    ref = await connector.get_project(str(repo_row.gitlab_project_id))
+                    ref = await connector.get_project(repo_row.provider_project_id)
                 except ConnectorError:
                     pass  # Transient error; leave current status unchanged.
                 else:
@@ -1012,17 +1012,23 @@ def delete_gitlab_repository(
 # ---------------------------------------------------------------------------
 
 
-def _require_gitlab_connector(session: Session, team_row: TeamProfileTable) -> ConnectorBase:
+def _require_code_connector(session: Session, team_row: TeamProfileTable) -> ConnectorBase:
     if team_row.code_connection_id is None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="team has no GitLab connection configured",
+            detail="team has no code connection configured",
         )
+    conn_row = session.get(SourceConnectionTable, team_row.code_connection_id)
+    if conn_row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="code connection not found"
+        )
+    connector_name = str(conn_row.connector_name)
     try:
         connector = instantiate_connector(
             session,
             team_row.code_connection_id,
-            lambda config: create_connector("gitlab", config),
+            lambda config: create_connector(connector_name, config),
         )
     except ConnectorConfigError as error:
         raise HTTPException(
@@ -1030,7 +1036,7 @@ def _require_gitlab_connector(session: Session, team_row: TeamProfileTable) -> C
         ) from error
     if connector is None:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="GitLab connection not found"
+            status_code=status.HTTP_404_NOT_FOUND, detail="code connection not found"
         )
     return connector
 

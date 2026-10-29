@@ -142,7 +142,7 @@ def test_gitlab_config_status_setup_required_when_only_member_saved(
         lambda *_a, **_kw: mock_connector,
     )
 
-    api_client.put(f"/api/teams/{team_id}/gitlab/members", json=[{"gitlab_user_id": 10}])
+    api_client.put(f"/api/teams/{team_id}/gitlab/members", json=[{"provider_user_id": "10"}])
 
     resp = api_client.get(f"/api/teams/{team_id}")
     assert resp.json()["gitlab_config_status"] == "setup_required"
@@ -168,7 +168,7 @@ def test_gitlab_config_status_setup_required_when_only_repository_saved(
         lambda *_a, **_kw: mock_connector,
     )
 
-    api_client.put(f"/api/teams/{team_id}/gitlab/repositories", json=[{"gitlab_project_id": 5}])
+    api_client.put(f"/api/teams/{team_id}/gitlab/repositories", json=[{"provider_project_id": "5"}])
 
     resp = api_client.get(f"/api/teams/{team_id}")
     assert resp.json()["gitlab_config_status"] == "setup_required"
@@ -195,8 +195,8 @@ def test_gitlab_config_status_configured_when_member_and_repository_saved(
         lambda *_a, **_kw: mock_connector,
     )
 
-    api_client.put(f"/api/teams/{team_id}/gitlab/members", json=[{"gitlab_user_id": 10}])
-    api_client.put(f"/api/teams/{team_id}/gitlab/repositories", json=[{"gitlab_project_id": 5}])
+    api_client.put(f"/api/teams/{team_id}/gitlab/members", json=[{"provider_user_id": "10"}])
+    api_client.put(f"/api/teams/{team_id}/gitlab/repositories", json=[{"provider_project_id": "5"}])
 
     resp = api_client.get(f"/api/teams/{team_id}")
     assert resp.json()["gitlab_config_status"] == "configured"
@@ -252,12 +252,12 @@ def test_put_gitlab_members_persists_connector_resolved_values(
 
     resp = api_client.put(
         f"/api/teams/{team_id}/gitlab/members",
-        json=[{"gitlab_user_id": 42}],
+        json=[{"provider_user_id": "42"}],
     )
     assert resp.status_code == 200
     data = resp.json()
     assert len(data) == 1
-    assert data[0]["gitlab_user_id"] == 42
+    assert data[0]["provider_user_id"] == "42"
     assert data[0]["username"] == "alice"
     assert data[0]["display_name"] == "Alice Smith"
     assert data[0]["verification_status"] == "verified"
@@ -270,7 +270,7 @@ def test_put_gitlab_members_persists_connector_resolved_values(
             .where(TeamGitLabMemberTable.team_profile_id == team_id)
         ).all()
     assert len(rows) == 1
-    assert rows[0].gitlab_user_id == 42
+    assert rows[0].provider_user_id == "42"
     assert rows[0].username == "alice"
 
 
@@ -290,7 +290,7 @@ def test_put_gitlab_members_unknown_id_returns_422_and_stores_nothing(
 
     resp = api_client.put(
         f"/api/teams/{team_id}/gitlab/members",
-        json=[{"gitlab_user_id": 999}],
+        json=[{"provider_user_id": "999"}],
     )
     assert resp.status_code == 422
 
@@ -318,7 +318,7 @@ def test_put_gitlab_members_replaces_existing(
         "em_radar_api.routers.teams.instantiate_connector",
         lambda *_a, **_kw: mock1,
     )
-    api_client.put(f"/api/teams/{team_id}/gitlab/members", json=[{"gitlab_user_id": 1}])
+    api_client.put(f"/api/teams/{team_id}/gitlab/members", json=[{"provider_user_id": "1"}])
 
     mock2 = _make_mock_connector(
         get_user_return=MemberRef(provider_user_id="2", username="user2", display_name="User Two")
@@ -327,7 +327,7 @@ def test_put_gitlab_members_replaces_existing(
         "em_radar_api.routers.teams.instantiate_connector",
         lambda *_a, **_kw: mock2,
     )
-    resp = api_client.put(f"/api/teams/{team_id}/gitlab/members", json=[{"gitlab_user_id": 2}])
+    resp = api_client.put(f"/api/teams/{team_id}/gitlab/members", json=[{"provider_user_id": "2"}])
     assert resp.status_code == 200
 
     with session_factory() as session:
@@ -337,7 +337,7 @@ def test_put_gitlab_members_replaces_existing(
             select(TeamGitLabMemberTable).where(TeamGitLabMemberTable.team_profile_id == team_id)
         ).all()
     assert len(rows) == 1
-    assert rows[0].gitlab_user_id == 2
+    assert rows[0].provider_user_id == "2"
 
 
 def test_put_gitlab_members_replace_keeping_existing_id_succeeds(
@@ -358,13 +358,13 @@ def test_put_gitlab_members_replace_keeping_existing_id_succeeds(
     )
     assert (
         api_client.put(
-            f"/api/teams/{team_id}/gitlab/members", json=[{"gitlab_user_id": 1}]
+            f"/api/teams/{team_id}/gitlab/members", json=[{"provider_user_id": "1"}]
         ).status_code
         == 200
     )
     resp = api_client.put(
         f"/api/teams/{team_id}/gitlab/members",
-        json=[{"gitlab_user_id": 1}, {"gitlab_user_id": 2}],
+        json=[{"provider_user_id": "1"}, {"provider_user_id": "2"}],
     )
     assert resp.status_code == 200
 
@@ -374,7 +374,7 @@ def test_put_gitlab_members_replace_keeping_existing_id_succeeds(
         rows = session.exec(
             select(TeamGitLabMemberTable).where(TeamGitLabMemberTable.team_profile_id == team_id)
         ).all()
-    assert sorted(r.gitlab_user_id for r in rows) == [1, 2]
+    assert sorted(r.provider_user_id for r in rows) == ["1", "2"]
 
 
 def test_put_gitlab_members_duplicate_ids_in_body_are_deduplicated(
@@ -394,7 +394,7 @@ def test_put_gitlab_members_duplicate_ids_in_body_are_deduplicated(
     )
     resp = api_client.put(
         f"/api/teams/{team_id}/gitlab/members",
-        json=[{"gitlab_user_id": 7}, {"gitlab_user_id": 7}],
+        json=[{"provider_user_id": "7"}, {"provider_user_id": "7"}],
     )
     assert resp.status_code == 200
 
@@ -404,7 +404,7 @@ def test_put_gitlab_members_duplicate_ids_in_body_are_deduplicated(
         rows = session.exec(
             select(TeamGitLabMemberTable).where(TeamGitLabMemberTable.team_profile_id == team_id)
         ).all()
-    assert [r.gitlab_user_id for r in rows] == [7]
+    assert [r.provider_user_id for r in rows] == ["7"]
 
 
 def test_put_gitlab_repositories_replace_keeping_existing_id_succeeds(
@@ -426,13 +426,13 @@ def test_put_gitlab_repositories_replace_keeping_existing_id_succeeds(
     )
     assert (
         api_client.put(
-            f"/api/teams/{team_id}/gitlab/repositories", json=[{"gitlab_project_id": 1}]
+            f"/api/teams/{team_id}/gitlab/repositories", json=[{"provider_project_id": "1"}]
         ).status_code
         == 200
     )
     resp = api_client.put(
         f"/api/teams/{team_id}/gitlab/repositories",
-        json=[{"gitlab_project_id": 1}, {"gitlab_project_id": 2}],
+        json=[{"provider_project_id": "1"}, {"provider_project_id": "2"}],
     )
     assert resp.status_code == 200
 
@@ -444,7 +444,7 @@ def test_put_gitlab_repositories_replace_keeping_existing_id_succeeds(
                 TeamGitLabRepositoryTable.team_profile_id == team_id
             )
         ).all()
-    assert sorted(r.gitlab_project_id for r in rows) == [1, 2]
+    assert sorted(r.provider_project_id for r in rows) == ["1", "2"]
 
 
 def test_put_gitlab_members_no_code_connection_returns_409(
@@ -455,7 +455,7 @@ def test_put_gitlab_members_no_code_connection_returns_409(
 
     resp = api_client.put(
         f"/api/teams/{team_id}/gitlab/members",
-        json=[{"gitlab_user_id": 1}],
+        json=[{"provider_user_id": "1"}],
     )
     assert resp.status_code == 409
 
@@ -476,7 +476,7 @@ def test_put_gitlab_members_auth_error_returns_502(
 
     resp = api_client.put(
         f"/api/teams/{team_id}/gitlab/members",
-        json=[{"gitlab_user_id": 1}],
+        json=[{"provider_user_id": "1"}],
     )
     assert resp.status_code == 502
 
@@ -533,12 +533,12 @@ def test_put_gitlab_repositories_persists_connector_resolved_values(
 
     resp = api_client.put(
         f"/api/teams/{team_id}/gitlab/repositories",
-        json=[{"gitlab_project_id": 7}],
+        json=[{"provider_project_id": "7"}],
     )
     assert resp.status_code == 200
     data = resp.json()
     assert len(data) == 1
-    assert data[0]["gitlab_project_id"] == 7
+    assert data[0]["provider_project_id"] == "7"
     assert data[0]["name"] == "backend"
     assert data[0]["path_with_namespace"] == "acme/backend"
     assert data[0]["verification_status"] == "verified"
@@ -552,7 +552,7 @@ def test_put_gitlab_repositories_persists_connector_resolved_values(
             )
         ).all()
     assert len(rows) == 1
-    assert rows[0].gitlab_project_id == 7
+    assert rows[0].provider_project_id == "7"
     assert rows[0].name == "backend"
 
 
@@ -572,7 +572,7 @@ def test_put_gitlab_repositories_unknown_id_returns_422_and_stores_nothing(
 
     resp = api_client.put(
         f"/api/teams/{team_id}/gitlab/repositories",
-        json=[{"gitlab_project_id": 999}],
+        json=[{"provider_project_id": "999"}],
     )
     assert resp.status_code == 422
 
@@ -595,7 +595,7 @@ def test_put_gitlab_repositories_no_code_connection_returns_409(
 
     resp = api_client.put(
         f"/api/teams/{team_id}/gitlab/repositories",
-        json=[{"gitlab_project_id": 1}],
+        json=[{"provider_project_id": "1"}],
     )
     assert resp.status_code == 409
 
@@ -777,7 +777,7 @@ def test_repository_suggestions_returns_ranked_repos_from_connector(
             TeamGitLabMemberTable(
                 team_profile_id=team_id,
                 connection_id=conn_id,
-                gitlab_user_id=100,
+                provider_user_id="100",
                 username="dev",
                 display_name="Dev",
                 verification_status=ScopeVerificationStatus.VERIFIED,
@@ -843,7 +843,7 @@ def test_repository_suggestions_auth_error_is_502(
             TeamGitLabMemberTable(
                 team_profile_id=team_id,
                 connection_id=conn_id,
-                gitlab_user_id=1,
+                provider_user_id="1",
                 username="dev",
                 display_name="Dev",
                 verification_status=ScopeVerificationStatus.VERIFIED,
@@ -882,7 +882,7 @@ def test_gitlab_config_status_setup_required_when_member_on_different_connection
             TeamGitLabMemberTable(
                 team_profile_id=team_id,
                 connection_id=other_conn_id,
-                gitlab_user_id=100,
+                provider_user_id="100",
                 username="stale_user",
                 display_name="Stale User",
                 verification_status=ScopeVerificationStatus.VERIFIED,
@@ -910,7 +910,7 @@ def test_gitlab_config_status_setup_required_when_member_is_unavailable(
             TeamGitLabMemberTable(
                 team_profile_id=team_id,
                 connection_id=conn_id,
-                gitlab_user_id=100,
+                provider_user_id="100",
                 username="unavail_user",
                 display_name="Unavail User",
                 verification_status=ScopeVerificationStatus.UNAVAILABLE,
@@ -939,7 +939,7 @@ def test_list_teams_gitlab_config_status_setup_required_when_member_on_different
             TeamGitLabMemberTable(
                 team_profile_id=team_id,
                 connection_id=other_conn_id,
-                gitlab_user_id=200,
+                provider_user_id="200",
                 username="stale_user",
                 display_name="Stale User",
                 verification_status=ScopeVerificationStatus.VERIFIED,
@@ -969,7 +969,7 @@ def test_list_teams_gitlab_config_status_setup_required_when_repo_is_unavailable
             TeamGitLabRepositoryTable(
                 team_profile_id=team_id,
                 connection_id=conn_id,
-                gitlab_project_id=50,
+                provider_project_id="50",
                 name="old-repo",
                 path_with_namespace="org/old-repo",
                 verification_status=ScopeVerificationStatus.UNAVAILABLE,
@@ -1006,7 +1006,7 @@ def test_repository_suggestions_excludes_members_on_wrong_connection(
             TeamGitLabMemberTable(
                 team_profile_id=team_id,
                 connection_id=conn_id,
-                gitlab_user_id=100,
+                provider_user_id="100",
                 username="valid_user",
                 display_name="Valid User",
                 verification_status=ScopeVerificationStatus.VERIFIED,
@@ -1018,7 +1018,7 @@ def test_repository_suggestions_excludes_members_on_wrong_connection(
             TeamGitLabMemberTable(
                 team_profile_id=team_id,
                 connection_id=other_conn_id,
-                gitlab_user_id=200,
+                provider_user_id="200",
                 username="stale_user",
                 display_name="Stale User",
                 verification_status=ScopeVerificationStatus.VERIFIED,
@@ -1030,7 +1030,7 @@ def test_repository_suggestions_excludes_members_on_wrong_connection(
             TeamGitLabMemberTable(
                 team_profile_id=team_id,
                 connection_id=conn_id,
-                gitlab_user_id=300,
+                provider_user_id="300",
                 username="unavail_user",
                 display_name="Unavail User",
                 verification_status=ScopeVerificationStatus.UNAVAILABLE,
@@ -1075,7 +1075,7 @@ def test_repository_suggestions_returns_empty_when_all_members_stale(
             TeamGitLabMemberTable(
                 team_profile_id=team_id,
                 connection_id=other_conn_id,
-                gitlab_user_id=999,
+                provider_user_id="999",
                 username="stale_user",
                 display_name="Stale User",
                 verification_status=ScopeVerificationStatus.VERIFIED,
@@ -1149,7 +1149,7 @@ def _seed_member(
     session_factory: sessionmaker[Session],
     team_id: UUID,
     conn_id: UUID,
-    gitlab_user_id: int = 100,
+    provider_user_id: str = "100",
 ) -> None:
     now = datetime.now(UTC)
     with session_factory() as session:
@@ -1157,7 +1157,7 @@ def _seed_member(
             TeamGitLabMemberTable(
                 team_profile_id=team_id,
                 connection_id=conn_id,
-                gitlab_user_id=gitlab_user_id,
+                provider_user_id=provider_user_id,
                 username="dev",
                 display_name="Dev",
                 verification_status=ScopeVerificationStatus.VERIFIED,
